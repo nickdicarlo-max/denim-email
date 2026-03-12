@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install:*)",
+      "Bash(corepack:*)",
+      "Bash(pnpm:*)",
+      "Bash(rm:*)",
+      "Bash(gh repo:*)",
+      "Bash(gh auth:*)",
+      "Bash(cp:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

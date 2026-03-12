@@ -166,6 +166,7 @@ This phase sets up infrastructure that every subsequent phase builds on. No busi
 - api.ts: ApiResponse<T>, ApiError
 - errors.ts: typed error classes
 - events.ts: typed Inngest event definitions
+- tokens.ts: design tokens (copy from docs/design-tokens.ts, this becomes the source of truth)
 - Export all from index.ts
 
 0.18 @denim/engine package (structure only)
@@ -782,7 +783,10 @@ Verify the AI generates meaningfully different constants:
 - Stat cards, event log
 
 6.6 Design system
-- Design tokens from CLAUDE.md color palette
+- Import design tokens from @denim/types/tokens
+- Configure Tailwind using the tailwindExtend export from tokens
+- All component styles reference tokens, never hardcoded hex/px values
+- Follow docs/design-system.md for component patterns and principles
 - Mobile-first: everything works at 375px
 - Touch targets: minimum 44x44px
 
@@ -1008,6 +1012,8 @@ Claude Code should apply these requirements to every service it builds. They are
 - `docs/interview-to-schema-mapping.md` -- Interview inputs to schema fields
 - `docs/schema-design-notes.md` -- Database design decisions
 - `docs/alignment-audit.md` -- UI vs schema cross-reference
+- `docs/design-system.md` -- Design principles, component patterns, accessibility
+- `packages/types/tokens.ts` -- Design tokens (colors, typography, spacing, Tailwind config)
 - `apps/web/prisma/schema.prisma` -- Database schema (source of truth)
 - `docs/prototypes/case-engine-prototype.jsx` -- Case feed UI prototype
 - `docs/prototypes/interview-prototype.jsx` -- Interview UI prototype
