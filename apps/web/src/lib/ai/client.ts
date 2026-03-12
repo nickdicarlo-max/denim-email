@@ -1,18 +1,21 @@
 /**
  * Thin wrappers for Claude and Gemini API calls.
  * All AI calls go through these wrappers for retry, backoff, and cost logging.
- *
- * Phase 0: Placeholder structure. AI SDKs installed in Phase 1.
  */
 
 import { logger } from "@/lib/logger";
+import Anthropic from "@anthropic-ai/sdk";
 import { ExternalAPIError } from "@denim/types";
 import { callWithRetry } from "./retry";
+
+// Module-level singleton: reads ANTHROPIC_API_KEY from env automatically
+const anthropic = new Anthropic();
 
 export interface AICallOptions {
   model: string;
   system: string;
   user: string;
+  maxTokens?: number;
   schemaId?: string;
   userId?: string;
   operation: string;
@@ -42,9 +45,27 @@ async function callAI(
 
   try {
     const result = await callWithRetry(async (): Promise<Omit<AICallResult, "latencyMs">> => {
-      // Phase 1: Replace with actual SDK calls
+      if (provider === "claude") {
+        const response = await anthropic.messages.create({
+          model: options.model,
+          max_tokens: options.maxTokens ?? 4096,
+          system: options.system,
+          messages: [{ role: "user", content: options.user }],
+        });
+
+        const textBlock = response.content.find((block) => block.type === "text");
+        const content = textBlock && "text" in textBlock ? textBlock.text : "";
+
+        return {
+          content,
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+        };
+      }
+
+      // Gemini: Phase 3
       throw new ExternalAPIError(
-        `${provider} SDK not installed yet. Install in Phase 1.`,
+        "Gemini SDK not integrated yet. Planned for Phase 3.",
         provider,
       );
     });
@@ -80,7 +101,6 @@ async function callAI(
 
 /**
  * Call Claude API with retry and logging.
- * SDK will be installed in Phase 1.
  */
 export async function callClaude(options: AICallOptions): Promise<AICallResult> {
   return callAI("claude", options);
@@ -88,7 +108,7 @@ export async function callClaude(options: AICallOptions): Promise<AICallResult> 
 
 /**
  * Call Gemini API with retry and logging.
- * SDK will be installed in Phase 1.
+ * SDK will be integrated in Phase 3.
  */
 export async function callGemini(options: AICallOptions): Promise<AICallResult> {
   return callAI("gemini", options);
