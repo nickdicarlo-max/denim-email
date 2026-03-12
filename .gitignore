@@ -1,0 +1,84 @@
+# =============================================================================
+# CASE ENGINE — .gitignore
+# =============================================================================
+# Stack: Next.js 14, Prisma, Supabase, Inngest, Chrome Extension (MV3)
+# Monorepo: pnpm workspaces or turborepo
+# =============================================================================
+
+# === DEPENDENCIES ===
+node_modules/
+.pnpm-store/
+
+# === ENVIRONMENT & SECRETS ===
+# CRITICAL: These contain API keys for Claude, Gemini, Google OAuth, Supabase
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+
+# === NEXT.JS ===
+.next/
+out/
+.vercel
+
+# === TURBOREPO ===
+.turbo/
+
+# === PRISMA ===
+# Generated client (regenerated on build)
+node_modules/.prisma/
+# Local SQLite (if used for local dev)
+prisma/*.db
+prisma/*.db-journal
+
+# === CHROME EXTENSION ===
+# Built extension output (if using a build step)
+apps/extension/dist/
+# Extension key file (DO NOT COMMIT)
+apps/extension/*.pem
+
+# === BUILD OUTPUTS ===
+dist/
+build/
+*.tsbuildinfo
+
+# === TEST RESULTS & LOCAL DATA ===
+# Test result markdown files are committed (they're documentation)
+# But any generated test data or fixtures from real email are NOT
+docs/test-results/fixtures/
+docs/test-results/*.json
+*.test-output.json
+
+# === TEST ARTIFACTS ===
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+
+# === EDITOR / OS ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# === LOGS ===
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.log
+
+# === MISC ===
+coverage/
+.nyc_output/
+*.tgz

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Case Engine",
+  "version": "0.0.1",
+  "description": "Transform unstructured email into organized cases",
+  "permissions": ["sidePanel", "identity"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "icons": {}
+}
