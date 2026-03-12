@@ -64,10 +64,7 @@ async function callAI(
       }
 
       // Gemini: Phase 3
-      throw new ExternalAPIError(
-        "Gemini SDK not integrated yet. Planned for Phase 3.",
-        provider,
-      );
+      throw new ExternalAPIError("Gemini SDK not integrated yet. Planned for Phase 3.", provider);
     });
 
     const latencyMs = Date.now() - start;

@@ -14,8 +14,18 @@ interface DomainConfig {
   timeDecayFresh: number;
   reminderCollapseEnabled: boolean;
   caseSizeThreshold: number;
-  tags: { name: string; description: string; frequency: "high" | "medium" | "low"; actionable: boolean }[];
-  fields: { name: string; type: "NUMBER" | "STRING" | "DATE" | "BOOLEAN"; showOnCard: boolean; aggregation: "SUM" | "LATEST" | "MAX" | "MIN" | "COUNT" | "FIRST" }[];
+  tags: {
+    name: string;
+    description: string;
+    frequency: "high" | "medium" | "low";
+    actionable: boolean;
+  }[];
+  fields: {
+    name: string;
+    type: "NUMBER" | "STRING" | "DATE" | "BOOLEAN";
+    showOnCard: boolean;
+    aggregation: "SUM" | "LATEST" | "MAX" | "MIN" | "COUNT" | "FIRST";
+  }[];
   summaryLabels: { beginning: string; middle: string; end: string };
   secondaryEntityTypes: string[];
   exclusionHints: string[];
@@ -28,14 +38,54 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     reminderCollapseEnabled: true,
     caseSizeThreshold: 5,
     tags: [
-      { name: "Action Required", description: "Requires parent action or response", frequency: "high", actionable: true },
-      { name: "Schedule", description: "Schedule changes, dates, or calendar events", frequency: "high", actionable: false },
-      { name: "Payment", description: "Fees, dues, fundraising, or financial requests", frequency: "medium", actionable: true },
-      { name: "Permission/Form", description: "Forms or permission slips needing signature", frequency: "medium", actionable: true },
-      { name: "Game/Match", description: "Game schedules, scores, or match information", frequency: "medium", actionable: false },
-      { name: "Practice", description: "Practice schedules, locations, or cancellations", frequency: "high", actionable: false },
-      { name: "Cancellation", description: "Cancelled events, practices, or meetings", frequency: "low", actionable: false },
-      { name: "Volunteer", description: "Volunteer opportunities or sign-up requests", frequency: "low", actionable: true },
+      {
+        name: "Action Required",
+        description: "Requires parent action or response",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Schedule",
+        description: "Schedule changes, dates, or calendar events",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Payment",
+        description: "Fees, dues, fundraising, or financial requests",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Permission/Form",
+        description: "Forms or permission slips needing signature",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Game/Match",
+        description: "Game schedules, scores, or match information",
+        frequency: "medium",
+        actionable: false,
+      },
+      {
+        name: "Practice",
+        description: "Practice schedules, locations, or cancellations",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Cancellation",
+        description: "Cancelled events, practices, or meetings",
+        frequency: "low",
+        actionable: false,
+      },
+      {
+        name: "Volunteer",
+        description: "Volunteer opportunities or sign-up requests",
+        frequency: "low",
+        actionable: true,
+      },
     ],
     fields: [
       { name: "eventDate", type: "DATE", showOnCard: true, aggregation: "LATEST" },
@@ -52,14 +102,54 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     reminderCollapseEnabled: false,
     caseSizeThreshold: 10,
     tags: [
-      { name: "Maintenance", description: "Repair requests, maintenance issues, or work orders", frequency: "high", actionable: true },
-      { name: "Tenant", description: "Tenant communications, lease questions, or complaints", frequency: "high", actionable: true },
-      { name: "Vendor", description: "Vendor bids, invoices, or coordination", frequency: "medium", actionable: true },
-      { name: "Financial", description: "Rent payments, expenses, or financial reports", frequency: "high", actionable: false },
-      { name: "Lease", description: "Lease agreements, renewals, or terminations", frequency: "medium", actionable: true },
-      { name: "Inspection", description: "Property inspections, reports, or findings", frequency: "low", actionable: true },
-      { name: "Compliance", description: "Regulatory compliance, permits, or violations", frequency: "low", actionable: true },
-      { name: "Emergency", description: "Urgent issues requiring immediate attention", frequency: "low", actionable: true },
+      {
+        name: "Maintenance",
+        description: "Repair requests, maintenance issues, or work orders",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Tenant",
+        description: "Tenant communications, lease questions, or complaints",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Vendor",
+        description: "Vendor bids, invoices, or coordination",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Financial",
+        description: "Rent payments, expenses, or financial reports",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Lease",
+        description: "Lease agreements, renewals, or terminations",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Inspection",
+        description: "Property inspections, reports, or findings",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Compliance",
+        description: "Regulatory compliance, permits, or violations",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Emergency",
+        description: "Urgent issues requiring immediate attention",
+        frequency: "low",
+        actionable: true,
+      },
     ],
     fields: [
       { name: "cost", type: "NUMBER", showOnCard: true, aggregation: "SUM" },
@@ -75,14 +165,54 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     reminderCollapseEnabled: false,
     caseSizeThreshold: 10,
     tags: [
-      { name: "RFI", description: "Requests for information requiring response", frequency: "high", actionable: true },
-      { name: "Change Order", description: "Scope changes, cost adjustments, or contract modifications", frequency: "medium", actionable: true },
-      { name: "Submittal", description: "Material submittals, shop drawings, or approvals", frequency: "high", actionable: true },
-      { name: "Schedule", description: "Project timeline updates, milestones, or delays", frequency: "high", actionable: false },
-      { name: "Permits", description: "Building permits, inspections, or regulatory approvals", frequency: "low", actionable: true },
-      { name: "Safety", description: "Safety incidents, reports, or compliance issues", frequency: "low", actionable: true },
-      { name: "Invoice/Payment", description: "Payment applications, invoices, or financial matters", frequency: "medium", actionable: true },
-      { name: "Punch List", description: "Deficiency items, corrections, or completion tasks", frequency: "medium", actionable: true },
+      {
+        name: "RFI",
+        description: "Requests for information requiring response",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Change Order",
+        description: "Scope changes, cost adjustments, or contract modifications",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Submittal",
+        description: "Material submittals, shop drawings, or approvals",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Schedule",
+        description: "Project timeline updates, milestones, or delays",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Permits",
+        description: "Building permits, inspections, or regulatory approvals",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Safety",
+        description: "Safety incidents, reports, or compliance issues",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Invoice/Payment",
+        description: "Payment applications, invoices, or financial matters",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Punch List",
+        description: "Deficiency items, corrections, or completion tasks",
+        frequency: "medium",
+        actionable: true,
+      },
     ],
     fields: [
       { name: "cost", type: "NUMBER", showOnCard: true, aggregation: "SUM" },
@@ -90,7 +220,13 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
       { name: "percentComplete", type: "NUMBER", showOnCard: false, aggregation: "LATEST" },
     ],
     summaryLabels: { beginning: "Issue", middle: "Progress", end: "Current Status" },
-    secondaryEntityTypes: ["Subcontractor", "Architect", "Engineer", "Inspector", "Owner Representative"],
+    secondaryEntityTypes: [
+      "Subcontractor",
+      "Architect",
+      "Engineer",
+      "Inspector",
+      "Owner Representative",
+    ],
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "system@"],
   },
   legal: {
@@ -99,14 +235,54 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     reminderCollapseEnabled: false,
     caseSizeThreshold: 15,
     tags: [
-      { name: "Filing", description: "Court filings, documents, or submissions", frequency: "medium", actionable: true },
-      { name: "Discovery", description: "Discovery requests, responses, or depositions", frequency: "medium", actionable: true },
-      { name: "Motion", description: "Motions, briefs, or legal arguments", frequency: "medium", actionable: true },
-      { name: "Hearing", description: "Court hearings, conferences, or appearances", frequency: "low", actionable: true },
-      { name: "Settlement", description: "Settlement discussions, offers, or negotiations", frequency: "low", actionable: true },
-      { name: "Billing", description: "Legal fees, invoices, or billing inquiries", frequency: "medium", actionable: false },
-      { name: "Correspondence", description: "Letters, notices, or formal communications", frequency: "high", actionable: false },
-      { name: "Deadline", description: "Statutory deadlines, filing dates, or time-sensitive matters", frequency: "high", actionable: true },
+      {
+        name: "Filing",
+        description: "Court filings, documents, or submissions",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Discovery",
+        description: "Discovery requests, responses, or depositions",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Motion",
+        description: "Motions, briefs, or legal arguments",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Hearing",
+        description: "Court hearings, conferences, or appearances",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Settlement",
+        description: "Settlement discussions, offers, or negotiations",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Billing",
+        description: "Legal fees, invoices, or billing inquiries",
+        frequency: "medium",
+        actionable: false,
+      },
+      {
+        name: "Correspondence",
+        description: "Letters, notices, or formal communications",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Deadline",
+        description: "Statutory deadlines, filing dates, or time-sensitive matters",
+        frequency: "high",
+        actionable: true,
+      },
     ],
     fields: [
       { name: "deadline", type: "DATE", showOnCard: true, aggregation: "LATEST" },
@@ -122,21 +298,67 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     reminderCollapseEnabled: false,
     caseSizeThreshold: 8,
     tags: [
-      { name: "Deliverable", description: "Work products, assets, or deliverable submissions", frequency: "high", actionable: true },
-      { name: "Feedback", description: "Client feedback, revisions, or approval requests", frequency: "high", actionable: true },
-      { name: "Meeting", description: "Meeting invites, agendas, or follow-ups", frequency: "medium", actionable: false },
-      { name: "Timeline", description: "Project timeline updates or deadline changes", frequency: "medium", actionable: false },
-      { name: "Budget", description: "Budget discussions, overages, or financial updates", frequency: "low", actionable: true },
-      { name: "Approval", description: "Approval requests for creative, budget, or strategy", frequency: "medium", actionable: true },
-      { name: "Creative", description: "Creative briefs, concepts, or design discussions", frequency: "high", actionable: false },
-      { name: "Strategy", description: "Strategic planning, campaign strategy, or positioning", frequency: "low", actionable: false },
+      {
+        name: "Deliverable",
+        description: "Work products, assets, or deliverable submissions",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Feedback",
+        description: "Client feedback, revisions, or approval requests",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Meeting",
+        description: "Meeting invites, agendas, or follow-ups",
+        frequency: "medium",
+        actionable: false,
+      },
+      {
+        name: "Timeline",
+        description: "Project timeline updates or deadline changes",
+        frequency: "medium",
+        actionable: false,
+      },
+      {
+        name: "Budget",
+        description: "Budget discussions, overages, or financial updates",
+        frequency: "low",
+        actionable: true,
+      },
+      {
+        name: "Approval",
+        description: "Approval requests for creative, budget, or strategy",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Creative",
+        description: "Creative briefs, concepts, or design discussions",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Strategy",
+        description: "Strategic planning, campaign strategy, or positioning",
+        frequency: "low",
+        actionable: false,
+      },
     ],
     fields: [
       { name: "deadline", type: "DATE", showOnCard: true, aggregation: "LATEST" },
       { name: "budget", type: "NUMBER", showOnCard: false, aggregation: "SUM" },
     ],
     summaryLabels: { beginning: "Brief", middle: "Progress", end: "Status" },
-    secondaryEntityTypes: ["Client Contact", "Account Manager", "Creative Director", "Strategist", "Vendor"],
+    secondaryEntityTypes: [
+      "Client Contact",
+      "Account Manager",
+      "Creative Director",
+      "Strategist",
+      "Vendor",
+    ],
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "notifications@"],
   },
   general: {
@@ -145,14 +367,54 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     reminderCollapseEnabled: false,
     caseSizeThreshold: 8,
     tags: [
-      { name: "Action Required", description: "Requires a response or action", frequency: "high", actionable: true },
-      { name: "Update", description: "Status updates or progress reports", frequency: "high", actionable: false },
-      { name: "Request", description: "Requests for information, approval, or resources", frequency: "medium", actionable: true },
-      { name: "Meeting", description: "Meeting invites, agendas, or follow-ups", frequency: "medium", actionable: false },
-      { name: "Financial", description: "Invoices, payments, or financial matters", frequency: "medium", actionable: true },
-      { name: "Deadline", description: "Time-sensitive items with specific due dates", frequency: "medium", actionable: true },
-      { name: "Reference", description: "Reference material, documentation, or archives", frequency: "low", actionable: false },
-      { name: "Approval", description: "Items needing sign-off or authorization", frequency: "low", actionable: true },
+      {
+        name: "Action Required",
+        description: "Requires a response or action",
+        frequency: "high",
+        actionable: true,
+      },
+      {
+        name: "Update",
+        description: "Status updates or progress reports",
+        frequency: "high",
+        actionable: false,
+      },
+      {
+        name: "Request",
+        description: "Requests for information, approval, or resources",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Meeting",
+        description: "Meeting invites, agendas, or follow-ups",
+        frequency: "medium",
+        actionable: false,
+      },
+      {
+        name: "Financial",
+        description: "Invoices, payments, or financial matters",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Deadline",
+        description: "Time-sensitive items with specific due dates",
+        frequency: "medium",
+        actionable: true,
+      },
+      {
+        name: "Reference",
+        description: "Reference material, documentation, or archives",
+        frequency: "low",
+        actionable: false,
+      },
+      {
+        name: "Approval",
+        description: "Items needing sign-off or authorization",
+        frequency: "low",
+        actionable: true,
+      },
     ],
     fields: [
       { name: "deadline", type: "DATE", showOnCard: true, aggregation: "LATEST" },
@@ -192,13 +454,26 @@ function buildGoalAdjustments(goals: string[]): string {
   const goalsLower = goals.map((g) => g.toLowerCase()).join(" ");
   const adjustments: string[] = [];
 
-  if (goalsLower.includes("deadline") || goalsLower.includes("due date") || goalsLower.includes("schedule")) {
+  if (
+    goalsLower.includes("deadline") ||
+    goalsLower.includes("due date") ||
+    goalsLower.includes("schedule")
+  ) {
     adjustments.push('- If a "deadline" or "eventDate" field exists, set showOnCard: true');
   }
-  if (goalsLower.includes("cost") || goalsLower.includes("money") || goalsLower.includes("budget") || goalsLower.includes("financial")) {
+  if (
+    goalsLower.includes("cost") ||
+    goalsLower.includes("money") ||
+    goalsLower.includes("budget") ||
+    goalsLower.includes("financial")
+  ) {
     adjustments.push('- If a "cost", "amount", or "budget" field exists, set showOnCard: true');
   }
-  if (goalsLower.includes("progress") || goalsLower.includes("status") || goalsLower.includes("completion")) {
+  if (
+    goalsLower.includes("progress") ||
+    goalsLower.includes("status") ||
+    goalsLower.includes("completion")
+  ) {
     adjustments.push('- If a "percentComplete" or status field exists, set showOnCard: true');
   }
 
@@ -212,7 +487,10 @@ function buildGoalAdjustments(goals: string[]): string {
 function buildSystemPrompt(domain: string): string {
   const config = getDomainConfig(domain);
   const allDomainSummary = Object.entries(DOMAIN_CONFIGS)
-    .map(([key, cfg]) => `  - ${key}: mergeThreshold=${cfg.mergeThreshold}, timeDecay.fresh=${cfg.timeDecayFresh}, caseSizeThreshold=${cfg.caseSizeThreshold}, reminderCollapse=${cfg.reminderCollapseEnabled}`)
+    .map(
+      ([key, cfg]) =>
+        `  - ${key}: mergeThreshold=${cfg.mergeThreshold}, timeDecay.fresh=${cfg.timeDecayFresh}, caseSizeThreshold=${cfg.caseSizeThreshold}, reminderCollapse=${cfg.reminderCollapseEnabled}`,
+    )
     .join("\n");
 
   return `You are a schema configuration expert for an email case management system. Your job is to generate a complete schema hypothesis that configures how a user's emails will be organized into cases.

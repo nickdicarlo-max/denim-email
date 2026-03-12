@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { parseHypothesisResponse } from "../parsers/hypothesis-parser";
 import type { SchemaHypothesis } from "@denim/types";
+import { describe, expect, it } from "vitest";
+import { parseHypothesisResponse } from "../parsers/hypothesis-parser";
 
 const VALID_FIXTURE: SchemaHypothesis = {
   domain: "school_parent",
@@ -50,11 +50,36 @@ const VALID_FIXTURE: SchemaHypothesis = {
     },
   ],
   tags: [
-    { name: "Action Required", description: "Requires parent action", expectedFrequency: "high", isActionable: true },
-    { name: "Schedule", description: "Schedule changes", expectedFrequency: "high", isActionable: false },
-    { name: "Payment", description: "Fees or dues", expectedFrequency: "medium", isActionable: true },
-    { name: "Permission/Form", description: "Forms needing signature", expectedFrequency: "medium", isActionable: true },
-    { name: "Game/Match", description: "Game schedules", expectedFrequency: "medium", isActionable: false },
+    {
+      name: "Action Required",
+      description: "Requires parent action",
+      expectedFrequency: "high",
+      isActionable: true,
+    },
+    {
+      name: "Schedule",
+      description: "Schedule changes",
+      expectedFrequency: "high",
+      isActionable: false,
+    },
+    {
+      name: "Payment",
+      description: "Fees or dues",
+      expectedFrequency: "medium",
+      isActionable: true,
+    },
+    {
+      name: "Permission/Form",
+      description: "Forms needing signature",
+      expectedFrequency: "medium",
+      isActionable: true,
+    },
+    {
+      name: "Game/Match",
+      description: "Game schedules",
+      expectedFrequency: "medium",
+      isActionable: false,
+    },
   ],
   extractedFields: [
     {
@@ -194,7 +219,7 @@ describe("parseHypothesisResponse", () => {
   });
 
   it("handles JSON wrapped in markdown code fences", () => {
-    const raw = "```json\n" + JSON.stringify(VALID_FIXTURE) + "\n```";
+    const raw = `\`\`\`json\n${JSON.stringify(VALID_FIXTURE)}\n\`\`\``;
     const result = parseHypothesisResponse(raw);
 
     expect(result.domain).toBe("school_parent");

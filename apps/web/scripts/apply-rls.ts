@@ -46,7 +46,7 @@ async function applyRLS() {
   // Step 2: Drop existing policies (idempotent)
   for (const table of allTables) {
     await prisma.$executeRawUnsafe(
-      `DROP POLICY IF EXISTS "Users can access own data" ON "${table}";`
+      `DROP POLICY IF EXISTS "Users can access own data" ON "${table}";`,
     );
   }
 

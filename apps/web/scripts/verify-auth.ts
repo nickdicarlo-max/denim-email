@@ -5,9 +5,9 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
 async function verifyAuth() {
   console.log("Verifying Supabase Auth configuration...\n");
@@ -60,8 +60,7 @@ async function verifyAuth() {
   console.log("\n✓ Auth verification complete.");
 }
 
-verifyAuth()
-  .catch((e) => {
-    console.error("\n✗ Verification failed:", e.message);
-    process.exit(1);
-  });
+verifyAuth().catch((e) => {
+  console.error("\n✗ Verification failed:", e.message);
+  process.exit(1);
+});

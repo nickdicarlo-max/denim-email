@@ -1,10 +1,10 @@
+import type { SchemaHypothesis } from "@denim/types";
 /**
  * Parser for AI-generated schema hypothesis responses.
  * Validates untrusted AI output against the SchemaHypothesis shape using Zod.
  * Pure function — no I/O, no side effects.
  */
 import { z } from "zod";
-import type { SchemaHypothesis } from "@denim/types";
 
 const secondaryEntityTypeSchema = z.object({
   name: z.string(),
@@ -114,16 +114,12 @@ export function parseHypothesisResponse(raw: string): SchemaHypothesis {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error(
-      `Failed to parse hypothesis response as JSON: ${cleaned.slice(0, 200)}...`,
-    );
+    throw new Error(`Failed to parse hypothesis response as JSON: ${cleaned.slice(0, 200)}...`);
   }
 
   const result = schemaHypothesisSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid hypothesis response:\n${issues}`);
   }
 
