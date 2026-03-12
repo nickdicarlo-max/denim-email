@@ -12,9 +12,10 @@
     "prisma:generate": "prisma generate"
   },
   "dependencies": {
-    "@denim/types": "workspace:*",
-    "@denim/engine": "workspace:*",
+    "@anthropic-ai/sdk": "^0.78.0",
     "@denim/ai": "workspace:*",
+    "@denim/engine": "workspace:*",
+    "@denim/types": "workspace:*",
     "@supabase/supabase-js": "^2.49.0",
     "inngest": "^3.29.0",
     "next": "14.2.28",
