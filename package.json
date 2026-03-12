@@ -10,7 +10,9 @@
   },
   "packageManager": "pnpm@9.15.4",
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4"
+    "@anthropic-ai/sdk": "^0.78.0",
+    "@biomejs/biome": "^1.9.4",
+    "tsx": "^4.21.0"
   },
   "engines": {
     "node": ">=20"

@@ -5,7 +5,7 @@ import { buildHypothesisPrompt, parseHypothesisResponse } from "@denim/ai";
 import type { InterviewInput, SchemaHypothesis } from "@denim/types";
 import { ExternalAPIError } from "@denim/types";
 
-const DEFAULT_MODEL = "claude-sonnet-4-5-20250514";
+const DEFAULT_MODEL = "claude-sonnet-4-5-latest";
 
 /**
  * Generate a schema hypothesis from interview input.
