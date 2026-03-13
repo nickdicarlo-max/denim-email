@@ -205,9 +205,10 @@ export function Card1Input({ onNext }: Card1Props) {
                   />
                   <Button
                     variant="primary"
+                    fullWidth={false}
                     onClick={handleAddWhat}
                     disabled={!currentWhat.trim()}
-                    className="w-auto whitespace-nowrap px-4"
+                    className="whitespace-nowrap px-4"
                   >
                     Add
                   </Button>
@@ -298,9 +299,10 @@ export function Card1Input({ onNext }: Card1Props) {
                           />
                           <Button
                             variant="primary"
+                            fullWidth={false}
                             onClick={handleAddWho}
                             disabled={!currentWho.trim()}
-                            className="w-auto whitespace-nowrap px-4"
+                            className="whitespace-nowrap px-4"
                           >
                             Add
                           </Button>

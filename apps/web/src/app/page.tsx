@@ -1,10 +1,18 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
+
 export default function Home() {
+  const router = useRouter();
+
+  useEffect(() => {
+    router.replace("/interview");
+  }, [router]);
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-24">
-      <h1 className="text-4xl font-bold">Case Engine</h1>
-      <p className="mt-4 text-lg text-gray-600">
-        Transform unstructured email into organized cases
-      </p>
+    <main className="flex min-h-screen flex-col items-center justify-center bg-surface">
+      <div className="animate-pulse text-muted text-sm">Loading...</div>
     </main>
   );
 }

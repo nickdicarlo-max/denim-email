@@ -12,7 +12,7 @@ export default function InterviewPage() {
   const flow = useInterviewFlow();
   const [authToken, setAuthToken] = useState<string | null>(null);
 
-  // Get auth token from Supabase session on mount
+  // Listen for auth state (e.g., returning from OAuth redirect)
   useEffect(() => {
     const supabase = createBrowserClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -21,7 +21,6 @@ export default function InterviewPage() {
       }
     });
 
-    // Listen for auth changes (e.g., returning from OAuth redirect)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -36,17 +35,26 @@ export default function InterviewPage() {
   return (
     <div className="min-h-screen bg-surface">
       <div className="mx-auto max-w-md">
-        {/* Card 1: Input */}
-        {(flow.step === "input" || flow.step === "generating") && (
+        {/* Card 1: Input (no auth needed) */}
+        {flow.step === "input" && (
           <Card1Input
             onNext={(data) => {
-              const token = authToken ?? "dev-token";
-              flow.submitInput(data, token);
+              flow.submitInput(data);
             }}
           />
         )}
 
-        {/* Generating state - show loading overlay on Card 1 */}
+        {/* Card 2: Gmail Connect */}
+        {(flow.step === "gmail_connect" || flow.step === "generating") && (
+          <Card2GmailConnect
+            onNext={(token) => {
+              flow.onGmailConnected(token);
+            }}
+            onBack={flow.goBack}
+          />
+        )}
+
+        {/* Generating overlay (shows over Card 2 while hypothesis is being generated) */}
         {flow.step === "generating" && (
           <div className="fixed inset-0 bg-overlay flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 text-center shadow-xl">
@@ -65,11 +73,6 @@ export default function InterviewPage() {
               <p className="text-sm text-secondary">Generating your schema...</p>
             </div>
           </div>
-        )}
-
-        {/* Card 2: Gmail Connect */}
-        {flow.step === "gmail_connect" && (
-          <Card2GmailConnect onNext={flow.onGmailConnected} onBack={flow.goBack} />
         )}
 
         {/* Card 3: Scan */}

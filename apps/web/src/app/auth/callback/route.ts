@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { type NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -7,20 +7,20 @@ export async function GET(request: NextRequest) {
   const next = searchParams.get("next") ?? "/interview";
 
   if (code) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    try {
+      const supabase = createServerSupabaseClient();
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
 
-    if (!supabaseUrl || !supabaseAnonKey) {
-      return NextResponse.redirect(`${origin}/auth/error`);
-    }
+      if (!error) {
+        return NextResponse.redirect(`${origin}${next}`);
+      }
 
-    const supabase = createClient(supabaseUrl, supabaseAnonKey);
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
-
-    if (!error) {
-      return NextResponse.redirect(`${origin}${next}`);
+      console.error("Auth callback: code exchange failed:", error.message);
+    } catch (err) {
+      console.error("Auth callback: unexpected error:", err);
     }
   }
 
-  return NextResponse.redirect(`${origin}/auth/error`);
+  // Redirect to interview with error param instead of a nonexistent error page
+  return NextResponse.redirect(`${origin}/interview?auth_error=true`);
 }

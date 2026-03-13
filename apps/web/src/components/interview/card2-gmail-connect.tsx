@@ -1,7 +1,7 @@
 "use client";
 
 import { createBrowserClient } from "@/lib/supabase/client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
 import { ProgressDots } from "../ui/progress-dots";
@@ -9,7 +9,7 @@ import { ProgressDots } from "../ui/progress-dots";
 type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 
 interface Card2Props {
-  onNext: () => void;
+  onNext: (authToken: string) => void;
   onBack: () => void;
 }
 
@@ -94,12 +94,14 @@ const PRIVACY_ITEMS = [
 export function Card2GmailConnect({ onNext, onBack }: Card2Props) {
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
+  const authTokenRef = useRef<string | null>(null);
 
   // Check if user already has a session with gmail scope (return-from-redirect case)
   useEffect(() => {
     const supabase = createBrowserClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.provider_token) {
+      if (session?.provider_token && session?.access_token) {
+        authTokenRef.current = session.access_token;
         setStatus("connected");
       }
     });
@@ -107,9 +109,10 @@ export function Card2GmailConnect({ onNext, onBack }: Card2Props) {
 
   // Auto-advance after connected
   useEffect(() => {
-    if (status !== "connected") return;
+    if (status !== "connected" || !authTokenRef.current) return;
+    const token = authTokenRef.current;
     const timer = setTimeout(() => {
-      onNext();
+      onNext(token);
     }, 1000);
     return () => clearTimeout(timer);
   }, [status, onNext]);

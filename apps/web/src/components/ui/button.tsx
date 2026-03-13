@@ -18,9 +18,16 @@ const variantClasses: Record<ButtonVariant, string> = {
     "bg-transparent text-accent-text rounded-md font-medium text-base px-3 py-2 hover:bg-accent-soft transition",
 };
 
-export function Button({ variant = "primary", children, className, ...props }: ButtonProps) {
+export function Button({
+  variant = "primary",
+  fullWidth = true,
+  children,
+  className,
+  ...props
+}: ButtonProps & { fullWidth?: boolean }) {
   const classes = [
-    "min-h-[44px] w-full disabled:opacity-50 disabled:cursor-not-allowed",
+    "min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed",
+    fullWidth ? "w-full" : "w-auto",
     variantClasses[variant],
     className,
   ]

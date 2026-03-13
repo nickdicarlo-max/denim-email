@@ -1,8 +1,9 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserClient as createSupabaseBrowserClient } from "@supabase/ssr";
 
 /**
  * Browser-side Supabase client for auth flows and real-time subscriptions.
  * Uses anon key only. RLS enforces data access.
+ * Uses @supabase/ssr for proper cookie-based session management.
  */
 export function createBrowserClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -10,5 +11,5 @@ export function createBrowserClient() {
   if (!url || !key) {
     throw new Error("Missing Supabase configuration");
   }
-  return createClient(url, key);
+  return createSupabaseBrowserClient(url, key);
 }
