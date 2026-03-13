@@ -35,22 +35,64 @@ Last updated: 2026-03-12
 - Results at docs/test-results/phase1-schema-quality.md
 - Model: claude-sonnet-4-6
 
-## Not Yet Done in Phase 1
+### Phase 2: Gmail Integration & Interview UI
+- **Design system integration**
+  - Design tokens wired into Tailwind config (tailwindExtend from @denim/types/design-tokens)
+  - DM Sans + JetBrains Mono fonts via Google Fonts
+  - Surface background (#F7F6F3), custom font sizes, border radii, shadows
+- **Supabase client utilities**
+  - Server-side: createServiceClient(), createAuthenticatedClient() (apps/web/src/lib/supabase/server.ts)
+  - Browser-side: createBrowserClient() (apps/web/src/lib/supabase/client.ts)
+- **Gmail OAuth via Supabase Auth**
+  - Auth callback route (apps/web/src/app/auth/callback/route.ts)
+  - Token encryption/decryption with AES-256-GCM (apps/web/src/lib/gmail/tokens.ts)
+  - OAuth flow requests gmail.readonly scope via Supabase signInWithOAuth
+- **Gmail client service** (apps/web/src/lib/gmail/client.ts)
+  - GmailClient class: searchEmails, getEmailFull, sampleScan
+  - Header parsing, body extraction, attachment ID extraction
+  - Batch metadata fetching (50 per batch)
+  - googleapis package installed
+- **InterviewService.validateHypothesis**
+  - Validation prompt builder (packages/ai/src/prompts/interview-validate.ts)
+  - Validation parser with Zod (packages/ai/src/parsers/validation-parser.ts)
+  - HypothesisValidation type added to @denim/types
+  - Compares hypothesis against real email samples via Claude
+- **InterviewService.finalizeSchema**
+  - Merges hypothesis + validation + user confirmations
+  - Creates CaseSchema, Entity, SchemaTag, ExtractedFieldDef rows in Prisma transaction
+  - Sets schema status to ONBOARDING
+- **API routes**
+  - POST /api/interview/validate (scan + validate in one call)
+  - POST /api/interview/finalize (persist schema to DB)
+  - POST /api/gmail/scan (standalone scan endpoint)
+- **Shared UI components** (apps/web/src/components/ui/)
+  - Button (primary/secondary/ghost), Input, Tag, EntityChip, ProgressDots, CardShell
+  - All use Tailwind classes from design tokens, mobile-first, 44px touch targets
+- **Interview Cards 1-4** (apps/web/src/components/interview/)
+  - Card 1: Role selection (6 domains) + name entry (whats/whos/goals)
+  - Card 2: Gmail OAuth connect with privacy info
+  - Card 3: Sample scan with real-time domain discovery + AI validation
+  - Card 4: Hypothesis review — toggleable tags, editable entities, clustering summary, finalize
+- **Interview flow page** (apps/web/src/app/interview/page.tsx)
+  - State machine hook (useInterviewFlow) orchestrating Cards 1-4
+  - States: input → generating → gmail_connect → scanning → review → finalizing → complete
+  - Loading overlays, error toasts, completion screen
 
-Phase 1 core tasks (1.1–1.7) are complete. The following are deferred per the build plan:
-- InterviewService.validateHypothesis — depends on Gmail (Phase 2)
-- InterviewService.finalizeSchema — depends on Gmail (Phase 2)
-- Integration test (interview-service.test.ts) — needs real DB writes, build after DB connected
-- CaseSchema persistence to database — happens when finalizeSchema is built
+## Not Yet Done
+
+- Integration test (interview-service.test.ts) — needs real DB writes with test data
+- Playwright e2e for interview flow — Phase 6 per build plan
+- Extraction/synthesis prompts — Phase 3
 
 ## Next Step
 
-**Phase 2: Gmail Integration** (see docs/build-plan.md)
-- Tasks 2.1–2.4: Gmail OAuth, Gmail client service, sample scan, Interview Cards 2-3 UI
-- Follow the Phase 2 prompt in getting_started.md section 7
+**Phase 3: Extraction Pipeline** (see docs/build-plan.md)
+- Tasks 3.1–3.5: Extraction prompt in @denim/ai, extraction parser, ExtractionService, Inngest fan-out job
+- Gemini Flash 2.5 integration for bulk email extraction + vision/OCR
 
 ## Environment
 
 - ANTHROPIC_API_KEY: set in apps/web/.env.local (claude-sonnet-4-6 confirmed working)
 - Supabase: configured and connected
 - Node 22, pnpm workspaces
+- googleapis: installed in apps/web

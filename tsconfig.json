@@ -13,7 +13,6 @@
   "references": [
     { "path": "packages/types" },
     { "path": "packages/engine" },
-    { "path": "packages/ai" },
-    { "path": "apps/web" }
+    { "path": "packages/ai" }
   ]
 }

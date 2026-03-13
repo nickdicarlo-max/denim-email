@@ -16,6 +16,7 @@ export type {
   TagSuggestion,
   ExtractedFieldSuggestion,
   ClusteringConfig,
+  HypothesisValidation,
 } from "./schema";
 
 export type {

@@ -87,3 +87,25 @@ export interface ClusteringConfig {
   reminderSubjectSimilarity: number;
   reminderMaxAge: number;
 }
+
+export interface HypothesisValidation {
+  confirmedEntities: string[];
+  discoveredEntities: {
+    name: string;
+    type: "PRIMARY" | "SECONDARY";
+    secondaryTypeName: string | null;
+    confidence: number;
+    source: string;
+  }[];
+  confirmedTags: string[];
+  suggestedTags: {
+    name: string;
+    description: string;
+    expectedFrequency: string;
+    isActionable: boolean;
+  }[];
+  noisePatterns: string[];
+  sampleEmailCount: number;
+  scanDurationMs: number;
+  confidenceScore: number;
+}
