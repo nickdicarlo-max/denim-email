@@ -430,11 +430,11 @@ interface ClusteringConfig {
 ### Testing
 
 **Test 1.A: Schema quality across domains**
-- [ ] Parser unit tests pass: `pnpm --filter @denim/ai test`
-- [ ] All 5 test descriptions produce meaningfully different schemas
+- [x] Parser unit tests pass: `pnpm --filter @denim/ai test` (2026-03-12: 8 tests passing)
+- [x] All 5 test descriptions produce meaningfully different schemas (2026-03-12: evaluation script 5/5)
 - [ ] No schema generates generic/useless tags
 - [ ] Clustering constants vary by domain (school != legal != construction)
-- [ ] Discovery queries reference actual entity names
+- [x] Discovery queries reference actual entity names (2026-03-14: queries found 58 emails for school_parent schema)
 - [ ] Entity aliases are reasonable
 - [ ] Goals affect showOnCard flags on extracted fields
 
@@ -447,9 +447,9 @@ Verify the AI generates meaningfully different constants:
 - [ ] Property schema uses TCS-proven defaults (mergeThreshold ~45)
 
 ### Acceptance Criteria
-- [ ] Parser tests pass
-- [ ] 5/5 test schemas evaluated and documented in test-results/
-- [ ] CaseSchema records persist in database with correct fields (after DB connected)
+- [x] Parser tests pass (2026-03-12: 8 tests passing)
+- [x] 5/5 test schemas evaluated and documented in test-results/ (2026-03-12: docs/test-results/phase1-schema-quality.md)
+- [x] CaseSchema records persist in database with correct fields (2026-03-13: schema cmmpb334b0001qeg0e152tsh9 created with 9 entities, 10 tags, 3 fields)
 
 ### Integration Test (write after DB connected)
 - File: `apps/web/tests/integration/interview-service.test.ts`
@@ -557,13 +557,13 @@ Verify the AI generates meaningfully different constants:
 - On completion: emit extraction.all.completed event
 
 ### Testing
-- [ ] Extraction parser tests pass
-- [ ] Summaries are 1-2 sentences, tags match schema taxonomy
-- [ ] Entity detection matches >85% to correct primary entity
+- [x] Extraction parser tests pass (2026-03-13: 9 tests passing)
+- [ ] Summaries are 1-2 sentences, tags match schema taxonomy (needs manual review of extracted data)
+- [ ] Entity detection matches >85% to correct primary entity (needs manual review)
 - [ ] Attachment summaries are useful
 - [ ] Exclusion rules skip correctly
-- [ ] ExtractionCost records logged for every API call
-- [ ] Total cost for 200 emails under $0.50
+- [x] ExtractionCost records logged for every API call (2026-03-14: confirmed in live run, rows with inputTokens/outputTokens)
+- [ ] Total cost for 200 emails under $0.50 (58 emails processed, cost not yet tallied)
 
 ### Integration Test
 - File: `apps/web/tests/integration/extraction-service.test.ts`
@@ -575,6 +575,14 @@ Verify the AI generates meaningfully different constants:
 - Real: Prisma writes to test database, Inngest event emission
 
 ### Acceptance Criteria
+- [x] Extraction pipeline runs end-to-end: scan → fan-out → extract → complete (2026-03-14: 58 emails, 3 batches, 0 failures)
+- [x] Email rows created with summaries, tags, entity assignments (2026-03-14: confirmed via DB writes in live run)
+- [x] ExtractionCost rows logged with token counts (2026-03-14: ~2000 input, ~130-250 output per email)
+- [x] Fan-out pattern works: batches of 20, concurrency-limited per schema (2026-03-14: 3 batches ran with Inngest concurrency)
+- [x] Tag frequency recalculation runs after all batches complete (2026-03-14: checkExtractionComplete updated frequencies)
+- [x] Extraction parser unit tests pass (2026-03-13: 9 tests)
+- [x] Entity matching unit tests pass (2026-03-13: 16 tests, Jaro-Winkler verified)
+- [x] Exclusion rule unit tests pass (2026-03-13: 7 tests)
 
 ---
 
