@@ -8,7 +8,23 @@
       "Bash(gh repo:*)",
       "Bash(gh auth:*)",
       "Bash(cp:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(taskkill //F //IM node.exe 2>/dev/null; echo \"done\")",
+      "Bash(taskkill //F //IM node.exe 2>/dev/null; echo \"killed\")",
+      "Bash(node -e \"console.log\\(require\\('crypto'\\).randomBytes\\(32\\).toString\\('hex'\\)\\)\")",
+      "Bash(cd /c/Users/alkam/Documents/NDSoftware/denim-email/apps/web && set -a && source .env.local && set +a && npx prisma db push --accept-data-loss 2>&1)",
+      "Bash(cd /c/Users/alkam/Documents/NDSoftware/denim-email && set -a && source apps/web/.env.local && set +a && pnpm -r tsc --noEmit 2>&1 | head -30)",
+      "Bash(cd /c/Users/alkam/Documents/NDSoftware/denim-email/apps/web && set -a && source .env.local && set +a && npx tsc --noEmit 2>&1 | head -40)",
+      "Bash(set -a && source .env.local && set +a && npx tsc --noEmit 2>&1 | head -20)",
+      "Bash(set -a && source .env.local && set +a && npx tsc --noEmit 2>&1)",
+      "Bash(cd /c/Users/alkam/Documents/NDSoftware/denim-email/apps/web && set -a && source .env.local && set +a && npx tsc --noEmit 2>&1)",
+      "Bash(tasklist | grep -i inngest 2>&1 || netstat -ano | grep 8288 2>&1)",
+      "Bash(taskkill //PID 26464 //F 2>/dev/null; tasklist | grep -i inngest)",
+      "Bash(tasklist | grep -i inngest 2>/dev/null; tasklist | grep -i node 2>/dev/null | head -10)",
+      "Bash(taskkill //PID 34188 //F)",
+      "Bash(netstat -ano | grep -E \"LISTENING.*\\(3000|3001\\)\" 2>/dev/null || ss -tlnp | grep -E \"3000|3001\" 2>/dev/null || echo \"Cannot check ports\")",
+      "Bash(cd \"C:/Users/alkam/Documents/NDSoftware/denim-email/apps/web\" && ./node_modules/.bin/tsc --noEmit 2>&1 | head -50)",
+      "Bash(netstat -ano | grep LISTENING | grep -E ':\\(3000|3001|3002|4000|8080|8288\\)' 2>/dev/null || ss -tlnp 2>/dev/null | grep -E ':\\(3000|3001|3002|4000|8080|8288\\)')"
     ]
   }
 }

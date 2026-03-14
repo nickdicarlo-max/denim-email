@@ -922,6 +922,8 @@ Verify the AI generates meaningfully different constants:
 
 ---
 
+## Phase 7.5: Periodic scanning... to be useful we should already have the actions to be taken clearly for the user, perhaps at a specific time of day... or at a few specific times of day.  7am, noon, 3pm, 6pm and 9pm daily update automatically so they know what may be an open task for them to follwo up on.  
+
 ## PHASE 8: Calendar Integration
 
 **Goal:** Action items sync to Google Calendar with progressive permission request.
