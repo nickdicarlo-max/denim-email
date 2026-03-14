@@ -103,6 +103,21 @@ export function Card2GmailConnect({ onNext, onBack }: Card2Props) {
       if (session?.provider_token && session?.access_token) {
         authTokenRef.current = session.access_token;
         setStatus("connected");
+
+        // Fallback: store tokens server-side if callback didn't
+        fetch("/api/auth/store-tokens", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            providerToken: session.provider_token,
+            providerRefreshToken: session.provider_refresh_token ?? "",
+          }),
+        }).catch(() => {
+          // Non-fatal: tokens may already be stored from callback
+        });
       }
     });
   }, []);
@@ -128,6 +143,10 @@ export function Card2GmailConnect({ onNext, onBack }: Card2Props) {
         options: {
           scopes: "https://www.googleapis.com/auth/gmail.readonly",
           redirectTo: `${window.location.origin}/auth/callback?next=/interview`,
+          queryParams: {
+            access_type: "offline",
+            prompt: "consent",
+          },
         },
       });
 

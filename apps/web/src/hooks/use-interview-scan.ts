@@ -1,5 +1,6 @@
 "use client";
 
+import { checkAndIncrementCallCount } from "@/lib/api-call-guard";
 import type { ScanDiscovery } from "@/lib/gmail/types";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useRef, useState } from "react";
@@ -12,6 +13,7 @@ interface UseScanResult {
   validation: HypothesisValidation | null;
   error: string | null;
   startScan: (hypothesis: SchemaHypothesis, authToken: string) => Promise<void>;
+  abort: () => void;
 }
 
 export function useInterviewScan(): UseScanResult {
@@ -19,10 +21,24 @@ export function useInterviewScan(): UseScanResult {
   const [discoveries, setDiscoveries] = useState<ScanDiscovery[]>([]);
   const [validation, setValidation] = useState<HypothesisValidation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const abortRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const abort = useCallback(() => {
+    abortControllerRef.current?.abort();
+  }, []);
 
   const startScan = useCallback(async (hypothesis: SchemaHypothesis, authToken: string) => {
-    abortRef.current = false;
+    // Abort any prior scan
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    if (!checkAndIncrementCallCount("/api/interview/validate")) {
+      setError("Too many scan requests this session. Please refresh.");
+      setStatus("error");
+      return;
+    }
+
     setStatus("scanning");
     setDiscoveries([]);
     setValidation(null);
@@ -37,6 +53,7 @@ export function useInterviewScan(): UseScanResult {
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify({ hypothesis }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -46,8 +63,6 @@ export function useInterviewScan(): UseScanResult {
 
       const { data } = await response.json();
 
-      if (abortRef.current) return;
-
       // Show discoveries
       setDiscoveries(data.discoveries ?? []);
       setStatus("validating");
@@ -55,16 +70,18 @@ export function useInterviewScan(): UseScanResult {
       // Brief pause to show "validating" state before completing
       await new Promise((resolve) => setTimeout(resolve, 1500));
 
-      if (abortRef.current) return;
+      if (controller.signal.aborted) return;
 
       setValidation(data.validation);
       setStatus("complete");
     } catch (err) {
-      if (abortRef.current) return;
+      if ((err instanceof DOMException && err.name === "AbortError") || controller.signal.aborted) {
+        return;
+      }
       setError(err instanceof Error ? err.message : "Scan failed");
       setStatus("error");
     }
   }, []);
 
-  return { status, discoveries, validation, error, startScan };
+  return { status, discoveries, validation, error, startScan, abort };
 }

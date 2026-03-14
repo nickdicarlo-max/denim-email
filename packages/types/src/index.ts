@@ -17,6 +17,10 @@ export type {
   ExtractedFieldSuggestion,
   ClusteringConfig,
   HypothesisValidation,
+  ExtractionInput,
+  ExtractionSchemaContext,
+  DetectedEntity,
+  ExtractionResult,
 } from "./schema";
 
 export type {

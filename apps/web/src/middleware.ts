@@ -1,9 +1,10 @@
+import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
 /**
- * Next.js middleware for CORS configuration.
- * Development: allows localhost origins.
- * Production: restricts to Chrome extension origin only.
+ * Next.js middleware:
+ * 1. Refreshes Supabase auth session (required for SSR cookie-based auth)
+ * 2. Sets CORS headers for API routes
  */
 
 function getAllowedOrigins(): string[] {
@@ -19,43 +20,78 @@ function getAllowedOrigins(): string[] {
   return [];
 }
 
-export function middleware(request: NextRequest) {
-  const origin = request.headers.get("origin") ?? "";
-  const allowedOrigins = getAllowedOrigins();
+export async function middleware(request: NextRequest) {
+  // --- Supabase session refresh ---
+  // This ensures auth cookies stay fresh on every request.
+  // Without this, Server Components can't read expired sessions.
+  let supabaseResponse = NextResponse.next({ request });
 
-  const isAllowed =
-    process.env.NODE_ENV === "development" ||
-    allowedOrigins.some((allowed) =>
-      allowed.includes("*") ? origin.startsWith(allowed.replace("*", "")) : origin === allowed,
-    );
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // Handle preflight
-  if (request.method === "OPTIONS") {
-    return new NextResponse(null, {
-      status: 200,
-      headers: {
-        "Access-Control-Allow-Origin": isAllowed ? origin : "",
-        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-        "Access-Control-Max-Age": "86400",
+  if (url && key) {
+    const supabase = createServerClient(url, key, {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          for (const { name, value } of cookiesToSet) {
+            request.cookies.set(name, value);
+          }
+          supabaseResponse = NextResponse.next({ request });
+          for (const { name, value, options } of cookiesToSet) {
+            supabaseResponse.cookies.set(name, value, options);
+          }
+        },
       },
     });
+
+    // Calling getUser() triggers session refresh if the JWT is expired.
+    // IMPORTANT: Do NOT use getSession() here — it doesn't validate the JWT.
+    await supabase.auth.getUser();
   }
 
-  const response = NextResponse.next();
+  // --- CORS for API routes ---
+  const isApiRoute = request.nextUrl.pathname.startsWith("/api/");
 
-  if (isAllowed && origin) {
-    response.headers.set("Access-Control-Allow-Origin", origin);
-    response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    response.headers.set(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, X-Requested-With",
-    );
+  if (isApiRoute) {
+    const origin = request.headers.get("origin") ?? "";
+    const allowedOrigins = getAllowedOrigins();
+    const isAllowed =
+      process.env.NODE_ENV === "development" ||
+      allowedOrigins.some((allowed) =>
+        allowed.includes("*") ? origin.startsWith(allowed.replace("*", "")) : origin === allowed,
+      );
+
+    if (request.method === "OPTIONS") {
+      return new NextResponse(null, {
+        status: 200,
+        headers: {
+          "Access-Control-Allow-Origin": isAllowed ? origin : "",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
+
+    if (isAllowed && origin) {
+      supabaseResponse.headers.set("Access-Control-Allow-Origin", origin);
+      supabaseResponse.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      supabaseResponse.headers.set(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Requested-With",
+      );
+    }
   }
 
-  return response;
+  return supabaseResponse;
 }
 
 export const config = {
-  matcher: "/api/:path*",
+  matcher: [
+    // Match all routes except static files and images
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+  ],
 };

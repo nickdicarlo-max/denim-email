@@ -3,7 +3,7 @@
 import { useInterviewScan } from "@/hooks/use-interview-scan";
 import type { ScanDiscovery } from "@/lib/gmail/types";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
 import { ProgressDots } from "../ui/progress-dots";
@@ -72,15 +72,13 @@ function BackArrowIcon() {
 }
 
 export function Card3Scan({ hypothesis, authToken, onNext, onBack }: Card3Props) {
-  const { status, discoveries, validation, error, startScan } = useInterviewScan();
-  const hasStartedRef = useRef(false);
-
-  // Auto-start scan on mount
+  const { status, discoveries, validation, error, startScan, abort } = useInterviewScan();
+  // Auto-start scan once we have a valid auth token, abort on unmount
   useEffect(() => {
-    if (hasStartedRef.current) return;
-    hasStartedRef.current = true;
+    if (!authToken) return;
     startScan(hypothesis, authToken);
-  }, [hypothesis, authToken, startScan]);
+    return () => abort();
+  }, [hypothesis, authToken, startScan, abort]);
 
   // Auto-advance when complete
   useEffect(() => {
@@ -99,7 +97,14 @@ export function Card3Scan({ hypothesis, authToken, onNext, onBack }: Card3Props)
       {/* Back button - only show on error */}
       {status === "error" && (
         <div className="w-full">
-          <Button variant="ghost" className="w-auto flex items-center gap-1" onClick={onBack}>
+          <Button
+            variant="ghost"
+            className="w-auto flex items-center gap-1"
+            onClick={() => {
+              abort();
+              onBack();
+            }}
+          >
             <BackArrowIcon />
             <span>Back</span>
           </Button>
@@ -191,13 +196,7 @@ export function Card3Scan({ hypothesis, authToken, onNext, onBack }: Card3Props)
       {/* Error actions */}
       {status === "error" && (
         <div className="mt-auto pt-4 flex flex-col gap-3">
-          <Button
-            variant="primary"
-            onClick={() => {
-              hasStartedRef.current = false;
-              startScan(hypothesis, authToken);
-            }}
-          >
+          <Button variant="primary" onClick={() => startScan(hypothesis, authToken)}>
             Try Again
           </Button>
         </div>

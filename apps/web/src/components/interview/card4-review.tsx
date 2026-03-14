@@ -13,6 +13,7 @@ interface Card4Props {
   hypothesis: SchemaHypothesis;
   validation: HypothesisValidation;
   discoveries?: unknown[];
+  isLoading?: boolean;
   onFinalize: (confirmations: {
     confirmedEntities: string[];
     removedEntities: string[];
@@ -93,7 +94,7 @@ function confidenceBadgeClasses(score: number): string {
   return "bg-error-soft text-error-text";
 }
 
-export function Card4Review({ hypothesis, validation, onFinalize, onBack }: Card4Props) {
+export function Card4Review({ hypothesis, validation, isLoading, onFinalize, onBack }: Card4Props) {
   const [schemaName, setSchemaName] = useState(hypothesis.schemaName);
   const [removedEntities, setRemovedEntities] = useState<Set<string>>(() => new Set());
   const [addedEntities, setAddedEntities] = useState<string[]>([]);
@@ -513,7 +514,9 @@ export function Card4Review({ hypothesis, validation, onFinalize, onBack }: Card
 
       {/* Finalize button - sticky at bottom */}
       <div className="pt-3 border-t border-border mt-auto">
-        <Button onClick={handleFinalize}>Looks good, start organizing!</Button>
+        <Button onClick={handleFinalize} disabled={isLoading}>
+          {isLoading ? "Finalizing..." : "Looks good, start organizing!"}
+        </Button>
       </div>
     </CardShell>
   );

@@ -8,21 +8,30 @@ export type DenimEvents = {
   "scan.emails.discovered": {
     data: {
       schemaId: string;
+      userId: string;
+      scanJobId: string;
       emailIds: string[];
     };
   };
   "extraction.batch.process": {
     data: {
       schemaId: string;
+      userId: string;
+      scanJobId: string;
       emailIds: string[];
       batchIndex: number;
+      totalBatches: number;
     };
   };
   "extraction.batch.completed": {
     data: {
       schemaId: string;
+      scanJobId: string;
       batchIndex: number;
+      totalBatches: number;
       processedCount: number;
+      excludedCount: number;
+      failedCount: number;
     };
   };
   "extraction.all.completed": {

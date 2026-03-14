@@ -39,14 +39,15 @@ datasource db {
 // =============================================================================
 
 model User {
-  id            String   @id @default(cuid())
+  id            String   @id    // Supabase auth.users.id (UUID), no auto-generate
   email         String   @unique
   displayName   String?
   avatarUrl     String?
 
-  // OAuth tokens (encrypted at rest)
-  // Stored as encrypted JSON: { access_token, refresh_token, expiry_date, scope }
-  googleTokens  Json?
+  // OAuth tokens (encrypted at rest via AES-256-GCM)
+  // Stored as encrypted string: "iv_hex:authTag_hex:ciphertext_hex"
+  // Decrypts to JSON: { access_token, refresh_token, expiry_date, scope }
+  googleTokens  String?
 
   // User-level settings
   timezone      String   @default("America/Chicago")

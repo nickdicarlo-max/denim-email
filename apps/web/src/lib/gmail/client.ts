@@ -31,11 +31,13 @@ export class GmailClient {
     logger.info({ service: "gmail", operation, query, maxResults });
 
     try {
-      const listResponse = await this.gmail.users.messages.list({
-        userId: "me",
-        q: query,
-        maxResults,
-      });
+      const listResponse = await this.callGmailWithRetry(() =>
+        this.gmail.users.messages.list({
+          userId: "me",
+          q: query,
+          maxResults,
+        }),
+      );
 
       const messageIds = listResponse.data.messages?.map((m: any) => m.id) ?? [];
       if (messageIds.length === 0) {
@@ -55,12 +57,14 @@ export class GmailClient {
         const batch = messageIds.slice(i, i + BATCH_SIZE);
         const results = await Promise.allSettled(
           batch.map((id: string) =>
-            this.gmail.users.messages.get({
-              userId: "me",
-              id,
-              format: "metadata",
-              metadataHeaders: METADATA_HEADERS,
-            }),
+            this.callGmailWithRetry(() =>
+              this.gmail.users.messages.get({
+                userId: "me",
+                id,
+                format: "metadata",
+                metadataHeaders: METADATA_HEADERS,
+              }),
+            ),
           ),
         );
 
@@ -104,11 +108,13 @@ export class GmailClient {
     logger.info({ service: "gmail", operation, messageId });
 
     try {
-      const response = await this.gmail.users.messages.get({
-        userId: "me",
-        id: messageId,
-        format: "full",
-      });
+      const response = await this.callGmailWithRetry(() =>
+        this.gmail.users.messages.get({
+          userId: "me",
+          id: messageId,
+          format: "full",
+        }),
+      );
 
       const meta = this.parseMessageMeta(response.data);
       const body = this.extractBody(response.data.payload);
@@ -193,9 +199,82 @@ export class GmailClient {
     return { messages, discoveries };
   }
 
+  /**
+   * Get full message content with a configurable delay after the call.
+   * Useful for batch extraction to pace Gmail API usage.
+   */
+  async getEmailFullWithPacing(messageId: string, delayMs = 100): Promise<GmailMessageFull> {
+    const result = await this.getEmailFull(messageId);
+    if (delayMs > 0) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return result;
+  }
+
+  /**
+   * Extract attachment metadata from a MIME payload without downloading content.
+   * Recursively walks the MIME tree to collect filename, mimeType, and size.
+   */
+  extractAttachmentMetadata(
+    payload: any,
+  ): Array<{
+    gmailAttachmentId: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+  }> {
+    const attachments: Array<{
+      gmailAttachmentId: string;
+      filename: string;
+      mimeType: string;
+      sizeBytes: number;
+    }> = [];
+    if (!payload) return attachments;
+
+    if (payload.body?.attachmentId && payload.filename) {
+      attachments.push({
+        gmailAttachmentId: payload.body.attachmentId,
+        filename: payload.filename,
+        mimeType: payload.mimeType ?? "application/octet-stream",
+        sizeBytes: payload.body.size ?? 0,
+      });
+    }
+
+    if (payload.parts) {
+      for (const part of payload.parts) {
+        attachments.push(...this.extractAttachmentMetadata(part));
+      }
+    }
+
+    return attachments;
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Retry wrapper for Gmail API calls.
+   * Retries on rate limit (429) and quota exceeded (403) errors with exponential backoff.
+   * Non-rate-limit errors are thrown immediately.
+   */
+  private async callGmailWithRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error: unknown) {
+        if (attempt === maxRetries) throw error;
+        const code =
+          (error as { code?: number })?.code ??
+          (error as { response?: { status?: number } })?.response?.status;
+        const isRateLimit = code === 429 || code === 403;
+        if (!isRateLimit) throw error;
+        const delay = 1000 * 3 ** attempt;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    throw new Error("Unreachable");
+  }
 
   private parseMessageMeta(msg: any): GmailMessageMeta {
     const headers: Record<string, string> = {};

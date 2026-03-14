@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-12
+Last updated: 2026-03-14
 
 ## Completed
 
@@ -80,6 +80,13 @@ Last updated: 2026-03-12
   - sessionStorage persistence for interview input across OAuth redirects
   - Loading overlays, error toasts, completion screen
 
+### Post-Phase 2: Defensive Patterns & Server-Side Token Storage (2026-03-13)
+- **Defensive API call patterns** — AbortControllers in all fetch hooks, per-session call counter (max 5 per endpoint), finalize button disabled while loading, elapsed timer with cancel for generating/finalizing overlays
+- **Server-side Gmail token storage** — GmailTokenService stores encrypted OAuth tokens (AES-256-GCM) in User.googleTokens. API routes use `getValidGmailToken(userId)` instead of extracting provider_token from Supabase session. Includes token refresh via Google OAuth2 endpoint with retry/backoff and optimistic locking for concurrent safety.
+- **OAuth callback token persistence** — Callback route stores tokens after code exchange. Client-side fallback via `/api/auth/store-tokens` endpoint with Google tokeninfo validation.
+- **User.id schema fix** — Changed from `@default(cuid())` to plain `@id` to store Supabase UUID directly. Changed `googleTokens` from `Json?` to `String?` (encrypted string, not JSON).
+- **Request-level logging** — Auth middleware logs every API request entry/completion with duration, status, userId.
+
 ## Bugs Found & Fixed During First Live Test (2026-03-12)
 
 ### Bug: Input tiny / Button huge on Card 1
@@ -131,25 +138,146 @@ Every AI call already logs to structured JSON (service, operation, model, inputT
 ### 6. Max-call-per-session safety net
 Add a per-session counter for AI API calls. If a single page session makes > 5 calls to the same endpoint, refuse further calls and surface an error. This is a last-resort defense against loops.
 
+## Phase 2 Test Results (2026-03-13)
+
+First successful end-to-end run with demo account (ndsoftwarecasatest@gmail.com):
+- Schema `cmmpb334b0001qeg0e152tsh9` created: 9 entities, 10 tags, 3 extracted fields
+- Hypothesis generation: ~28s (claude-sonnet-4-6)
+- Validate + scan: ~3s
+- Finalize: ~2.4s
+- No duplicate API calls, no runaway loops (defensive patterns working)
+
+### Verified
+- [x] OAuth flow completes, tokens stored encrypted (AES-256-GCM)
+- [x] Email metadata parses correctly
+- [x] Hypothesis validation produces refined schema
+- [x] Full interview flow: Card 1 → Card 2 → Card 3 → Card 4 → schema created
+- [x] Tokens encrypted at rest with TOKEN_ENCRYPTION_KEY
+
+### Needs Verification (will test during Phase 3+ when sessions are longer)
+- [ ] Token refresh works (code implemented, needs refresh token from `prompt=consent` + natural expiry)
+- [ ] Sample scan under 30 seconds for 200 emails (demo account may have <200 emails)
+- [ ] Under 3 minutes total Card 1 to schema (compute time ~34s, no clean timed run yet)
+
+### Phase 3: Extraction Pipeline (2026-03-13)
+- **@denim/ai extraction prompt + parser**
+  - `buildExtractionPrompt(email, schema)` — system/user prompt pair for Gemini with tag taxonomy, entity list, field definitions, exclusion patterns, JSON output format
+  - `parseExtractionResponse(raw)` — Zod-validated parser (summary, tags, extractedData, detectedEntities, isInternal, language)
+  - Shared `stripCodeFences` utility extracted from hypothesis/validation parsers
+  - 9 parser unit tests passing
+- **Gemini SDK integration** (`@google/generative-ai`)
+  - Real `callGemini` implementation in AI client wrapper (replaces stub)
+  - Rate limit detection for Gemini errors (429, RESOURCE_EXHAUSTED) in retry logic
+  - Model: `gemini-2.5-flash-preview-05-20`
+- **Entity matching in @denim/engine**
+  - Jaro-Winkler string similarity (pure functions, zero I/O)
+  - `fuzzyMatch` (candidate vs targets with aliases, threshold 0.85)
+  - `resolveEntity` (display name first, falls back to email local part)
+  - 16 unit tests passing (including known test vector MARTHA/MARHTA ≈ 0.961)
+- **Gmail API hardening**
+  - `callGmailWithRetry` — retries on 429/403 with exponential backoff
+  - `getEmailFullWithPacing(messageId, delayMs)` for batch extraction
+  - `extractAttachmentMetadata(payload)` for attachment metadata without downloading
+- **ExtractionService** (`apps/web/src/lib/services/extraction.ts`)
+  - `extractEmail` — exclusion check → Gemini call → parse → entity resolve → upsert Email row (transaction with SchemaTag/CaseSchema/Entity count increments) → ExtractionCost logging
+  - `processEmailBatch` — iterates messages with pacing, logs failures, continues
+  - Cost formula: `(inputTokens × 0.00000015) + (outputTokens × 0.0000006)`
+- **Exclusion rule matching** (`apps/web/src/lib/services/exclusion.ts`)
+  - DOMAIN, SENDER, KEYWORD (subject), THREAD rules; case-insensitive; skips inactive
+  - 7 unit tests passing
+- **Inngest pipeline functions** (`apps/web/src/lib/inngest/functions.ts`)
+  - `fanOutExtraction` (scan.emails.discovered → batches of 20, concurrency: 1/schemaId)
+  - `extractBatch` (extraction.batch.process, concurrency: 3/schemaId, retries: 3)
+  - `checkExtractionComplete` (extraction.batch.completed → tag frequency update → extraction.all.completed)
+- **API routes**
+  - POST `/api/extraction/trigger` — manual extraction trigger with schema ownership check
+  - POST `/api/interview/finalize` — now auto-triggers extraction after schema creation
+- **Discovery query safety limits** (`apps/web/src/lib/services/discovery.ts`)
+  - Hard 8-week lookback (`newer_than:8w` appended to every query)
+  - Hard 200 email cap across all queries combined (stops early once reached)
+  - Queries run in order; once cap hit, remaining queries skipped
+- **Event types updated** — userId, scanJobId, totalBatches added to pipeline events
+
+### Phase 3 First Live Test (2026-03-13)
+- Schema `cmmpi0rio0001qeag9gtjcyzm` created via nick.dicarlo@gmail.com (school_parent domain)
+- 10 discovery queries generated (soccer, guitar, dance, St Agnes, Lanier, etc.)
+- 513 emails discovered (no time limit or total cap was in place — now fixed)
+- Inngest fan-out triggered but failed: Inngest auto-discovered on port 3000 while Next.js was on 3001 → 404 errors on all batch calls
+- **Fix applied:** Must start Inngest with `-u http://localhost:3001/api/inngest`
+- 0 emails actually processed (all batches failed before Gemini was called)
+- **Needs re-test** with corrected Inngest URL and new discovery limits
+
+### Dashboard & Schema Detail Page (2026-03-14)
+- **SchemaCard clickable** — cards on `/dashboard` now link to `/dashboard/{schemaId}` via Next.js `Link`. Hover state with shadow/border transition. Delete button stays outside the link.
+- **Schema detail page** (`apps/web/src/app/dashboard/[schemaId]/page.tsx`) — NEW
+  - Server component, same auth pattern as dashboard (createServerSupabaseClient + user ownership check)
+  - Loads schema with relations: tags, entities, extractedFields, exclusionRules, scanJobs (latest 5)
+  - Displays: schema name/domain/status, stat cards (emails/cases/entities/tags), primary + secondary entities with counts, tag list (weak tags styled differently), extracted field definitions, exclusion rules with match counts, scan job history with status badges and phase labels
+  - Back link to `/dashboard`
+- **Scan trigger component** (`apps/web/src/components/dashboard/scan-trigger.tsx`) — NEW
+  - Client component with "Scan Emails" button that calls `POST /api/extraction/trigger`
+  - Ref guard prevents double-click, shows loading/success/error states
+  - On success displays: "Scan started: {emailCount} emails found"
+- Type-checks pass (`tsc --noEmit` clean)
+
+### Phase 3 Live Test Results (2026-03-14)
+
+First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
+- Schema `cmmpb334b0001qeg0e152tsh9`: 58 emails discovered, 58 processed, 0 excluded, 0 failed
+- 3 extraction batches (20 emails each), all completed successfully
+- Model: `gemini-2.5-flash` (stable GA)
+- ExtractionCost rows logged with token counts (~2000 input, ~130-250 output per email)
+- Tag frequencies recalculated, weak tags updated
+- `extraction.all.completed` event emitted
+
+### Bugs Found & Fixed During Live Test (2026-03-14)
+
+**Bug: Server Component cookie crash on landing page**
+- **Root cause:** `createServerSupabaseClient()` used `cookies()` from `next/headers` which throws when Supabase tries to refresh tokens via `setAll` in Server Components (read-only context)
+- **Fix:** Wrapped `setAll` in try/catch to silently no-op in Server Components. Added Next.js middleware with Supabase session refresh (official SSR pattern) that runs on all routes.
+
+**Bug: PKCE code verifier missing on OAuth callback**
+- **Root cause:** Auth callback used `createServerSupabaseClient()` with `cookies()` from `next/headers`. The PKCE code_verifier cookie set by the browser client wasn't accessible through this API.
+- **Fix:** Rewrote callback to use `request.cookies.getAll()` directly (official Supabase SSR pattern for Route Handlers). Callback now creates its own Supabase client with request/response cookie handlers and copies auth cookies to redirect responses.
+
+**Bug: Discovery queries returning 0 emails (newer_than:8w)**
+- **Root cause:** Gmail search API does not support `w` (weeks) as a time unit for `newer_than`. Valid units are `d` (days), `m` (months), `y` (years). Gmail silently returns 0 results instead of erroring on invalid syntax.
+- **Fix:** Changed `DISCOVERY_LOOKBACK` from `"8w"` to `"56d"` in discovery.ts.
+
+**Bug: Gemini model 404 (preview model retired)**
+- **Root cause:** `gemini-2.5-flash-preview-05-20` was a dated preview model that has been retired from the API.
+- **Fix:** Updated to `gemini-2.5-flash` (stable GA) in extraction.ts.
+
+**Bug: Scan button double-fire**
+- **Root cause:** Scan trigger button's ref guard reset in `finally` block, allowing a second click after the first request completed.
+- **Fix:** Only reset ref on error (so user can retry). Button stays disabled after successful scan trigger.
+
+**Bug: Auth callback redirected to /interview on error instead of /dashboard**
+- **Root cause:** All error paths in the auth callback redirected to `/interview?auth_error=true`, even for returning users with existing schemas.
+- **Fix:** Changed error redirects to `/` which has server-side auth check logic to route users to `/dashboard` or `/interview` based on schema count.
+
 ## Not Yet Done
 
 - Integration test (interview-service.test.ts) — needs real DB writes with test data
 - Playwright e2e for interview flow — Phase 6 per build plan
-- Extraction/synthesis prompts — Phase 3
-- AbortController integration for fetch calls in hooks
-- Per-session API call counter safety net
+- **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token. Acceptable for testing but not for production (high-frequency login via Chrome side panel). For production, use `prompt: "consent"` only on first authorization, then omit it on subsequent sign-ins. Requires tracking whether a user already has a stored refresh token and conditionally setting the query param.
+- Token refresh verification (code implemented, needs natural token expiry)
+- Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
+- Cost analysis — verify total extraction cost for 58 emails is under $0.50
 
-## Next Step
+## Next Step: Phase 4 — Clustering
 
-**Phase 3: Extraction Pipeline** (see docs/build-plan.md)
-- Tasks 3.1–3.5: Extraction prompt in @denim/ai, extraction parser, ExtractionService, Inngest fan-out job
-- Gemini Flash 2.5 integration for bulk email extraction + vision/OCR
+Gravity model scoring, deterministic clustering, case creation — see docs/build-plan.md
 
 ## Environment
 
 - ANTHROPIC_API_KEY: set in apps/web/.env.local (claude-sonnet-4-6 confirmed working)
+- GOOGLE_AI_API_KEY: set in apps/web/.env.local (Gemini Flash 2.5)
+- GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET: set in apps/web/.env.local (needed for token refresh)
+- TOKEN_ENCRYPTION_KEY: set in apps/web/.env.local (AES-256-GCM for OAuth token storage)
 - Rate limit: 8,000 output tokens/minute on claude-sonnet-4-6 (org tier)
 - Supabase: configured and connected
 - Node 22, pnpm workspaces
 - googleapis: installed in apps/web
 - @supabase/ssr: installed for cookie-based auth
+- @google/generative-ai: installed in apps/web

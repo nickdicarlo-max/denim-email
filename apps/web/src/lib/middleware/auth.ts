@@ -1,3 +1,4 @@
+import { logger } from "@/lib/logger";
 import { AuthError } from "@denim/types";
 import { createClient } from "@supabase/supabase-js";
 import { type NextRequest, NextResponse } from "next/server";
@@ -16,12 +17,25 @@ type AuthenticatedHandler = (context: AuthenticatedContext) => Promise<NextRespo
  */
 export function withAuth(handler: AuthenticatedHandler) {
   return async (request: NextRequest): Promise<NextResponse> => {
+    const startMs = Date.now();
+    const operation = `${request.method} ${new URL(request.url).pathname}`;
+
+    logger.info({ service: "api", operation });
+
     // Allow bypassing auth for local development/testing
     if (process.env.BYPASS_AUTH === "true") {
-      return handler({
+      const response = await handler({
         userId: "dev-user-id",
         request,
       });
+      logger.info({
+        service: "api",
+        operation: `${operation}.complete`,
+        userId: "dev-user-id",
+        status: response.status,
+        durationMs: Date.now() - startMs,
+      });
+      return response;
     }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -33,6 +47,7 @@ export function withAuth(handler: AuthenticatedHandler) {
 
     const authHeader = request.headers.get("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
+      logger.warn({ service: "api", operation, status: 401 });
       return NextResponse.json(
         { error: "Not authenticated", code: 401, type: "AUTH_ERROR" },
         { status: 401 },
@@ -50,12 +65,21 @@ export function withAuth(handler: AuthenticatedHandler) {
     } = await supabase.auth.getUser();
 
     if (error || !user) {
+      logger.warn({ service: "api", operation, status: 401 });
       return NextResponse.json(
         { error: "Not authenticated", code: 401, type: "AUTH_ERROR" },
         { status: 401 },
       );
     }
 
-    return handler({ userId: user.id, request });
+    const response = await handler({ userId: user.id, request });
+    logger.info({
+      service: "api",
+      operation: `${operation}.complete`,
+      userId: user.id,
+      status: response.status,
+      durationMs: Date.now() - startMs,
+    });
+    return response;
   };
 }

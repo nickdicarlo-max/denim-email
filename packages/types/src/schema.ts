@@ -88,6 +88,40 @@ export interface ClusteringConfig {
   reminderMaxAge: number;
 }
 
+export interface ExtractionInput {
+  subject: string;
+  sender: string;
+  senderEmail: string;
+  senderDomain: string;
+  senderDisplayName: string;
+  date: string; // ISO string
+  body: string;
+  isReply: boolean;
+}
+
+export interface ExtractionSchemaContext {
+  domain: string;
+  tags: { name: string; description: string }[];
+  entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[] }[];
+  extractedFields: { name: string; type: string; description: string; source: string }[];
+  exclusionPatterns: string[];
+}
+
+export interface DetectedEntity {
+  name: string;
+  type: "PRIMARY" | "SECONDARY";
+  confidence: number;
+}
+
+export interface ExtractionResult {
+  summary: string;
+  tags: string[];
+  extractedData: Record<string, unknown>;
+  detectedEntities: DetectedEntity[];
+  isInternal: boolean;
+  language: string | null;
+}
+
 export interface HypothesisValidation {
   confirmedEntities: string[];
   discoveredEntities: {

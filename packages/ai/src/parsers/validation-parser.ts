@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stripCodeFences } from "./utils";
 
 const DiscoveredEntitySchema = z.object({
   name: z.string(),
@@ -25,12 +26,7 @@ const ValidationResponseSchema = z.object({
 });
 
 export function parseValidationResponse(raw: string): z.infer<typeof ValidationResponseSchema> {
-  // Strip markdown code fences if present
-  let cleaned = raw.trim();
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-  }
-
+  const cleaned = stripCodeFences(raw);
   const parsed = JSON.parse(cleaned);
   return ValidationResponseSchema.parse(parsed);
 }

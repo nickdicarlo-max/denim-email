@@ -12,6 +12,24 @@ export default function InterviewPage() {
   const flow = useInterviewFlow();
   const [authToken, setAuthToken] = useState<string | null>(null);
 
+  // Elapsed timer for generating/finalizing overlays
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const isTimerActive = flow.step === "generating" || flow.step === "finalizing";
+
+  useEffect(() => {
+    if (!isTimerActive) {
+      setElapsedMs(0);
+      return;
+    }
+    const start = Date.now();
+    const interval = setInterval(() => {
+      setElapsedMs(Date.now() - start);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isTimerActive]);
+
+  const elapsedSeconds = Math.floor(elapsedMs / 1000);
+
   // Listen for auth state (e.g., returning from OAuth redirect)
   useEffect(() => {
     const supabase = createBrowserClient();
@@ -71,6 +89,16 @@ export default function InterviewPage() {
                 </svg>
               </div>
               <p className="text-sm text-secondary">Generating your schema...</p>
+              <p className="text-xs text-muted mt-1">{elapsedSeconds}s elapsed</p>
+              {elapsedSeconds >= 5 && (
+                <button
+                  type="button"
+                  onClick={flow.goBack}
+                  className="mt-3 text-xs font-medium text-accent-text hover:opacity-70 transition"
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -93,6 +121,7 @@ export default function InterviewPage() {
               hypothesis={flow.hypothesis}
               validation={flow.validation}
               discoveries={flow.discoveries}
+              isLoading={flow.step === "finalizing"}
               onFinalize={flow.onFinalize}
               onBack={flow.goBack}
             />
@@ -115,6 +144,7 @@ export default function InterviewPage() {
                 </svg>
               </div>
               <p className="text-sm text-secondary">Creating your schema...</p>
+              <p className="text-xs text-muted mt-1">{elapsedSeconds}s elapsed</p>
             </div>
           </div>
         )}

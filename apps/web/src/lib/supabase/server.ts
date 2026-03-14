@@ -21,8 +21,14 @@ export function createServerSupabaseClient() {
         return cookieStore.getAll();
       },
       setAll(cookiesToSet) {
-        for (const { name, value, options } of cookiesToSet) {
-          cookieStore.set(name, value, options);
+        try {
+          for (const { name, value, options } of cookiesToSet) {
+            cookieStore.set(name, value, options);
+          }
+        } catch {
+          // setAll is called from Server Components where cookies are read-only.
+          // This is expected — the session refresh will be handled by the
+          // Route Handler or middleware on the next request.
         }
       },
     },

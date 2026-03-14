@@ -5,6 +5,7 @@ import type { SchemaHypothesis } from "@denim/types";
  * Pure function — no I/O, no side effects.
  */
 import { z } from "zod";
+import { stripCodeFences } from "./utils";
 
 const secondaryEntityTypeSchema = z.object({
   name: z.string(),
@@ -88,19 +89,6 @@ const schemaHypothesisSchema = z.object({
   discoveryQueries: z.array(discoveryQuerySchema),
   exclusionPatterns: z.array(z.string()),
 });
-
-/**
- * Strips markdown code fences from a raw AI response string.
- */
-function stripCodeFences(raw: string): string {
-  const trimmed = raw.trim();
-  // Match ```json ... ``` or ``` ... ```
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/);
-  if (fenceMatch) {
-    return fenceMatch[1].trim();
-  }
-  return trimmed;
-}
 
 /**
  * Parses and validates an AI-generated hypothesis response.

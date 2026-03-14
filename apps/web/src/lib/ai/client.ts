@@ -5,11 +5,15 @@
 
 import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ExternalAPIError } from "@denim/types";
 import { callWithRetry } from "./retry";
 
 // Module-level singleton: reads ANTHROPIC_API_KEY from env automatically
 const anthropic = new Anthropic();
+
+// Module-level singleton: reads GOOGLE_AI_API_KEY from env
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY!);
 
 export interface AICallOptions {
   model: string;
@@ -63,8 +67,21 @@ async function callAI(
         };
       }
 
-      // Gemini: Phase 3
-      throw new ExternalAPIError("Gemini SDK not integrated yet. Planned for Phase 3.", provider);
+      // Gemini
+      const geminiModel = genAI.getGenerativeModel({ model: options.model });
+      const response = await geminiModel.generateContent({
+        systemInstruction: options.system,
+        contents: [{ role: "user", parts: [{ text: options.user }] }],
+      });
+
+      const content = response.response.text();
+      const usage = response.response.usageMetadata;
+
+      return {
+        content,
+        inputTokens: usage?.promptTokenCount ?? 0,
+        outputTokens: usage?.candidatesTokenCount ?? 0,
+      };
     });
 
     const latencyMs = Date.now() - start;
@@ -105,7 +122,6 @@ export async function callClaude(options: AICallOptions): Promise<AICallResult> 
 
 /**
  * Call Gemini API with retry and logging.
- * SDK will be integrated in Phase 3.
  */
 export async function callGemini(options: AICallOptions): Promise<AICallResult> {
   return callAI("gemini", options);

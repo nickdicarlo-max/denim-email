@@ -1,9 +1,11 @@
 "use client";
+import { checkAndIncrementCallCount } from "@/lib/api-call-guard";
 import type { ScanDiscovery } from "@/lib/gmail/types";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const STORAGE_KEY = "denim_interview_input";
+const HYPOTHESIS_KEY = "denim_interview_hypothesis";
 
 export type InterviewStep =
   | "input"
@@ -57,6 +59,35 @@ function clearSavedInput() {
   }
 }
 
+function loadSavedHypothesis(): SchemaHypothesis | null {
+  try {
+    const saved = sessionStorage.getItem(HYPOTHESIS_KEY);
+    return saved ? JSON.parse(saved) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveHypothesis(hypothesis: SchemaHypothesis) {
+  try {
+    sessionStorage.setItem(HYPOTHESIS_KEY, JSON.stringify(hypothesis));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function clearSavedHypothesis() {
+  try {
+    sessionStorage.removeItem(HYPOTHESIS_KEY);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
+}
+
 export function useInterviewFlow() {
   const [state, setState] = useState<InterviewState>({
     step: "input",
@@ -72,14 +103,32 @@ export function useInterviewFlow() {
   const authTokenRef = useRef<string | null>(null);
   const inputRef = useRef<InterviewInput | null>(null);
   const generatingRef = useRef(false);
+  const finalizingRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  // On mount: check if we have saved input from before OAuth redirect.
-  // If so, resume at gmail_connect step (Card2 will detect the session).
+  // Cleanup: abort any in-flight request on unmount
   useEffect(() => {
-    const saved = loadSavedInput();
-    if (saved) {
-      inputRef.current = saved;
-      setState((prev) => ({ ...prev, step: "gmail_connect", input: saved }));
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
+  // On mount: restore saved state from sessionStorage.
+  // If we have a hypothesis, skip straight to scanning.
+  // If we have input, resume at gmail_connect (Card2 will detect the session).
+  useEffect(() => {
+    const savedHypothesis = loadSavedHypothesis();
+    const savedInput = loadSavedInput();
+    if (savedHypothesis) {
+      setState((prev) => ({
+        ...prev,
+        step: "scanning",
+        input: savedInput,
+        hypothesis: savedHypothesis,
+      }));
+    } else if (savedInput) {
+      inputRef.current = savedInput;
+      setState((prev) => ({ ...prev, step: "gmail_connect", input: savedInput }));
     }
   }, []);
 
@@ -96,6 +145,20 @@ export function useInterviewFlow() {
     if (generatingRef.current) return;
     generatingRef.current = true;
 
+    if (!checkAndIncrementCallCount("/api/interview/hypothesis")) {
+      generatingRef.current = false;
+      setState((prev) => ({
+        ...prev,
+        error: "Too many hypothesis requests this session. Please refresh.",
+      }));
+      return;
+    }
+
+    // Abort any prior in-flight request
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     authTokenRef.current = authToken;
     setState((prev) => ({ ...prev, step: "generating", error: null }));
 
@@ -107,6 +170,7 @@ export function useInterviewFlow() {
           Authorization: `Bearer ${authToken}`,
         },
         body: JSON.stringify(inputRef.current),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -116,8 +180,9 @@ export function useInterviewFlow() {
 
       const { data } = await response.json();
 
-      // Input is no longer needed after hypothesis is generated
+      // Input is no longer needed; cache hypothesis for resume
       clearSavedInput();
+      saveHypothesis(data);
 
       setState((prev) => ({
         ...prev,
@@ -125,6 +190,7 @@ export function useInterviewFlow() {
         hypothesis: data,
       }));
     } catch (err) {
+      if (isAbortError(err) || controller.signal.aborted) return;
       generatingRef.current = false;
       setState((prev) => ({
         ...prev,
@@ -145,6 +211,24 @@ export function useInterviewFlow() {
   // Card 4 → Finalize
   const onFinalize = useCallback(
     async (confirmations: Record<string, unknown>) => {
+      // Guard against duplicate finalize calls
+      if (finalizingRef.current) return;
+      finalizingRef.current = true;
+
+      if (!checkAndIncrementCallCount("/api/interview/finalize")) {
+        finalizingRef.current = false;
+        setState((prev) => ({
+          ...prev,
+          error: "Too many finalize requests this session. Please refresh.",
+        }));
+        return;
+      }
+
+      // Abort any prior in-flight request
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       setState((prev) => ({ ...prev, step: "finalizing", error: null }));
 
       try {
@@ -160,6 +244,7 @@ export function useInterviewFlow() {
             validation: state.validation,
             confirmations,
           }),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -170,8 +255,11 @@ export function useInterviewFlow() {
         const { data } = await response.json();
 
         clearSavedInput();
+        clearSavedHypothesis();
         setState((prev) => ({ ...prev, step: "complete", schemaId: data.schemaId }));
       } catch (err) {
+        if (isAbortError(err) || controller.signal.aborted) return;
+        finalizingRef.current = false;
         setState((prev) => ({
           ...prev,
           step: "review",
@@ -184,12 +272,19 @@ export function useInterviewFlow() {
 
   // Go back one step
   const goBack = useCallback(() => {
+    // Abort any in-flight request
+    abortControllerRef.current?.abort();
+
     setState((prev) => {
       switch (prev.step) {
         case "gmail_connect":
           clearSavedInput();
           return { ...prev, step: "input" as const, input: null };
+        case "generating":
+          generatingRef.current = false;
+          return { ...prev, step: "gmail_connect" as const };
         case "scanning":
+          clearSavedHypothesis();
           return { ...prev, step: "gmail_connect" as const, hypothesis: null };
         case "review":
           return { ...prev, step: "scanning" as const, validation: null, discoveries: [] };
