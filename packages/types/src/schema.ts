@@ -122,6 +122,122 @@ export interface ExtractionResult {
   language: string | null;
 }
 
+// =============================================================================
+// CLUSTERING ENGINE TYPES
+// =============================================================================
+
+/** Email shape for the clustering engine (pure data, no Prisma). */
+export interface ClusterEmailInput {
+  id: string;
+  threadId: string;
+  subject: string;
+  tags: string[];
+  date: Date;
+  senderEntityId: string | null;
+  entityId: string | null;
+}
+
+/** Existing case shape for scoring (pure data, no Prisma). */
+export interface ClusterCaseInput {
+  id: string;
+  entityId: string;
+  threadIds: string[];
+  anchorTags: string[];
+  senderEntityIds: string[];
+  subject: string;
+  emailCount: number;
+  lastEmailDate: Date;
+}
+
+/** Audit trail for a single email-vs-case scoring. */
+export interface ScoreBreakdown {
+  threadScore: number;
+  tagScore: number;
+  subjectScore: number;
+  actorScore: number;
+  caseSizeBonus: number;
+  timeDecayMultiplier: number;
+  rawScore: number;
+  finalScore: number;
+}
+
+/** Result of scoring one email against one case. */
+export interface ScoringResult {
+  caseId: string;
+  score: number;
+  breakdown: ScoreBreakdown;
+}
+
+/** Output decision for a thread group. */
+export interface ClusterDecision {
+  action: "MERGE" | "CREATE";
+  targetCaseId: string | null;
+  emailIds: string[];
+  threadIds: string[];
+  score: number;
+  breakdown: ScoreBreakdown | null;
+  primaryTag: string | null;
+  entityId: string | null;
+}
+
+/** Tag frequency data for weak tag discount. */
+export interface TagFrequencyMap {
+  [tagName: string]: { frequency: number; isWeak: boolean };
+}
+
+// =============================================================================
+// SYNTHESIS TYPES
+// =============================================================================
+
+export interface SynthesisEmailInput {
+  id: string;
+  subject: string;
+  senderDisplayName: string;
+  senderEmail: string;
+  date: string;
+  summary: string;
+  tags: string[];
+  isReply: boolean;
+}
+
+export interface SynthesisSchemaContext {
+  domain: string;
+  summaryLabels: { beginning: string; middle: string; end: string };
+  tags: { name: string; description: string }[];
+  entities: { name: string; type: string }[];
+  extractedFields: { name: string; type: string; description: string }[];
+}
+
+export interface SynthesisResult {
+  title: string;
+  summary: {
+    beginning: string;
+    middle: string;
+    end: string;
+  };
+  displayTags: string[];
+  primaryActor: {
+    name: string;
+    entityType: string;
+  } | null;
+  actions: SynthesisAction[];
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+}
+
+export interface SynthesisAction {
+  title: string;
+  description: string | null;
+  actionType: "TASK" | "EVENT" | "PAYMENT" | "DEADLINE" | "RESPONSE";
+  dueDate: string | null;
+  eventStartTime: string | null;
+  eventEndTime: string | null;
+  eventLocation: string | null;
+  confidence: number;
+  amount: number | null;
+  currency: string | null;
+  sourceEmailId: string | null;
+}
+
 export interface HypothesisValidation {
   confirmedEntities: string[];
   discoveredEntities: {

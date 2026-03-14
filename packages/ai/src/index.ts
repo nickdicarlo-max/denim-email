@@ -7,3 +7,6 @@ export { parseValidationResponse } from "./parsers/validation-parser";
 export { buildExtractionPrompt } from "./prompts/extraction";
 export type { ExtractionPromptResult } from "./prompts/extraction";
 export { parseExtractionResponse } from "./parsers/extraction-parser";
+export { buildSynthesisPrompt } from "./prompts/synthesis";
+export type { SynthesisPromptResult } from "./prompts/synthesis";
+export { parseSynthesisResponse } from "./parsers/synthesis-parser";

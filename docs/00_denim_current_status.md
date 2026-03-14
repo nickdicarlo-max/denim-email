@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-14
+Last updated: 2026-03-14 (Phase 5 added)
 
 ## Completed
 
@@ -256,6 +256,48 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - **Root cause:** All error paths in the auth callback redirected to `/interview?auth_error=true`, even for returning users with existing schemas.
 - **Fix:** Changed error redirects to `/` which has server-side auth check logic to route users to `/dashboard` or `/interview` based on schema count.
 
+### Phase 4: Clustering (2026-03-14)
+- **Gravity model scoring in @denim/engine** (`packages/engine/src/clustering/`)
+  - `scoring.ts` — `threadScore`, `tagScore`, `subjectScore`, `actorScore`, `caseSizeBonus`, `timeDecayMultiplier` (pure functions, explicit `now` param)
+  - `gravity-model.ts` — `scoreEmailAgainstCase`, `findBestCase`, `clusterEmails`, `computeAnchorTags`
+  - `reminder-detection.ts` — `isReminder` (subject similarity + time window)
+  - 23 scoring tests + 17 clustering tests passing
+- **ClusterService** (`apps/web/src/lib/services/cluster.ts`)
+  - `clusterNewEmails(schemaId, scanJobId)` — loads unclustered emails, existing cases, runs gravity model, writes Case shells + CaseEmail + Cluster records in transaction
+  - Case shells created with subject-based titles, anchorTags, allTags, denormalized sender/date fields
+  - Updates CaseSchema.caseCount
+- **Inngest `runClustering`** — triggered by `extraction.all.completed`, concurrency: 1/schemaId, retries: 2
+  - Updates ScanJob phase to CLUSTERING, emits `clustering.completed` with clusterIds
+
+### Phase 5: Synthesis Service (2026-03-14)
+- **SynthesisResult types** (`packages/types/src/schema.ts`)
+  - `SynthesisResult`, `SynthesisAction`, `SynthesisEmailInput`, `SynthesisSchemaContext`
+- **Synthesis prompt builder** (`packages/ai/src/prompts/synthesis.ts`)
+  - `buildSynthesisPrompt(emails, schema)` — system/user prompt pair for Claude
+  - System prompt includes summaryLabels, tag taxonomy, entity list, action extraction instructions, dedup guidance, completion detection
+  - User prompt lists emails chronologically with id, subject, sender, date, summary, tags
+- **Synthesis parser** (`packages/ai/src/parsers/synthesis-parser.ts`)
+  - Zod-validated: title (max 60 chars), 3-part summary, displayTags, primaryActor, actions (typed), status
+  - 12 parser unit tests passing
+- **Action dedup in @denim/engine** (`packages/engine/src/actions/dedup.ts`)
+  - `generateFingerprint(title)` — lowercase, strip stop words, sort tokens alphabetically
+  - `matchAction(fingerprint, existing[], threshold)` — Jaro-Winkler match above 0.85
+  - 13 unit tests passing
+- **SynthesisService** (`apps/web/src/lib/services/synthesis.ts`)
+  - `synthesizeCase(caseId, schemaId, scanJobId?)` — loads case with emails, builds prompt, calls Claude (claude-sonnet-4-5-20250514), parses response, dedup actions via fingerprinting, aggregates extracted field data per ExtractedFieldDef.aggregation, writes all in transaction
+  - Creates/updates CaseAction rows with fingerprints, reminderCount increment for dedup matches
+  - Aggregation functions: SUM, LATEST, MAX, MIN, COUNT, FIRST
+  - Logs ExtractionCost row per synthesis call
+  - Updates Case: title, summary, displayTags, primaryActor, status, aggregatedData, lastSenderName, lastSenderEntity
+- **Inngest `runSynthesis`** (`apps/web/src/lib/inngest/functions.ts`)
+  - Triggered by `clustering.completed`, concurrency: 2/schemaId, retries: 2
+  - Loads cases from cluster records, synthesizes each sequentially
+  - Updates ScanJob phase: SYNTHESIZING → COMPLETED, status → COMPLETED
+  - Emits `synthesis.case.completed` for each case
+  - Graceful per-case error handling (one failure doesn't stop pipeline)
+- **Full pipeline chain:** scan → extract → cluster → **synthesize** → COMPLETED
+- **Test results:** 69 engine tests, 29 AI tests — all passing. `pnpm --filter web build` clean.
+
 ## Not Yet Done
 
 - Integration test (interview-service.test.ts) — needs real DB writes with test data
@@ -265,9 +307,9 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
 - Cost analysis — verify total extraction cost for 58 emails is under $0.50
 
-## Next Step: Phase 4 — Clustering
+## Next Step: Phase 6 — Chrome Extension & Case Feed UI
 
-Gravity model scoring, deterministic clustering, case creation — see docs/build-plan.md
+Case feed rendering, Chrome side panel, Playwright e2e tests — see docs/build-plan.md
 
 ## Environment
 

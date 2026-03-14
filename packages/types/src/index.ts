@@ -21,6 +21,16 @@ export type {
   ExtractionSchemaContext,
   DetectedEntity,
   ExtractionResult,
+  ClusterEmailInput,
+  ClusterCaseInput,
+  ScoreBreakdown,
+  ScoringResult,
+  ClusterDecision,
+  TagFrequencyMap,
+  SynthesisEmailInput,
+  SynthesisSchemaContext,
+  SynthesisResult,
+  SynthesisAction,
 } from "./schema";
 
 export type {

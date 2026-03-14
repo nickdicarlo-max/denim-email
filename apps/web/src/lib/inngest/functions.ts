@@ -1,5 +1,7 @@
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { processEmailBatch } from "@/lib/services/extraction";
+import { clusterNewEmails } from "@/lib/services/cluster";
+import { synthesizeCase } from "@/lib/services/synthesis";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { inngest } from "./client";
@@ -198,14 +200,11 @@ export const checkExtractionComplete = inngest.createFunction(
         scanJob.processedEmails + scanJob.excludedEmails + scanJob.failedEmails;
 
       if (totalProcessed >= scanJob.totalEmails) {
-        // All emails processed — finalize
+        // All emails processed — keep EXTRACTING phase, clustering will advance it
         await prisma.scanJob.update({
           where: { id: scanJobId },
           data: {
-            phase: "COMPLETED",
-            status: scanJob.failedEmails > 0 ? "COMPLETED" : "COMPLETED",
-            completedAt: new Date(),
-            statusMessage: `Done: ${scanJob.processedEmails} extracted, ${scanJob.excludedEmails} excluded, ${scanJob.failedEmails} failed`,
+            statusMessage: `Extraction done: ${scanJob.processedEmails} extracted, ${scanJob.excludedEmails} excluded, ${scanJob.failedEmails} failed. Starting clustering...`,
           },
         });
 
@@ -253,4 +252,200 @@ export const checkExtractionComplete = inngest.createFunction(
   },
 );
 
-export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete];
+/**
+ * Run clustering after all extraction is complete.
+ * CPU + DB only (no external API calls), so a single function is fine.
+ */
+export const runClustering = inngest.createFunction(
+  {
+    id: "run-clustering",
+    concurrency: {
+      limit: 1,
+      key: "event.data.schemaId",
+    },
+    retries: 2,
+  },
+  { event: "extraction.all.completed" },
+  async ({ event, step }) => {
+    const { schemaId, scanJobId } = event.data;
+
+    // 1. Update phase to CLUSTERING
+    await step.run("update-phase", async () => {
+      await prisma.scanJob.update({
+        where: { id: scanJobId },
+        data: {
+          phase: "CLUSTERING",
+          statusMessage: "Clustering emails into cases...",
+        },
+      });
+    });
+
+    // 2. Run clustering
+    const result = await step.run("cluster-emails", async () => {
+      return await clusterNewEmails(schemaId, scanJobId);
+    });
+
+    // 3. Update scan job counts
+    await step.run("update-counts", async () => {
+      await prisma.scanJob.update({
+        where: { id: scanJobId },
+        data: {
+          clustersCreated: result.clustersCreated,
+          casesCreated: result.casesCreated,
+          casesMerged: result.casesMerged,
+          statusMessage: `Clustering done: ${result.casesCreated} cases created, ${result.casesMerged} merged`,
+        },
+      });
+    });
+
+    // 4. Emit clustering.completed event
+    await step.run("emit-completed", async () => {
+      await inngest.send({
+        name: "clustering.completed",
+        data: {
+          schemaId,
+          clusterIds: result.clusterIds,
+        },
+      });
+
+      logger.info({
+        service: "inngest",
+        operation: "clusteringComplete",
+        schemaId,
+        casesCreated: result.casesCreated,
+        casesMerged: result.casesMerged,
+        clustersCreated: result.clustersCreated,
+      });
+    });
+  },
+);
+
+/**
+ * Run synthesis after clustering is complete.
+ * Calls Claude for each case to generate titles, summaries, tags, and actions.
+ * Sequential per case to respect API rate limits.
+ */
+export const runSynthesis = inngest.createFunction(
+  {
+    id: "run-synthesis",
+    concurrency: {
+      limit: 2,
+      key: "event.data.schemaId",
+    },
+    retries: 2,
+  },
+  { event: "clustering.completed" },
+  async ({ event, step }) => {
+    const { schemaId, clusterIds } = event.data;
+
+    // 1. Find the active scan job for this schema to update phase
+    const scanJobId = await step.run("find-scan-job", async () => {
+      const scanJob = await prisma.scanJob.findFirst({
+        where: { schemaId, status: "RUNNING" },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      });
+      return scanJob?.id ?? null;
+    });
+
+    // 2. Update phase to SYNTHESIZING
+    if (scanJobId) {
+      await step.run("update-phase", async () => {
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: {
+            phase: "SYNTHESIZING",
+            statusMessage: "Generating case summaries and actions...",
+          },
+        });
+      });
+    }
+
+    // 3. Load case IDs from cluster records
+    const caseIds = await step.run("load-cases", async () => {
+      // Get cases from the clusters created in this run
+      const clusters = await prisma.cluster.findMany({
+        where: { id: { in: clusterIds } },
+        select: { resultCaseId: true },
+      });
+
+      const ids = [
+        ...new Set(
+          clusters
+            .map((c) => c.resultCaseId)
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+
+      logger.info({
+        service: "inngest",
+        operation: "runSynthesis.loadCases",
+        schemaId,
+        clusterCount: clusterIds.length,
+        caseCount: ids.length,
+      });
+
+      return ids;
+    });
+
+    // 4. Synthesize each case sequentially
+    let synthesizedCount = 0;
+    let failedCount = 0;
+
+    for (const caseId of caseIds) {
+      await step.run(`synthesize-${caseId}`, async () => {
+        try {
+          await synthesizeCase(caseId, schemaId, scanJobId ?? undefined);
+          synthesizedCount++;
+        } catch (error) {
+          failedCount++;
+          logger.error({
+            service: "inngest",
+            operation: "runSynthesis.caseFailed",
+            schemaId,
+            caseId,
+            error,
+          });
+          // Continue with other cases — don't let one failure stop the pipeline
+        }
+      });
+    }
+
+    // 5. Update scan job to COMPLETED
+    if (scanJobId) {
+      await step.run("complete-job", async () => {
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: {
+            phase: "COMPLETED",
+            status: "COMPLETED",
+            completedAt: new Date(),
+            statusMessage: `Pipeline complete: ${synthesizedCount} cases synthesized${failedCount > 0 ? `, ${failedCount} failed` : ""}`,
+          },
+        });
+      });
+    }
+
+    // 6. Emit synthesis.case.completed events
+    await step.run("emit-events", async () => {
+      const events = caseIds.map((caseId) => ({
+        name: "synthesis.case.completed" as const,
+        data: { schemaId, caseId },
+      }));
+
+      if (events.length > 0) {
+        await inngest.send(events);
+      }
+
+      logger.info({
+        service: "inngest",
+        operation: "synthesisComplete",
+        schemaId,
+        synthesizedCount,
+        failedCount,
+      });
+    });
+  },
+);
+
+export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runClustering, runSynthesis];
