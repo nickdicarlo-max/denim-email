@@ -5,7 +5,10 @@ export default defineConfig({
   test: {
     include: ["tests/integration/**/*.test.ts"],
     environment: "node",
-    testTimeout: 30000,
+    testTimeout: 600000,
+    setupFiles: ["tests/integration/helpers/setup.ts"],
+    fileParallelism: false,
+    pool: "forks",
   },
   resolve: {
     alias: {

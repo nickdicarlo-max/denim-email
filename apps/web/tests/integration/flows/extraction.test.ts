@@ -232,9 +232,16 @@ describe("Extraction Flow (live Gemini)", () => {
   // ExtractionCost logged
   // -------------------------------------------------------------------
   it("ExtractionCost row was created for the Gemini call", async () => {
+    // Find email IDs for this schema to filter costs
+    const emails = await prisma.email.findMany({
+      where: { schemaId: testSchema.schema.id },
+      select: { id: true },
+    });
+    const emailIds = emails.map((e) => e.id);
+
     const costs = await prisma.extractionCost.findMany({
       where: {
-        email: { schemaId: testSchema.schema.id },
+        emailId: { in: emailIds },
         operation: "extraction",
       },
     });
