@@ -13,6 +13,9 @@ from the start. Gmail access means we hold sensitive data and need to earn trust
 
 https://github.com/nickdicarlo-max/denim-email
 
+## Supabase Schema
+to update the schema, use the URL in the .env.local file, not the MCP
+
 ## Stack
 
 - **Framework:** Next.js 14 (App Router), TypeScript (strict mode)

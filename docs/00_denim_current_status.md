@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-14 (Phase 5 added)
+Last updated: 2026-03-15 (DB wipe + Phase 4+5 bug fixes)
 
 ## Completed
 
@@ -168,7 +168,7 @@ First successful end-to-end run with demo account (ndsoftwarecasatest@gmail.com)
 - **Gemini SDK integration** (`@google/generative-ai`)
   - Real `callGemini` implementation in AI client wrapper (replaces stub)
   - Rate limit detection for Gemini errors (429, RESOURCE_EXHAUSTED) in retry logic
-  - Model: `gemini-2.5-flash-preview-05-20`
+  - Model: `gemini-2.5-flash` (updated from retired preview model)
 - **Entity matching in @denim/engine**
   - Jaro-Winkler string similarity (pure functions, zero I/O)
   - `fuzzyMatch` (candidate vs targets with aliases, threshold 0.85)
@@ -284,7 +284,7 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
   - `matchAction(fingerprint, existing[], threshold)` — Jaro-Winkler match above 0.85
   - 13 unit tests passing
 - **SynthesisService** (`apps/web/src/lib/services/synthesis.ts`)
-  - `synthesizeCase(caseId, schemaId, scanJobId?)` — loads case with emails, builds prompt, calls Claude (claude-sonnet-4-5-20250514), parses response, dedup actions via fingerprinting, aggregates extracted field data per ExtractedFieldDef.aggregation, writes all in transaction
+  - `synthesizeCase(caseId, schemaId, scanJobId?)` — skip guard checks `synthesizedAt` + new CaseEmail count to avoid re-synthesizing unchanged cases. Loads case with emails, builds prompt, calls Claude (claude-sonnet-4-5-20250514), parses response, dedup actions via fingerprinting, aggregates extracted field data per ExtractedFieldDef.aggregation, writes all in transaction (including `synthesizedAt`)
   - Creates/updates CaseAction rows with fingerprints, reminderCount increment for dedup matches
   - Aggregation functions: SUM, LATEST, MAX, MIN, COUNT, FIRST
   - Logs ExtractionCost row per synthesis call
@@ -296,20 +296,73 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
   - Emits `synthesis.case.completed` for each case
   - Graceful per-case error handling (one failure doesn't stop pipeline)
 - **Full pipeline chain:** scan → extract → cluster → **synthesize** → COMPLETED
-- **Test results:** 69 engine tests, 29 AI tests — all passing. `pnpm --filter web build` clean.
+- **Test results:** 105 total tests passing (69 engine, 29 AI, 7 web). `pnpm --filter web build` clean.
 
-## Not Yet Done
+## Needs Verification
 
-- Integration test (interview-service.test.ts) — needs real DB writes with test data
-- Playwright e2e for interview flow — Phase 6 per build plan
-- **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token. Acceptable for testing but not for production (high-frequency login via Chrome side panel). For production, use `prompt: "consent"` only on first authorization, then omit it on subsequent sign-ins. Requires tracking whether a user already has a stored refresh token and conditionally setting the query param.
-- Token refresh verification (code implemented, needs natural token expiry)
-- Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
-- Cost analysis — verify total extraction cost for 58 emails is under $0.50
+### Phase 4+5 Live Test (DB wiped 2026-03-15, ready for clean run)
+- [ ] Full pipeline: scan → extract → cluster → synthesize → COMPLETED (end-to-end via Inngest)
+- [ ] Case rows have AI-generated titles (not just first email subject)
+- [ ] Case summaries use schema's summaryLabels (beginning/middle/end)
+- [ ] CaseAction rows created with fingerprints and correct actionTypes
+- [ ] Action dedup works: reminder emails don't create duplicate actions
+- [ ] ScanJob shows COMPLETED phase after synthesis finishes
+- [ ] Dashboard schema detail page shows updated caseCount
+- [ ] ExtractionCost rows logged for synthesis calls (model: claude-sonnet-4-5-20250514)
+- [ ] Aggregated field data computed correctly per ExtractedFieldDef.aggregation
+- [ ] Actions stat card shows real CaseAction count (not clustering ops)
+- [ ] Re-scan skips already-extracted emails (emailCount doesn't inflate)
+- [ ] Re-scan skips already-synthesized cases with no new emails (no wasted Claude calls)
+- [ ] CaseSchema.emailCount and caseCount are accurate after first run
+
+### Bugs / Fixes Needed
+- [x] **Skip already-extracted emails on re-scan** — Fixed: `processEmailBatch` now pre-checks existing emails and skips Gmail fetch + Gemini call. `extractEmail` only increments counts on INSERT, not UPDATE.
+- [x] **Synthesis re-runs on already-synthesized cases** — Fixed: Added `synthesizedAt DateTime?` to Case model. `synthesizeCase()` checks if `synthesizedAt` is set and no new CaseEmail rows exist since then — skips with log "already_synthesized_no_new_emails". Sets `synthesizedAt` in the update transaction.
+- [x] **Actions stat card shows wrong metric** — Fixed: Was showing `casesCreated + casesMerged` (clustering ops). Now queries actual `CaseAction` count from the status API endpoint and displays that.
+- [x] **DB wipe for clean re-test** — All data tables truncated (FK-safe order) via `scripts/wipe-db.ts`. User row deleted; will re-authenticate via OAuth.
+
+### Ongoing
+- [ ] Token refresh works (code implemented, needs natural token expiry)
+- [ ] Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
+- [ ] Cost analysis — verify total extraction cost for 58 emails is under $0.50
+- [ ] Integration test (interview-service.test.ts) — needs real DB writes with test data
+- [ ] Playwright e2e for interview flow — Phase 6 per build plan
+- [ ] **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token. For production, use `prompt: "consent"` only on first authorization, then omit it on subsequent sign-ins.
 
 ## Next Step: Phase 6 — Chrome Extension & Case Feed UI
 
 Case feed rendering, Chrome side panel, Playwright e2e tests — see docs/build-plan.md
+
+## Pipeline Architecture (complete as of Phase 5)
+
+```
+Interview finalize / Dashboard "Scan Emails"
+  → ScanJob created (PENDING)
+  → discovery.ts finds Gmail messages
+  → emits scan.emails.discovered
+
+fanOutExtraction (concurrency: 1/schema)
+  → splits into batches of 20
+  → emits extraction.batch.process per batch
+
+extractBatch (concurrency: 3/schema, retries: 3)
+  → Gemini extracts summary/tags/entities per email
+  → emits extraction.batch.completed
+
+checkExtractionComplete (concurrency: 1/schema)
+  → updates tag frequencies
+  → emits extraction.all.completed
+
+runClustering (concurrency: 1/schema, retries: 2)
+  → gravity model: pure scoring → Case shells + CaseEmail
+  → emits clustering.completed
+
+runSynthesis (concurrency: 2/schema, retries: 2)
+  → Claude enriches each case: title, summary, tags, actor, actions
+  → action dedup via fingerprinting
+  → ScanJob → COMPLETED
+  → emits synthesis.case.completed per case
+```
 
 ## Environment
 

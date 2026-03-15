@@ -24,7 +24,12 @@
       "Bash(taskkill //PID 34188 //F)",
       "Bash(netstat -ano | grep -E \"LISTENING.*\\(3000|3001\\)\" 2>/dev/null || ss -tlnp | grep -E \"3000|3001\" 2>/dev/null || echo \"Cannot check ports\")",
       "Bash(cd \"C:/Users/alkam/Documents/NDSoftware/denim-email/apps/web\" && ./node_modules/.bin/tsc --noEmit 2>&1 | head -50)",
-      "Bash(netstat -ano | grep LISTENING | grep -E ':\\(3000|3001|3002|4000|8080|8288\\)' 2>/dev/null || ss -tlnp 2>/dev/null | grep -E ':\\(3000|3001|3002|4000|8080|8288\\)')"
+      "Bash(netstat -ano | grep LISTENING | grep -E ':\\(3000|3001|3002|4000|8080|8288\\)' 2>/dev/null || ss -tlnp 2>/dev/null | grep -E ':\\(3000|3001|3002|4000|8080|8288\\)')",
+      "Bash(cd:*)",
+      "mcp__plugin_supabase_supabase__execute_sql",
+      "mcp__plugin_supabase_supabase__list_projects",
+      "Bash(PGPASSWORD=j4vcoiu2yfjhbdfv78ywekhjbadvhjae psql \"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" -c \"\nSELECT \n  \\(SELECT count\\(*\\) FROM cases\\) as cases,\n  \\(SELECT count\\(*\\) FROM case_emails\\) as case_emails,\n  \\(SELECT count\\(*\\) FROM clusters\\) as clusters,\n  \\(SELECT count\\(*\\) FROM case_actions\\) as actions,\n  \\(SELECT count\\(*\\) FROM emails WHERE \\\\\"isExcluded\\\\\" = false\\) as emails,\n  \\(SELECT count\\(*\\) FROM emails\\) as total_emails;\n\")",
+      "Bash(tasklist:*)"
     ]
   }
 }
