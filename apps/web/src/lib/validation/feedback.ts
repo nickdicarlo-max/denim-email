@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const FeedbackInputSchema = z.object({
-	schemaId: z.string().uuid("schemaId must be a valid UUID"),
+	schemaId: z.string().min(1, "schemaId is required"),
 	type: z.enum([
 		"THUMBS_UP",
 		"THUMBS_DOWN",
@@ -13,8 +13,8 @@ export const FeedbackInputSchema = z.object({
 		"ENTITY_MERGE",
 		"ENTITY_EDIT",
 	]),
-	caseId: z.string().uuid().optional(),
-	emailId: z.string().uuid().optional(),
+	caseId: z.string().min(1).optional(),
+	emailId: z.string().min(1).optional(),
 	payload: z.record(z.unknown()).optional(),
 });
 

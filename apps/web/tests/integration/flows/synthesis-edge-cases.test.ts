@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 
 let testUser: TestUser;
 let testSchema: TestSchemaResult;
+let targetCaseId: string;
 
 describe("Synthesis Edge Cases", () => {
   beforeAll(async () => {
@@ -41,19 +42,20 @@ describe("Synthesis Edge Cases", () => {
   it("first synthesis populates case title, summary, actions", async () => {
     const cases = await prisma.case.findMany({
       where: { schemaId: testSchema.schema.id },
+      orderBy: { createdAt: "asc" },
     });
     expect(cases.length).toBeGreaterThanOrEqual(1);
 
-    const targetCase = cases[0];
+    targetCaseId = cases[0].id;
 
     await withTimeout(
-      synthesizeCase(targetCase.id, testSchema.schema.id),
+      synthesizeCase(targetCaseId, testSchema.schema.id),
       300_000,
-      `synthesizeCase (first run, caseId=${targetCase.id})`,
+      `synthesizeCase (first run, caseId=${targetCaseId})`,
     );
 
     const updated = await prisma.case.findUniqueOrThrow({
-      where: { id: targetCase.id },
+      where: { id: targetCaseId },
       include: { actions: true },
     });
 
@@ -70,13 +72,8 @@ describe("Synthesis Edge Cases", () => {
   // Skip guard: re-synthesis with no new emails is a no-op
   // -------------------------------------------------------------------
   it("re-synthesis with no new emails skips (synthesizedAt unchanged)", async () => {
-    const cases = await prisma.case.findMany({
-      where: { schemaId: testSchema.schema.id },
-    });
-    const targetCase = cases[0];
-
     const before = await prisma.case.findUniqueOrThrow({
-      where: { id: targetCase.id },
+      where: { id: targetCaseId },
       select: { synthesizedAt: true, title: true },
     });
 
@@ -85,13 +82,13 @@ describe("Synthesis Edge Cases", () => {
 
     // Re-synthesize — should skip
     await withTimeout(
-      synthesizeCase(targetCase.id, testSchema.schema.id),
+      synthesizeCase(targetCaseId, testSchema.schema.id),
       30_000,
       "synthesizeCase (skip guard — no new emails, should return fast)",
     );
 
     const after = await prisma.case.findUniqueOrThrow({
-      where: { id: targetCase.id },
+      where: { id: targetCaseId },
       select: { synthesizedAt: true, title: true },
     });
 
@@ -103,13 +100,8 @@ describe("Synthesis Edge Cases", () => {
   // Re-synthesis after adding a new email updates the case
   // -------------------------------------------------------------------
   it("adding new email and re-synthesizing updates synthesizedAt", async () => {
-    const cases = await prisma.case.findMany({
-      where: { schemaId: testSchema.schema.id },
-    });
-    const targetCase = cases[0];
-
     const before = await prisma.case.findUniqueOrThrow({
-      where: { id: targetCase.id },
+      where: { id: targetCaseId },
       select: { synthesizedAt: true },
     });
 
@@ -137,7 +129,7 @@ describe("Synthesis Edge Cases", () => {
     // Assign the new email to the case (simulating clustering)
     await prisma.caseEmail.create({
       data: {
-        caseId: targetCase.id,
+        caseId: targetCaseId,
         emailId: newEmail.id,
         assignedBy: "CLUSTERING",
         clusteringScore: 90,
@@ -146,13 +138,13 @@ describe("Synthesis Edge Cases", () => {
 
     // Re-synthesize — should NOT skip because there's a new email
     await withTimeout(
-      synthesizeCase(targetCase.id, testSchema.schema.id),
+      synthesizeCase(targetCaseId, testSchema.schema.id),
       300_000,
       "synthesizeCase (re-synthesis with new email)",
     );
 
     const after = await prisma.case.findUniqueOrThrow({
-      where: { id: targetCase.id },
+      where: { id: targetCaseId },
       select: { synthesizedAt: true },
     });
 
@@ -166,13 +158,8 @@ describe("Synthesis Edge Cases", () => {
   // Action dedup: same fingerprint across runs produces 1 action
   // -------------------------------------------------------------------
   it("action dedup prevents duplicate actions across synthesis runs", async () => {
-    const cases = await prisma.case.findMany({
-      where: { schemaId: testSchema.schema.id },
-    });
-    const targetCase = cases[0];
-
     const actionsBefore = await prisma.caseAction.findMany({
-      where: { caseId: targetCase.id },
+      where: { caseId: targetCaseId },
     });
 
     // Count actions and their fingerprints
