@@ -93,6 +93,33 @@ export async function synthesizeCase(
 ): Promise<void> {
   const startTime = Date.now();
 
+  // 0. Skip guard: don't re-synthesize cases with no new emails
+  const caseCheck = await prisma.case.findUniqueOrThrow({
+    where: { id: caseId },
+    select: { synthesizedAt: true },
+  });
+
+  if (caseCheck.synthesizedAt) {
+    const newEmailCount = await prisma.caseEmail.count({
+      where: {
+        caseId,
+        assignedAt: { gt: caseCheck.synthesizedAt },
+      },
+    });
+
+    if (newEmailCount === 0) {
+      logger.info({
+        service: "synthesis",
+        operation: "synthesizeCase.skipped",
+        caseId,
+        schemaId,
+        reason: "already_synthesized_no_new_emails",
+        synthesizedAt: caseCheck.synthesizedAt.toISOString(),
+      });
+      return;
+    }
+  }
+
   // 1. Load case with emails
   const caseRecord = await prisma.case.findUniqueOrThrow({
     where: { id: caseId },
@@ -193,7 +220,7 @@ export async function synthesizeCase(
   const prompt = buildSynthesisPrompt(emailInputs, schemaContext);
 
   const aiResult = await callClaude({
-    model: "claude-sonnet-4-5-20250514",
+    model: "claude-sonnet-4-6",
     system: prompt.system,
     user: prompt.user,
     maxTokens: 4096,
@@ -274,6 +301,7 @@ export async function synthesizeCase(
         aggregatedData: aggregatedData as Prisma.InputJsonValue,
         lastSenderName,
         lastSenderEntity,
+        synthesizedAt: new Date(),
       },
     });
 
@@ -348,7 +376,7 @@ export async function synthesizeCase(
     data: {
       emailId: emails[0].id,
       scanJobId: scanJobId ?? null,
-      model: "claude-sonnet-4-5-20250514",
+      model: "claude-sonnet-4-6",
       operation: "synthesis",
       inputTokens: aiResult.inputTokens,
       outputTokens: aiResult.outputTokens,

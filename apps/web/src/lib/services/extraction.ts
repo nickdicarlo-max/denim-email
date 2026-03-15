@@ -198,7 +198,16 @@ export async function extractEmail(
     senderEntityId = entity?.id ?? null;
   }
 
-  // 5. Upsert Email row in a transaction
+  // 5. Check if email already exists (to decide whether to increment counts)
+  const existingEmail = await prisma.email.findUnique({
+    where: {
+      schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
+    },
+    select: { id: true },
+  });
+  const isNewEmail = !existingEmail;
+
+  // 6. Upsert Email row in a transaction
   const email = await prisma.$transaction(async (tx) => {
     const emailRow = await tx.email.upsert({
       where: {
@@ -240,30 +249,33 @@ export async function extractEmail(
       },
     });
 
-    // Increment SchemaTag.emailCount for matched tags
-    if (parsed.tags.length > 0) {
-      await tx.schemaTag.updateMany({
-        where: {
-          schemaId,
-          name: { in: parsed.tags },
-          isActive: true,
-        },
+    // Only increment counts for genuinely new emails, not re-processed ones
+    if (isNewEmail) {
+      // Increment SchemaTag.emailCount for matched tags
+      if (parsed.tags.length > 0) {
+        await tx.schemaTag.updateMany({
+          where: {
+            schemaId,
+            name: { in: parsed.tags },
+            isActive: true,
+          },
+          data: { emailCount: { increment: 1 } },
+        });
+      }
+
+      // Increment CaseSchema.emailCount
+      await tx.caseSchema.update({
+        where: { id: schemaId },
         data: { emailCount: { increment: 1 } },
       });
-    }
 
-    // Increment CaseSchema.emailCount
-    await tx.caseSchema.update({
-      where: { id: schemaId },
-      data: { emailCount: { increment: 1 } },
-    });
-
-    // Increment Entity.emailCount if entity resolved
-    if (senderEntityId) {
-      await tx.entity.update({
-        where: { id: senderEntityId },
-        data: { emailCount: { increment: 1 } },
-      });
+      // Increment Entity.emailCount if entity resolved
+      if (senderEntityId) {
+        await tx.entity.update({
+          where: { id: senderEntityId },
+          data: { emailCount: { increment: 1 } },
+        });
+      }
     }
 
     return emailRow;
@@ -307,7 +319,23 @@ export async function processEmailBatch(
   let excluded = 0;
   let failed = 0;
 
+  // Pre-check which emails already exist to skip re-extraction
+  const existingEmails = await prisma.email.findMany({
+    where: {
+      schemaId: options.schemaId,
+      gmailMessageId: { in: gmailMessageIds },
+    },
+    select: { gmailMessageId: true },
+  });
+  const existingIds = new Set(existingEmails.map((e) => e.gmailMessageId));
+
   for (const messageId of gmailMessageIds) {
+    // Skip already-extracted emails — avoids redundant Gmail fetch, Gemini call, and count inflation
+    if (existingIds.has(messageId)) {
+      processed++; // Count as processed (already done)
+      continue;
+    }
+
     try {
       // Fetch full email with pacing (100ms delay between calls)
       const fullMessage = await gmailClient.getEmailFullWithPacing(messageId, 100);

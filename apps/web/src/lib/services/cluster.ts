@@ -35,6 +35,36 @@ export async function clusterNewEmails(
 ): Promise<ClusterResult> {
   const startTime = Date.now();
 
+  // 0. Clean up orphaned cases from failed prior clustering attempts.
+  // Supabase pgbouncer can partially commit transactions that Prisma times out,
+  // leaving Case rows with no CaseEmail children.
+  const orphanedCases = await prisma.case.findMany({
+    where: {
+      schemaId,
+      caseEmails: { none: {} },
+    },
+    select: { id: true },
+  });
+
+  if (orphanedCases.length > 0) {
+    await prisma.case.deleteMany({
+      where: { id: { in: orphanedCases.map((c) => c.id) } },
+    });
+    // Also clean up any cluster records pointing to deleted cases
+    await prisma.cluster.deleteMany({
+      where: {
+        schemaId,
+        resultCaseId: { in: orphanedCases.map((c) => c.id) },
+      },
+    });
+    logger.info({
+      service: "cluster",
+      operation: "clusterNewEmails.cleanup",
+      schemaId,
+      orphanedCasesDeleted: orphanedCases.length,
+    });
+  }
+
   // 1. Load schema with clusteringConfig
   const schema = await prisma.caseSchema.findUniqueOrThrow({
     where: { id: schemaId },
@@ -257,6 +287,22 @@ export async function clusterNewEmails(
         // MERGE into existing case
         const targetCaseId = decision.targetCaseId!;
 
+        // Verify target case still exists (may have been lost in a failed prior transaction)
+        const targetExists = await tx.case.findUnique({
+          where: { id: targetCaseId },
+          select: { id: true },
+        });
+        if (!targetExists) {
+          logger.warn({
+            service: "cluster",
+            operation: "clusterNewEmails.mergeSkipped",
+            schemaId,
+            targetCaseId,
+            reason: "Target case not found, skipping merge",
+          });
+          continue;
+        }
+
         // Create CaseEmail junction records
         for (const emailId of decision.emailIds) {
           await tx.caseEmail.upsert({
@@ -351,7 +397,7 @@ export async function clusterNewEmails(
       where: { id: schemaId },
       data: { caseCount: totalCases },
     });
-  });
+  }, { timeout: 30000 });
 
   const durationMs = Date.now() - startTime;
   logger.info({

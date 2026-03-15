@@ -496,6 +496,9 @@ model Case {
   lastSenderEntity  String?             // Enriched: "Mike Chen, City Planning"
   lastEmailDate     DateTime?           // Date of most recent email in case
 
+  // --- SYNTHESIS TRACKING ---
+  synthesizedAt DateTime?               // Set when synthesis completes; used to skip re-synthesis
+
   // --- USER INTERACTION ---
   viewedAt      DateTime?               // null = unread, set when user opens case
   lastFeedbackAt DateTime?              // When user last gave thumbs up/down
