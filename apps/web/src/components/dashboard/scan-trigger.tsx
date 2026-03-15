@@ -56,6 +56,9 @@ export function ScanTrigger({ schemaId }: ScanTriggerProps) {
         emailCount: data.emailCount,
         scanJobId: data.scanJobId,
       });
+
+      // Notify polling component to start
+      window.dispatchEvent(new CustomEvent("scan-started"));
     } catch {
       setState({ status: "error", message: "Network error. Please try again." });
       triggerRef.current = false; // Only reset on error so user can retry

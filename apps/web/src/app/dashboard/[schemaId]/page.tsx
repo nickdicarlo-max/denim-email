@@ -1,3 +1,4 @@
+import { ScanProgress } from "@/components/dashboard/scan-progress";
 import { ScanTrigger } from "@/components/dashboard/scan-trigger";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -97,13 +98,12 @@ export default async function SchemaDetailPage({
           <ScanTrigger schemaId={schema.id} />
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard label="Emails" value={schema.emailCount} />
-          <StatCard label="Cases" value={schema.caseCount} />
-          <StatCard label="Entities" value={schema.entities.length} />
-          <StatCard label="Tags" value={schema.tags.length} />
-        </div>
+        {/* Live stats + scan progress (polls while pipeline is active) */}
+        <ScanProgress
+          schemaId={schema.id}
+          initialEmailCount={schema.emailCount}
+          initialCaseCount={schema.caseCount}
+        />
 
         {/* Entities */}
         <Section title="Entities">
@@ -252,15 +252,6 @@ export default async function SchemaDetailPage({
         </Section>
       </div>
     </main>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="bg-white rounded-lg shadow-sm px-4 py-3 text-center">
-      <div className="text-2xl font-bold text-primary">{value}</div>
-      <div className="text-xs text-muted">{label}</div>
-    </div>
   );
 }
 
