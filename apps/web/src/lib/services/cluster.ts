@@ -65,18 +65,22 @@ export async function clusterNewEmails(
     });
   }
 
-  // 1. Load schema with clusteringConfig
+  // 1. Load schema with clusteringConfig and all entities (for entity resolution)
   const schema = await prisma.caseSchema.findUniqueOrThrow({
     where: { id: schemaId },
     select: {
       id: true,
       clusteringConfig: true,
       entities: {
-        where: { type: "PRIMARY", isActive: true },
-        select: { id: true },
+        where: { isActive: true },
+        select: { id: true, name: true, type: true, associatedPrimaryIds: true },
       },
     },
   });
+
+  // Build entity lookup for last-resort entity resolution in clustering
+  const primaryEntities = schema.entities.filter((e) => e.type === "PRIMARY");
+  const entityByName = new Map(schema.entities.map((e) => [e.name.toLowerCase(), e]));
 
   const config = schema.clusteringConfig as unknown as ClusteringConfig;
 
@@ -108,6 +112,7 @@ export async function clusterNewEmails(
       entityId: true,
       senderDisplayName: true,
       senderEmail: true,
+      detectedEntities: true,
     },
     orderBy: { date: "asc" },
   });
@@ -188,20 +193,59 @@ export async function clusterNewEmails(
     unclusteredEmails.map((e) => [e.id, e]),
   );
 
-  // Resolve the default entity for cases that need one
-  const defaultEntityId = schema.entities[0]?.id ?? null;
+  // Fallback entity for cases where no entity can be resolved
+  const fallbackEntityId = primaryEntities[0]?.id ?? null;
+
+  if (!fallbackEntityId) {
+    logger.warn({
+      service: "cluster",
+      operation: "clusterNewEmails.noDefaultEntity",
+      schemaId,
+      message: "No active PRIMARY entity found — cases will lack entity assignment",
+    });
+  }
+
+  /**
+   * Last-resort entity resolution: scan the email's detectedEntities JSON
+   * to find a PRIMARY entity match when extraction didn't set entityId.
+   */
+  function resolveEntityFromDetected(
+    emailIds: string[],
+  ): string | null {
+    for (const eid of emailIds) {
+      const email = emailLookup.get(eid);
+      if (!email) continue;
+      const detected = email.detectedEntities;
+      if (!Array.isArray(detected)) continue;
+      for (const d of detected as Array<{ name: string; type: string }>) {
+        const match = entityByName.get(d.name.toLowerCase());
+        if (!match) continue;
+        if (match.type === "PRIMARY") return match.id;
+        // Secondary — resolve through associatedPrimaryIds
+        const primaryIds = Array.isArray(match.associatedPrimaryIds)
+          ? (match.associatedPrimaryIds as string[])
+          : [];
+        if (primaryIds[0]) return primaryIds[0];
+      }
+    }
+    return null;
+  }
 
   await prisma.$transaction(async (tx) => {
     for (const decision of decisions) {
       if (decision.action === "CREATE") {
-        // Resolve entity: from decision, or fallback to default
-        const entityId = decision.entityId ?? defaultEntityId;
+        // Resolve entity: from decision, then detectedEntities, then fallback
+        const entityId =
+          decision.entityId ??
+          resolveEntityFromDetected(decision.emailIds) ??
+          fallbackEntityId;
         if (!entityId) {
           logger.warn({
             service: "cluster",
             operation: "clusterNewEmails.noEntity",
             schemaId,
             emailIds: decision.emailIds,
+            message: "Skipping case creation — no entity available",
           });
           continue;
         }
@@ -397,7 +441,7 @@ export async function clusterNewEmails(
       where: { id: schemaId },
       data: { caseCount: totalCases },
     });
-  }, { timeout: 30000 });
+  }, { timeout: 120000 });
 
   const durationMs = Date.now() - startTime;
   logger.info({

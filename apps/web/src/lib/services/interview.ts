@@ -256,6 +256,30 @@ export async function finalizeSchema(
           autoDetected: e.autoDetected,
         })),
       });
+
+      // Link secondary entities to all primary entities.
+      // Without explicit relationship data from the hypothesis, associate every
+      // secondary entity with every primary entity so that sender→secondary→primary
+      // resolution works in the extraction pipeline.
+      const createdEntities = await tx.entity.findMany({
+        where: { schemaId: schema.id, isActive: true },
+        select: { id: true, type: true },
+      });
+      const primaryIds = createdEntities
+        .filter((e) => e.type === "PRIMARY")
+        .map((e) => e.id);
+      const secondaryIds = createdEntities
+        .filter((e) => e.type === "SECONDARY")
+        .map((e) => e.id);
+
+      if (primaryIds.length > 0 && secondaryIds.length > 0) {
+        for (const secId of secondaryIds) {
+          await tx.entity.update({
+            where: { id: secId },
+            data: { associatedPrimaryIds: primaryIds },
+          });
+        }
+      }
     }
 
     // Create tags

@@ -586,6 +586,129 @@ Verify the AI generates meaningfully different constants:
 
 ---
 
+## PHASE 3.5: Entity Resolution Review
+
+**Goal:** After extraction completes, surface emails with unresolved `entityId` so the user can assign them before clustering runs. This prevents orphaned emails and ensures clustering gets clean entity boundaries.
+
+**Why during extraction, not after clustering:** Clustering uses `entityId` as the primary grouping boundary. If emails arrive without `entityId`, they either get orphaned or fall back to a default entity — both produce bad cases. Catching this gap at extraction time means clustering always has correct input.
+
+### Architecture
+
+```
+checkExtractionComplete (all batches done)
+    |
+    v
+Count emails where entityId IS NULL and isExcluded = false
+    |
+    ├── 0 unresolved → emit extraction.all.completed (pipeline continues)
+    |
+    └── N > 0 unresolved → set ScanJob.phase = "ENTITY_REVIEW"
+                          → pipeline PAUSES (no clustering event emitted)
+                          → dashboard shows entity review UI
+                              |
+                              v
+                          User resolves each email:
+                            - Pick from existing entities (dropdown)
+                            - Create new entity (name + type)
+                            - "Skip" (use default primary entity)
+                            - "Skip All Remaining" (bulk default)
+                              |
+                              v
+                          API: PATCH /api/emails/entity-assignment
+                            - Updates Email.entityId
+                            - If new entity created → writes Entity row
+                            - When all resolved → emits extraction.all.completed
+                            - Pipeline resumes → clustering → synthesis
+```
+
+### UI Design (dashboard entity review screen)
+
+The review screen shows during the `ENTITY_REVIEW` scan phase:
+
+**Header:** "N emails need entity assignment" with progress bar
+
+**Email list (grouped by sender domain):**
+Each row shows:
+- Sender name + email address
+- Subject line (truncated)
+- Date
+- Tags (from extraction)
+- Gemini's `detectedEntities` as hints (greyed text: "Gemini detected: ZSA Soccer")
+
+**Entity picker per group (batch by sender domain):**
+- Dropdown of existing PRIMARY entities for this schema
+- "Create new entity..." option opens inline form (name, aliases)
+- "Use default" button (assigns schema's first PRIMARY entity)
+- "Skip all from [domain]" for bulk assignment
+
+**Footer:**
+- "Apply & Continue" button — writes assignments, resumes pipeline
+- Count of remaining unresolved
+
+### Tasks
+
+3.5.1 Add `ENTITY_REVIEW` phase to ScanJob
+- Add to ScanJob.phase enum in Prisma schema (alongside EXTRACTING, CLUSTERING, SYNTHESIZING, COMPLETED)
+- Migration: `prisma migrate dev --name add-entity-review-phase`
+
+3.5.2 Modify `checkExtractionComplete` in Inngest functions
+- After all batches done, count emails with `entityId IS NULL AND isExcluded = false`
+- If count > 0: set `ScanJob.phase = "ENTITY_REVIEW"`, set `statusMessage = "N emails need entity assignment"`
+- If count = 0: emit `extraction.all.completed` as before
+- This is the ONLY change to the existing pipeline — it adds a conditional pause
+
+3.5.3 API: Entity assignment endpoint
+- `PATCH /api/emails/entity-assignment`
+- Request body (Zod validated):
+  ```typescript
+  {
+    assignments: Array<{
+      emailIds: string[];          // batch by sender domain
+      entityId: string;            // existing entity ID
+    }>;
+    newEntities?: Array<{
+      name: string;
+      type: "PRIMARY";
+      aliases: string[];
+      emailIds: string[];          // emails to assign to this new entity
+    }>;
+    useDefaultForRemaining: boolean;  // assign remaining nulls to default primary
+    schemaId: string;
+    scanJobId: string;
+  }
+  ```
+- Writes: `Email.entityId` updates, optionally creates Entity rows (ScanService is allowed to create entities per CLAUDE.md)
+- After all assignments: emits `extraction.all.completed` to resume pipeline
+- Auth required, schema ownership verified
+
+3.5.4 API: Get unresolved emails
+- `GET /api/emails/unresolved?schemaId=X`
+- Returns emails grouped by sender domain, with `detectedEntities` hints
+- Includes list of available PRIMARY entities for the schema
+
+3.5.5 Dashboard entity review component
+- Renders during `ENTITY_REVIEW` phase (alongside existing scan progress UI)
+- Grouped email list with entity picker
+- Bulk "use default" option
+- "Apply & Continue" button calls PATCH endpoint
+- Polls scan status to detect when pipeline resumes
+
+### Testing
+- [ ] Pipeline pauses when unresolved emails exist after extraction
+- [ ] User can assign entities to unresolved emails
+- [ ] Creating a new entity during review works correctly
+- [ ] "Use default" assigns schema's first PRIMARY entity
+- [ ] Pipeline resumes after all emails resolved
+- [ ] Already-resolved emails (from extraction improvements) don't trigger review
+
+### Acceptance Criteria
+- [ ] Zero orphaned emails after clustering when entity review is used
+- [ ] Entity review adds < 30 seconds to onboarding for typical case (5-10 unresolved)
+- [ ] New entities created during review are available for future scans
+- [ ] Pipeline continues automatically after resolution
+
+---
+
 ## PHASE 4: Clustering Engine
 
 **Goal:** Group extracted emails into coherent cases using the gravity model.
@@ -649,7 +772,7 @@ Verify the AI generates meaningfully different constants:
 - Emits clustering.completed event via Inngest
 
 4.6 Inngest job: cluster-emails
-- Triggered by extraction.all.completed event
+- Triggered by extraction.all.completed event (emitted after entity review in Phase 3.5, or immediately if no unresolved emails)
 - Concurrency: `{ limit: 2, key: "event.data.schemaId" }`
 - On completion: emit clustering.completed event
 
@@ -750,47 +873,13 @@ Verify the AI generates meaningfully different constants:
 
 ---
 
-## PHASE 6: Chrome Extension & Side Panel UI
+## PHASE 6A: Case Review UI (Web App)
 
-**Goal:** Working Chrome extension with side panel showing case feed, case detail, and correction UX.
+**Goal:** Web-based case feed and detail views so we can visually validate pipeline output. Built as Next.js pages in the existing web app — no Chrome extension yet. This is the primary tool for reviewing and iterating on extraction, clustering, and synthesis quality.
 
 ### Tasks
 
-6.1 Chrome extension shell
-- Manifest V3 with sidePanel permission
-- Service worker, side panel HTML entry point
-- chrome.identity for Google OAuth
-- Communication with backend via fetch to Next.js API routes
-
-6.2 Case feed screen
-- Scope headers (tappable as filters, grouped by primary entity)
-- Case cards:
-  - Line 1: Case.title
-  - Line 2: Case.lastSenderEntity + Case.lastEmailDate (relative)
-  - Line 3: STATUS label (from CaseSchema.summaryLabels.end) + Case.summary.end
-  - Line 4: up to 2 pending CaseActions as mini checkboxes (tap to mark done)
-  - Footer: displayTags (2 max) + email count + highlight (aggregatedData + showOnCard field)
-- Filter tabs: All / Active / Resolved (OPEN+IN_PROGRESS = Active)
-- Metric bar (from QualitySnapshot or computed from FeedbackEvents)
-- "+ Organize something new" button (launches interview Card 1)
-
-6.3 Case detail screen
-- Three-section summary with DYNAMIC labels from CaseSchema.summaryLabels
-- Action items section: pending (checkbox), done (strikethrough), expired (badge)
-- Thumbs up/down with bottom sheet (3 reasons for thumbs down)
-- Email list with swipe: Move (opens case picker) and Exclude from scans
-- "Might belong in" hints (Email.clusteringConfidence < 0.7 + alternativeCaseId)
-- Bottom bar: Merge with..., Split case
-
-6.4 Interview flow embedded in side panel
-- Cards 1-4 adapted for narrow width
-- Progressive OAuth via chrome.identity
-
-6.5 Quality metrics screen
-- Accuracy score or calibrating progress
-- Stat cards, event log
-
-6.6 Design system
+6A.1 Design system setup
 - Import design tokens from @denim/types/tokens
 - Configure Tailwind using the tailwindExtend export from tokens
 - All component styles reference tokens, never hardcoded hex/px values
@@ -798,42 +887,126 @@ Verify the AI generates meaningfully different constants:
 - Mobile-first: everything works at 375px
 - Touch targets: minimum 44x44px
 
+6A.2 API routes for case data
+- `GET /api/cases?schemaId=X&status=OPEN|IN_PROGRESS|RESOLVED` — paginated case list
+- `GET /api/cases/:id` — single case with emails, actions, summary
+- `GET /api/schemas/:id/summary` — schema metadata, entity list, quality phase
+- All routes: auth required, schema ownership verified, Zod validated
+
+6A.3 Case feed page
+- Route: `/cases` (or `/cases?schemaId=X`)
+- Scope headers (clickable as filters, grouped by primary entity)
+- Case cards:
+  - Line 1: Case.title
+  - Line 2: Case.lastSenderEntity + Case.lastEmailDate (relative)
+  - Line 3: STATUS label (from CaseSchema.summaryLabels.end) + Case.summary.end
+  - Line 4: up to 2 pending CaseActions as mini checkboxes (click to mark done)
+  - Footer: displayTags (2 max) + email count + highlight (aggregatedData + showOnCard field)
+- Filter tabs: All / Active / Resolved (OPEN+IN_PROGRESS = Active)
+- Metric bar (from QualitySnapshot or computed from FeedbackEvents — show "Calibrating" initially)
+- Link to interview flow for creating new schemas
+
+6A.4 Case detail page
+- Route: `/cases/:id`
+- Three-section summary with DYNAMIC labels from CaseSchema.summaryLabels
+- Action items section: pending (checkbox), done (strikethrough), expired (badge)
+- Thumbs up/down with modal (3 reasons for thumbs down)
+- Email list with actions: Move (opens case picker) and Exclude from scans
+- "Might belong in" hints (Email.clusteringConfidence < 0.7 + alternativeCaseId)
+- Bottom actions: Merge with..., Split case
+- Clustering debug info (collapsible): score breakdown for each email assignment
+
+6A.5 Quality metrics page
+- Route: `/quality` or integrated into `/admin`
+- Accuracy score or calibrating progress
+- Stat cards: total cases, emails processed, corrections made
+- Event log: recent feedback events with type and timestamp
+
+6A.6 Entity review component (Phase 3.5 UI)
+- Renders on dashboard during `ENTITY_REVIEW` scan phase
+- Grouped email list with entity picker
+- Bulk "use default" option
+- "Apply & Continue" button to resume pipeline
+- Can also be accessed from `/admin` for manual review
+
 ### Testing (Playwright)
 
-**Test 6.A: Extension loads and connects**
+**Test 6A.A: Case feed renders correctly**
+- [ ] Cases from pipeline appear in feed
+- [ ] Scope headers group cases by primary entity
+- [ ] Clicking scope header filters feed
+- [ ] Filter tabs work (all/active/resolved)
+- [ ] Metric bar shows calibrating state
+- [ ] Case cards show all fields: title, lastSender, status, tags, actions, highlight
+
+**Test 6A.B: Case detail and corrections**
+- [ ] Clicking a case opens detail view
+- [ ] Summary sections render with dynamic schema labels (not hardcoded)
+- [ ] Action items display with checkboxes
+- [ ] Clicking checkbox marks action done, creates FeedbackEvent
+- [ ] Thumbs down opens modal with three options
+- [ ] Move button opens case picker, email transfers successfully
+- [ ] Exclude marks email as excluded, shows toast
+
+**Test 6A.C: Responsive layout**
+- [ ] All screens render correctly at 375px width
+- [ ] Touch targets are at least 44x44px
+- [ ] No horizontal scrolling
+
+### Acceptance Criteria
+- [ ] Can view all cases created by the pipeline with titles, summaries, and actions
+- [ ] Can drill into a case and see email list, summary sections, action items
+- [ ] Correction mechanisms work (thumbs, move, exclude)
+- [ ] Entity review UI works during ENTITY_REVIEW phase
+- [ ] Responsive at 375px (phone) and wider desktop
+
+---
+
+## PHASE 6B: Chrome Extension & Side Panel (Deferred)
+
+**Goal:** Package the case review UI into a Chrome extension side panel. Deferred until case quality is validated via the web UI in Phase 6A.
+
+**Prerequisite:** Phase 6A complete, pipeline producing good cases, corrections working.
+
+### Tasks
+
+6B.1 Chrome extension shell
+- Manifest V3 with sidePanel permission
+- Service worker, side panel HTML entry point
+- chrome.identity for Google OAuth
+- Communication with backend via fetch to Next.js API routes
+
+6B.2 Adapt case feed + detail for side panel
+- Narrow viewport (400-500px) optimizations
+- Swipe gestures for email actions (Move, Exclude)
+- Side panel navigation (back button, breadcrumbs)
+
+6B.3 Interview flow embedded in side panel
+- Cards 1-4 adapted for narrow width
+- Progressive OAuth via chrome.identity
+
+6B.4 Gmail context integration
+- Detect current email in Gmail tab
+- "Organize this" action from extension icon
+- Deep link from case detail to Gmail thread
+
+### Testing (Playwright + manual)
+
+**Test 6B.A: Extension loads and connects**
 - [ ] Extension installs in Chrome developer mode
 - [ ] Side panel opens via extension icon
 - [ ] OAuth flow completes via chrome.identity
 - [ ] Side panel communicates with backend API
 
-**Test 6.B: Case feed renders correctly**
-- [ ] Cases from Phase 5 appear in feed
-- [ ] Scope headers group cases by primary entity
-- [ ] Tapping scope header filters feed
-- [ ] Filter tabs work (all/active/resolved)
-- [ ] Metric bar shows calibrating state
-- [ ] Case cards show all fields: title, lastSender, status, tags, actions, highlight
-
-**Test 6.C: Case detail and corrections**
-- [ ] Tapping a case opens detail view
-- [ ] Summary sections render with dynamic schema labels (not hardcoded)
-- [ ] Action items display with checkboxes
-- [ ] Tapping checkbox marks action done, creates FeedbackEvent
-- [ ] Thumbs down opens bottom sheet with three options
-- [ ] Swipe left on email reveals Move and Exclude buttons
-- [ ] Move opens case picker, email transfers successfully
-- [ ] Exclude marks email as excluded, shows toast
-
-**Test 6.D: Mobile/narrow viewport**
-- [ ] All screens render correctly at 375px width
-- [ ] Touch targets are at least 44x44px
+**Test 6B.B: Side panel UX**
+- [ ] All screens render correctly at 400-500px width
 - [ ] Swipe gestures work on touch devices
-- [ ] No horizontal scrolling
+- [ ] Navigation between feed, detail, and interview works
+- [ ] Gmail context detection works
 
 ### Acceptance Criteria
 - [ ] Full user flow: install extension -> interview -> see cases -> interact with corrections
-- [ ] All correction mechanisms work (thumbs, move, exclude, merge, split)
-- [ ] Responsive at 375px (phone) and 500px (side panel)
+- [ ] All correction mechanisms work in side panel
 - [ ] Interview flow works end-to-end within the side panel
 
 ---

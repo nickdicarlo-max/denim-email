@@ -29,7 +29,9 @@
       "mcp__plugin_supabase_supabase__execute_sql",
       "mcp__plugin_supabase_supabase__list_projects",
       "Bash(PGPASSWORD=j4vcoiu2yfjhbdfv78ywekhjbadvhjae psql \"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" -c \"\nSELECT \n  \\(SELECT count\\(*\\) FROM cases\\) as cases,\n  \\(SELECT count\\(*\\) FROM case_emails\\) as case_emails,\n  \\(SELECT count\\(*\\) FROM clusters\\) as clusters,\n  \\(SELECT count\\(*\\) FROM case_actions\\) as actions,\n  \\(SELECT count\\(*\\) FROM emails WHERE \\\\\"isExcluded\\\\\" = false\\) as emails,\n  \\(SELECT count\\(*\\) FROM emails\\) as total_emails;\n\")",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)"
     ]
   }
 }

@@ -185,6 +185,7 @@ export async function extractEmail(
 
   // Find entity IDs if matched
   let senderEntityId: string | null = null;
+  let entityId: string | null = null;
   if (entityMatch) {
     const entity = await prisma.entity.findFirst({
       where: {
@@ -193,9 +194,61 @@ export async function extractEmail(
         type: entityMatch.entityType,
         isActive: true,
       },
-      select: { id: true },
+      select: { id: true, type: true, associatedPrimaryIds: true },
     });
     senderEntityId = entity?.id ?? null;
+
+    if (entity) {
+      if (entity.type === "PRIMARY") {
+        // Sender IS the primary entity
+        entityId = entity.id;
+      } else {
+        // Sender is secondary — resolve to associated primary
+        const primaryIds = Array.isArray(entity.associatedPrimaryIds)
+          ? (entity.associatedPrimaryIds as string[])
+          : [];
+        entityId = primaryIds[0] ?? null;
+      }
+    }
+  }
+
+  // Fallback: try matching Gemini's detectedEntities against known schema entities.
+  // Check ALL detected entities — PRIMARY ones match directly, SECONDARY ones
+  // resolve through their associatedPrimaryIds.
+  if (!entityId && parsed.detectedEntities.length > 0) {
+    for (const detected of parsed.detectedEntities) {
+      const detectedMatch = resolveEntity(
+        detected.name,
+        "",
+        entities,
+        0.80, // slightly lower threshold for AI-detected names
+      );
+      if (!detectedMatch) continue;
+
+      const matchedEntity = await prisma.entity.findFirst({
+        where: {
+          schemaId,
+          name: detectedMatch.entityName,
+          type: detectedMatch.entityType,
+          isActive: true,
+        },
+        select: { id: true, type: true, associatedPrimaryIds: true },
+      });
+      if (!matchedEntity) continue;
+
+      if (matchedEntity.type === "PRIMARY") {
+        entityId = matchedEntity.id;
+        break;
+      }
+      // Secondary detected entity — resolve to associated primary
+      const primaryIds = Array.isArray(matchedEntity.associatedPrimaryIds)
+        ? (matchedEntity.associatedPrimaryIds as string[])
+        : [];
+      if (primaryIds[0]) {
+        entityId = primaryIds[0];
+        break;
+      }
+    }
   }
 
   // 5. Check if email already exists (to decide whether to increment counts)
@@ -234,6 +287,7 @@ export async function extractEmail(
         bodyLength: gmailMessage.body.length,
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
+        entityId,
       },
       update: {
         summary: parsed.summary,
@@ -245,6 +299,7 @@ export async function extractEmail(
         bodyLength: gmailMessage.body.length,
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
+        entityId,
         reprocessedAt: new Date(),
       },
     });
@@ -269,10 +324,18 @@ export async function extractEmail(
         data: { emailCount: { increment: 1 } },
       });
 
-      // Increment Entity.emailCount if entity resolved
+      // Increment Entity.emailCount for sender entity
       if (senderEntityId) {
         await tx.entity.update({
           where: { id: senderEntityId },
+          data: { emailCount: { increment: 1 } },
+        });
+      }
+
+      // Increment Entity.emailCount for primary entity (if different from sender)
+      if (entityId && entityId !== senderEntityId) {
+        await tx.entity.update({
+          where: { id: entityId },
           data: { emailCount: { increment: 1 } },
         });
       }

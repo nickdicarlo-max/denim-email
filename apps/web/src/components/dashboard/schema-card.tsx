@@ -105,11 +105,22 @@ export function SchemaCard({ schema, onDeleted }: SchemaCardProps) {
         )}
       </div>
 
-      <Link href={`/dashboard/${schema.id}`} className="flex items-center gap-4 text-xs text-secondary">
-        <span>{schema.emailCount} emails</span>
-        <span>{schema.caseCount} cases</span>
+      <div className="flex items-center gap-4 text-xs text-secondary">
+        <Link href={`/dashboard/${schema.id}`}>
+          <span>{schema.emailCount} emails</span>
+        </Link>
+        {schema.caseCount > 0 ? (
+          <Link
+            href={`/dashboard/${schema.id}/cases`}
+            className="text-accent-text hover:underline font-medium"
+          >
+            {schema.caseCount} cases
+          </Link>
+        ) : (
+          <span>{schema.caseCount} cases</span>
+        )}
         <span className="ml-auto">{formatRelativeTime(new Date(schema.updatedAt))}</span>
-      </Link>
+      </div>
 
       {confirming && (
         <div className="flex items-center gap-2 pt-1 border-t border-border">

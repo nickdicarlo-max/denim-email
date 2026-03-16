@@ -105,6 +105,16 @@ export default async function SchemaDetailPage({
           initialCaseCount={schema.caseCount}
         />
 
+        {/* View Cases link */}
+        {schema.caseCount > 0 && (
+          <Link
+            href={`/dashboard/${schema.id}/cases`}
+            className="inline-flex items-center gap-2 bg-accent text-inverse rounded-md font-semibold text-sm px-4 py-2.5 hover:opacity-90 transition"
+          >
+            View {schema.caseCount} {schema.caseCount === 1 ? "Case" : "Cases"} &rarr;
+          </Link>
+        )}
+
         {/* Entities */}
         <Section title="Entities">
           {primaryEntities.length > 0 && (

@@ -69,6 +69,11 @@ ${buildEntityList(schema)}
 EXTRACTED FIELD DEFINITIONS (for context):
 ${buildFieldDefinitions(schema)}
 
+RECURRING EVENTS:
+- If the case contains recurring event emails (practices, games, meetings, classes), the title should describe the recurring activity (e.g., "Soccer Practices", "Team Games"), NOT a single occurrence (e.g., NOT "New event: Practice").
+- Identify the NEXT upcoming event date and location as the primary action item. Past events should not appear as actions.
+- Set status to IN_PROGRESS if upcoming events exist, RESOLVED if all events have passed.
+
 CRITICAL RULES:
 1. Return ONLY valid JSON matching the required schema exactly. No explanations, no markdown, no extra text.
 2. Title must be under 60 characters.
