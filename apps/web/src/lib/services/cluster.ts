@@ -127,8 +127,8 @@ export async function clusterNewEmails(
     return { clusterIds: [], casesCreated: 0, casesMerged: 0, clustersCreated: 0 };
   }
 
-  // 4. Transform Prisma rows → ClusterEmailInput[]
-  const emailInputs: ClusterEmailInput[] = unclusteredEmails.map((e) => ({
+  // 4. Transform Prisma rows → ClusterEmailInput[], filtering out emails with no entity
+  const allEmailInputs: ClusterEmailInput[] = unclusteredEmails.map((e) => ({
     id: e.id,
     threadId: e.threadId,
     subject: e.subject,
@@ -137,6 +137,19 @@ export async function clusterNewEmails(
     senderEntityId: e.senderEntityId,
     entityId: e.entityId,
   }));
+
+  // Pre-filter: only cluster emails that have a resolved entity
+  const emailInputs = allEmailInputs.filter((e) => e.entityId !== null);
+  if (emailInputs.length < allEmailInputs.length) {
+    logger.info({
+      service: "cluster",
+      operation: "clusterNewEmails.entityFilter",
+      schemaId,
+      total: allEmailInputs.length,
+      withEntity: emailInputs.length,
+      skipped: allEmailInputs.length - emailInputs.length,
+    });
+  }
 
   // 5. Load existing Cases with their emails → ClusterCaseInput[]
   const existingCases = await prisma.case.findMany({
@@ -193,17 +206,7 @@ export async function clusterNewEmails(
     unclusteredEmails.map((e) => [e.id, e]),
   );
 
-  // Fallback entity for cases where no entity can be resolved
-  const fallbackEntityId = primaryEntities[0]?.id ?? null;
-
-  if (!fallbackEntityId) {
-    logger.warn({
-      service: "cluster",
-      operation: "clusterNewEmails.noDefaultEntity",
-      schemaId,
-      message: "No active PRIMARY entity found — cases will lack entity assignment",
-    });
-  }
+  // No fallback entity — emails must resolve to a real entity to form cases
 
   /**
    * Last-resort entity resolution: scan the email's detectedEntities JSON
@@ -234,11 +237,10 @@ export async function clusterNewEmails(
   await prisma.$transaction(async (tx) => {
     for (const decision of decisions) {
       if (decision.action === "CREATE") {
-        // Resolve entity: from decision, then detectedEntities, then fallback
+        // Resolve entity: from decision, then detectedEntities — no fallback
         const entityId =
           decision.entityId ??
-          resolveEntityFromDetected(decision.emailIds) ??
-          fallbackEntityId;
+          resolveEntityFromDetected(decision.emailIds);
         if (!entityId) {
           logger.warn({
             service: "cluster",

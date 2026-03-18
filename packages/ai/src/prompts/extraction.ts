@@ -25,7 +25,7 @@ function buildEntityList(schema: ExtractionSchemaContext): string {
   return schema.entities
     .map(
       (e) =>
-        `  - "${e.name}" (${e.type})${e.aliases.length > 0 ? ` — aliases: ${e.aliases.join(", ")}` : ""}`,
+        `  - "${e.name}" (${e.type}) [${e.isUserInput ? "USER-INPUT" : "DISCOVERED"}]${e.aliases.length > 0 ? ` — aliases: ${e.aliases.join(", ")}` : ""}`,
     )
     .join("\n");
 }
@@ -49,6 +49,12 @@ For each email you must:
 4. Extract fields matching the field definitions below. Only include fields where a value is clearly present in the email.
 5. Detect the language of the email body (ISO 639-1 code, e.g., "en", "es", "fr"). Set to null if uncertain.
 6. Determine if the email is internal/noise. Set isInternal to true if the sender domain matches any exclusion pattern or the email appears to be an automated/system message.
+7. RELEVANCE ASSESSMENT: Does this email substantively relate to at least one [USER-INPUT] entity? Score 0.0-1.0:
+   1.0 = directly about a user-input entity (mentions it by name, is from/to someone associated)
+   0.5 = tangentially related (mentions entity in passing, loosely connected)
+   0.0 = no connection to any user-input entity
+   Tags alone do NOT make an email relevant. An email about "soccer" from an unrelated league is NOT relevant just because "soccer" is a tag.
+   Set relevanceEntity to the name of the most relevant [USER-INPUT] entity, or null if none.
 
 TAG TAXONOMY (only assign tags from this list):
 ${buildTagTaxonomy(schema)}
@@ -77,7 +83,9 @@ Required JSON shape:
   "extractedData": { [fieldName: string]: value },
   "detectedEntities": [{ "name": string, "type": "PRIMARY" | "SECONDARY", "confidence": number }],
   "isInternal": boolean,
-  "language": string | null
+  "language": string | null,
+  "relevanceScore": number,
+  "relevanceEntity": string | null
 }`;
 }
 

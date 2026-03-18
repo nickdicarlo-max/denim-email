@@ -93,7 +93,7 @@ export const extractBatch = inngest.createFunction(
         where: { id: schemaId },
         include: {
           tags: { where: { isActive: true }, select: { name: true, description: true, isActive: true } },
-          entities: { where: { isActive: true }, select: { name: true, type: true, aliases: true, isActive: true } },
+          entities: { where: { isActive: true }, select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
           extractedFields: { select: { name: true, type: true, description: true, source: true } },
           exclusionRules: { where: { isActive: true }, select: { ruleType: true, pattern: true, isActive: true } },
         },
@@ -110,6 +110,7 @@ export const extractBatch = inngest.createFunction(
           name: e.name,
           type: e.type as "PRIMARY" | "SECONDARY",
           aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+          isUserInput: !e.autoDetected,
         })),
         extractedFields: schema.extractedFields.map((f) => ({
           name: f.name,

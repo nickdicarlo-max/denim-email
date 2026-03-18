@@ -228,6 +228,7 @@ export async function finalizeSchema(
         domain: hypothesis.domain,
         status: "ONBOARDING",
         interviewResponses: {},
+        rawHypothesis: hypothesis as unknown as Prisma.InputJsonValue,
         primaryEntityConfig: {
           name: hypothesis.primaryEntity.name,
           description: hypothesis.primaryEntity.description,

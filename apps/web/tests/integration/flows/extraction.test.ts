@@ -27,7 +27,7 @@ describe("Extraction Flow (live Gemini)", () => {
       where: { id: testSchema.schema.id },
       include: {
         tags: { select: { name: true, description: true, isActive: true } },
-        entities: { select: { name: true, type: true, aliases: true, isActive: true } },
+        entities: { select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
         extractedFields: { select: { name: true, type: true, description: true, source: true } },
         exclusionRules: { select: { ruleType: true, pattern: true, isActive: true } },
       },
@@ -40,6 +40,7 @@ describe("Extraction Flow (live Gemini)", () => {
         name: e.name,
         type: e.type as "PRIMARY" | "SECONDARY",
         aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+        isUserInput: !e.autoDetected,
       })),
       extractedFields: schema.extractedFields.map((f) => ({
         name: f.name,

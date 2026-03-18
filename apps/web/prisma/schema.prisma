@@ -88,6 +88,7 @@ model CaseSchema {
 
   // Raw interview answers (for debugging, re-interview, analytics)
   interviewResponses  Json?             // { role, followUp, whats[], whos[], context }
+  rawHypothesis       Json?             // Full AI-generated hypothesis JSON (for debugging)
 
   // --- PRIMARY ENTITY CONFIG ---
   // The "boundary" axis: cases never cross primary entity lines

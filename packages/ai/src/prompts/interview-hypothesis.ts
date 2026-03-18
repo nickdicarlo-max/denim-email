@@ -522,7 +522,7 @@ CRITICAL RULES:
 2. Include ALL user-provided "whats" as PRIMARY entities with relevant aliases.
 3. Include ALL user-provided "whos" as SECONDARY entities, classified into appropriate types.
 4. Generate at least 5 domain-specific tags. NEVER use generic tags like "Communication", "General", or "Other".
-5. Generate Gmail discovery queries derived from entity names (e.g., "from:coach@school.edu" or "subject:Lincoln Elementary").
+5. Generate Gmail discovery queries derived ONLY from user-input entity names. Use FULL-TEXT search (no "subject:" prefix) for organizations and activities — e.g., "Lincoln Elementary", "soccer". Use "from:" for people — e.g., "from:coach@school.edu", "from:ziad". Full-text queries search subject, body, AND sender, catching emails where the entity name appears anywhere. Do NOT generate broad domain-level queries that are not tied to a specific user-input entity. Do NOT use "subject:" prefix unless the entity name will reliably appear in the subject line.
 6. Use the domain-specific clustering constants shown above.
 7. Adjust showOnCard based on user goals (deadlines emphasis -> deadline showOnCard, cost emphasis -> cost showOnCard, schedule emphasis -> eventDate showOnCard).
 8. Generate exclusion patterns for common noise senders in this domain.
@@ -565,7 +565,7 @@ ${goalAdjustments}
 Requirements:
 - Every item in the "whats" list MUST appear as a PRIMARY entity with type "PRIMARY", secondaryTypeName null, source "user_input", confidence 1.0, and at least one alias.
 - Every item in the "whos" list MUST appear as a SECONDARY entity with type "SECONDARY", an appropriate secondaryTypeName from the domain types (${config.secondaryEntityTypes.join(", ")}), source "user_input", and confidence 1.0.
-- Generate discovery queries for Gmail search. For each PRIMARY entity, create a query like "subject:<entity name>" or a relevant Gmail search string. Also include domain-default queries.
+- Generate discovery queries for Gmail search. Use FULL-TEXT search (no prefix) for things/organizations/activities — e.g., "soccer", "Lanier", "St Agnes". This searches subject + body + sender. Use "from:" for people — e.g., "from:ziad", "from:allan". Do NOT use "subject:" prefix (too narrow — misses emails where the name appears only in the body or sender). Do NOT generate broad domain-level queries like "practice" or "schedule" that are not tied to a specific user-input entity.
 - Use summary labels: "${config.summaryLabels.beginning}" / "${config.summaryLabels.middle}" / "${config.summaryLabels.end}"
 - Generate exclusion patterns for noise senders (e.g., "${config.exclusionHints[0]}").
 

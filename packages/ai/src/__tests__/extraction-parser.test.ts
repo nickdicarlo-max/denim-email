@@ -16,6 +16,8 @@ const VALID_FIXTURE: ExtractionResult = {
   ],
   isInternal: false,
   language: "en",
+  relevanceScore: 1.0,
+  relevanceEntity: "Soccer Team",
 };
 
 describe("parseExtractionResponse", () => {
@@ -90,6 +92,29 @@ describe("parseExtractionResponse", () => {
     expect(result.summary).toBe(VALID_FIXTURE.summary);
     expect(result.tags).toEqual(["Schedule", "Practice"]);
     expect(result.detectedEntities).toHaveLength(2);
+  });
+
+  it("parses relevanceScore and relevanceEntity", () => {
+    const result = parseExtractionResponse(JSON.stringify(VALID_FIXTURE));
+
+    expect(result.relevanceScore).toBe(1.0);
+    expect(result.relevanceEntity).toBe("Soccer Team");
+  });
+
+  it("defaults relevanceScore to 1.0 when missing (backward compat)", () => {
+    const { relevanceScore: _, relevanceEntity: __, ...withoutRelevance } = VALID_FIXTURE;
+    const result = parseExtractionResponse(JSON.stringify(withoutRelevance));
+
+    expect(result.relevanceScore).toBe(1.0);
+    expect(result.relevanceEntity).toBeNull();
+  });
+
+  it("accepts low relevanceScore of 0.0", () => {
+    const fixture = { ...VALID_FIXTURE, relevanceScore: 0.0, relevanceEntity: null };
+    const result = parseExtractionResponse(JSON.stringify(fixture));
+
+    expect(result.relevanceScore).toBe(0.0);
+    expect(result.relevanceEntity).toBeNull();
   });
 
   it("strips extra unknown fields gracefully", () => {

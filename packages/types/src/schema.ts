@@ -102,7 +102,7 @@ export interface ExtractionInput {
 export interface ExtractionSchemaContext {
   domain: string;
   tags: { name: string; description: string }[];
-  entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[] }[];
+  entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[]; isUserInput: boolean }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionPatterns: string[];
 }
@@ -120,6 +120,8 @@ export interface ExtractionResult {
   detectedEntities: DetectedEntity[];
   isInternal: boolean;
   language: string | null;
+  relevanceScore: number;
+  relevanceEntity: string | null;
 }
 
 // =============================================================================

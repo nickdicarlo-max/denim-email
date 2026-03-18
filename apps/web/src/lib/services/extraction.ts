@@ -50,7 +50,7 @@ interface ProcessBatchResult {
 function buildSchemaContext(schema: {
   domain: string | null;
   tags: { name: string; description: string | null; isActive: boolean }[];
-  entities: { name: string; type: string; aliases: unknown; isActive: boolean }[];
+  entities: { name: string; type: string; aliases: unknown; isActive: boolean; autoDetected: boolean }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[];
 }): ExtractionSchemaContext {
@@ -65,6 +65,7 @@ function buildSchemaContext(schema: {
         name: e.name,
         type: e.type as "PRIMARY" | "SECONDARY",
         aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+        isUserInput: !e.autoDetected,
       })),
     extractedFields: schema.extractedFields.map((f) => ({
       name: f.name,
@@ -175,6 +176,57 @@ export async function extractEmail(
 
   // 3. Parse AI response
   const parsed: ExtractionResult = parseExtractionResponse(aiResult.content);
+
+  // 3a. Relevance gate: reject emails that don't connect to user-input entities
+  const RELEVANCE_THRESHOLD = 0.3;
+  if (parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+    const email = await prisma.email.upsert({
+      where: {
+        schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
+      },
+      create: {
+        schemaId,
+        gmailMessageId: gmailMessage.id,
+        threadId: gmailMessage.threadId,
+        subject: gmailMessage.subject,
+        sender: gmailMessage.sender,
+        senderEmail: gmailMessage.senderEmail,
+        senderDomain: gmailMessage.senderDomain,
+        senderDisplayName: gmailMessage.senderDisplayName,
+        recipients: gmailMessage.recipients,
+        date: gmailMessage.date,
+        isReply: gmailMessage.isReply,
+        summary: parsed.summary,
+        isExcluded: true,
+        excludeReason: `relevance:low`,
+        bodyLength: gmailMessage.body.length,
+      },
+      update: {
+        isExcluded: true,
+        excludeReason: `relevance:low`,
+        summary: parsed.summary,
+      },
+    });
+
+    // Still log the extraction cost
+    const estimatedCost =
+      aiResult.inputTokens * GEMINI_INPUT_COST +
+      aiResult.outputTokens * GEMINI_OUTPUT_COST;
+    await prisma.extractionCost.create({
+      data: {
+        emailId: email.id,
+        scanJobId,
+        model: GEMINI_MODEL,
+        operation: "extraction",
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        estimatedCostUsd: estimatedCost,
+        latencyMs: aiResult.latencyMs,
+      },
+    });
+
+    return { emailId: email.id, excluded: true, failed: false };
+  }
 
   // 4. Resolve sender to entity
   const entityMatch = resolveEntity(

@@ -1,5 +1,5 @@
 const PREFIX = "denim_api_calls_";
-const MAX_CALLS = 5;
+const MAX_CALLS = 20;
 
 /**
  * Per-session API call counter. Returns false if the endpoint

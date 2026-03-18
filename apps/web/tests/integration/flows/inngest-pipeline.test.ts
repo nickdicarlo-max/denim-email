@@ -197,7 +197,7 @@ describe.skipIf(!HAS_INNGEST)(
     beforeAll(async () => {
       inngestTestUser = await createTestUser();
       const schema = await createTestSchema(inngestTestUser.userId);
-      schemaId = schema.id;
+      schemaId = schema.schema.id;
 
       await seedTestEmails(schemaId, {
         vmsId: schema.entities.vms.id,

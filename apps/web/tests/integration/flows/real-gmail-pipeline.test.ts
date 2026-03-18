@@ -210,6 +210,7 @@ describe.skipIf(!HAS_GMAIL_TOKEN)(
                 type: true,
                 aliases: true,
                 isActive: true,
+                autoDetected: true,
               },
             },
             extractedFields: {
@@ -237,6 +238,7 @@ describe.skipIf(!HAS_GMAIL_TOKEN)(
             name: e.name,
             type: e.type as "PRIMARY" | "SECONDARY",
             aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+            isUserInput: !e.autoDetected,
           })),
           extractedFields: schemaWithRelations.extractedFields.map((f) => ({
             name: f.name,

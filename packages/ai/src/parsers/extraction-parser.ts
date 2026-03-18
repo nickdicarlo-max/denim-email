@@ -20,6 +20,8 @@ const extractionResultSchema = z.object({
   detectedEntities: z.array(detectedEntitySchema),
   isInternal: z.boolean(),
   language: z.string().nullable(),
+  relevanceScore: z.number().min(0).max(1).default(1.0),
+  relevanceEntity: z.string().nullable().default(null),
 });
 
 /**

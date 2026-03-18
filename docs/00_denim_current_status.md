@@ -298,6 +298,34 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - **Full pipeline chain:** scan → extract → cluster → **synthesize** → COMPLETED
 - **Test results:** 105 total tests passing (69 engine, 29 AI, 7 web). `pnpm --filter web build` clean.
 
+### Phase 6A: Case Review UI (2026-03-15)
+- Case feed page, entity routing pipeline fixes, first real-data test stats
+- See project memory for details
+
+### Entity-Scoped Relevance Gating (2026-03-18)
+
+**Problem:** Pipeline scanned 112 emails and created 76 cases for a user who entered soccer, Lanier, St Agnes, dance, guitar, and Ziad Allan. Expected ~10-15 cases. Root cause: domain-default discovery queries pulled in unrelated emails (payments, newsletters, Supabase signups, Mavericks tickets).
+
+**Discovery test results** (`docs/test-results/discovery-test.md`):
+- Mode 1 (existing schema): 58 entity-derived emails + **80 domain-default noise emails** = 126 total
+- Domain-default noise: generic queries like `subject:(practice OR game OR match OR schedule)` matched Dallas Mavericks emails, `subject:(payment OR fee)` matched Google/Hartford/AE Texas payments
+- Mode 2 (after fix): **0 domain-default queries** in both test scenarios — prompt fix working
+
+**Changes implemented (all verified: 0 type errors, 102/102 unit tests pass):**
+
+1. **Hypothesis prompt** — removed domain-default query generation from both system prompt and user prompt
+2. **Extraction prompt** — entities annotated `[USER-INPUT]` vs `[DISCOVERED]`; added relevance assessment step (0.0-1.0 score); "tags alone do NOT make an email relevant"
+3. **ExtractionResult type** — added `relevanceScore: number` and `relevanceEntity: string | null`
+4. **Extraction parser** — `relevanceScore` defaults to 1.0, `relevanceEntity` defaults to null (backward compat)
+5. **ExtractionService** — relevance gate at threshold 0.3; low-relevance emails upserted as excluded with `excludeReason: "relevance:low"`
+6. **ClusterService** — removed fallback entity assignment; pre-filters emails with null entityId
+7. **Gravity model** — defense-in-depth: skips CREATE when groupEntityId is null
+8. **Prisma schema** — added `rawHypothesis Json?` to CaseSchema (pushed to Supabase)
+9. **InterviewService** — `finalizeSchema()` stores `rawHypothesis` for debugging
+10. **Discovery test script** — `scripts/test-discovery.ts` with token refresh, inline Gmail search, Mode 1/Mode 2
+
+**Token refresh verified:** Script successfully refreshed expired OAuth access token using stored refresh token.
+
 ## Needs Verification
 
 ### Phase 4+5 Live Test (DB wiped 2026-03-15, ready for clean run)
@@ -322,16 +350,28 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - [x] **DB wipe for clean re-test** — All data tables truncated (FK-safe order) via `scripts/wipe-db.ts`. User row deleted; will re-authenticate via OAuth.
 
 ### Ongoing
-- [ ] Token refresh works (code implemented, needs natural token expiry)
+- [x] Token refresh works — confirmed 2026-03-18 via discovery test script (auto-refreshed expired token)
 - [ ] Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
 - [ ] Cost analysis — verify total extraction cost for 58 emails is under $0.50
 - [ ] Integration test (interview-service.test.ts) — needs real DB writes with test data
 - [ ] Playwright e2e for interview flow — Phase 6 per build plan
 - [ ] **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token. For production, use `prompt: "consent"` only on first authorization, then omit it on subsequent sign-ins.
 
-## Next Step: Phase 6 — Chrome Extension & Case Feed UI
+## Next Steps (post-relevance-gating)
 
-Case feed rendering, Chrome side panel, Playwright e2e tests — see docs/build-plan.md
+### Immediate: Wipe + Re-scan Validation
+1. **Wipe test schema data** — `npx tsx scripts/wipe-db.ts` to clear all emails, cases, clusters
+2. **Re-run the full pipeline** — re-authenticate, create new schema (interview will use updated prompts with no domain-default queries), scan, extract, cluster, synthesize
+3. **Verify case count** — expect ~10-20 cases (not 76). Check:
+   - Cases exist for soccer/Ziad Allan, St Agnes, Lanier, dance, guitar
+   - No junk cases for unrelated payments, newsletters, marketing
+   - DB has excluded emails with `excludeReason = "relevance:low"`
+   - `rawHypothesis` populated on the new CaseSchema
+   - Emails with null entityId are skipped by clustering (logged as entityFilter)
+
+### Then: Resume Phase 6
+- Chrome Extension & Case Feed UI
+- Case feed rendering, Chrome side panel, Playwright e2e tests — see docs/build-plan.md
 
 ## Pipeline Architecture (complete as of Phase 5)
 

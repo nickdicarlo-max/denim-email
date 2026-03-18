@@ -142,9 +142,9 @@ describe("findBestCase", () => {
 describe("clusterEmails", () => {
   it("groups same-thread emails together", () => {
     const emails: ClusterEmailInput[] = [
-      makeEmail({ id: "e1", threadId: "t1", date: new Date("2026-03-10") }),
-      makeEmail({ id: "e2", threadId: "t1", date: new Date("2026-03-11") }),
-      makeEmail({ id: "e3", threadId: "t2", date: new Date("2026-03-12") }),
+      makeEmail({ id: "e1", threadId: "t1", entityId: "entity-1", date: new Date("2026-03-10") }),
+      makeEmail({ id: "e2", threadId: "t1", entityId: "entity-1", date: new Date("2026-03-11") }),
+      makeEmail({ id: "e3", threadId: "t2", entityId: "entity-1", date: new Date("2026-03-12") }),
     ];
 
     const decisions = clusterEmails(emails, [], noWeak, defaultConfig, now);
@@ -200,11 +200,21 @@ describe("clusterEmails", () => {
     expect(decisions[0].action).toBe("CREATE");
   });
 
+  it("skips CREATE for emails with null entityId", () => {
+    const emails: ClusterEmailInput[] = [
+      makeEmail({ id: "e1", threadId: "t-orphan", entityId: null }),
+    ];
+
+    const decisions = clusterEmails(emails, [], noWeak, defaultConfig, now);
+    expect(decisions).toHaveLength(0);
+  });
+
   it("processes chronologically — oldest forms case, newer merges in", () => {
     const emails: ClusterEmailInput[] = [
       makeEmail({
         id: "e1",
         threadId: "t1",
+        entityId: "entity-1",
         date: new Date("2026-03-01"),
         tags: ["Permits"],
         subject: "Kitchen Permits",
@@ -212,6 +222,7 @@ describe("clusterEmails", () => {
       makeEmail({
         id: "e2",
         threadId: "t1",
+        entityId: "entity-1",
         date: new Date("2026-03-05"),
         tags: ["Permits"],
         subject: "RE: Kitchen Permits",

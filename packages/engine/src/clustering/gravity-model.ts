@@ -155,7 +155,10 @@ export function clusterEmails(
         caseToUpdate.lastEmailDate = latestDate;
       }
     } else {
-      // CREATE new case
+      // CREATE new case — skip if no entity resolved (defense in depth)
+      if (groupEntityId === null) {
+        continue;
+      }
       const newCaseId = `new-case-${decisions.length}`;
 
       decisions.push({
