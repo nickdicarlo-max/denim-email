@@ -248,6 +248,9 @@ export async function extractEmail(
   // Find entity IDs if matched
   let senderEntityId: string | null = null;
   let entityId: string | null = null;
+  let routeMethod: string | null = null;
+  let routeDetail: string | null = null;
+
   if (entityMatch) {
     const entity = await prisma.entity.findFirst({
       where: {
@@ -264,12 +267,18 @@ export async function extractEmail(
       if (entity.type === "PRIMARY") {
         // Sender IS the primary entity
         entityId = entity.id;
+        routeMethod = "sender";
+        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${entityMatch.entityName}"`;
       } else {
         // Sender is secondary — resolve to associated primary
         const primaryIds = Array.isArray(entity.associatedPrimaryIds)
           ? (entity.associatedPrimaryIds as string[])
           : [];
-        entityId = primaryIds[0] ?? null;
+        if (primaryIds[0]) {
+          entityId = primaryIds[0];
+          routeMethod = "sender";
+          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" → primary`;
+        }
       }
     }
   }
@@ -284,11 +293,17 @@ export async function extractEmail(
       });
       if (matchedEntity?.type === "PRIMARY") {
         entityId = matchedEntity.id;
+        routeMethod = "relevance";
+        routeDetail = `Gemini relevanceEntity "${parsed.relevanceEntity}" matched PRIMARY "${relevanceMatch.entityName}"`;
       } else if (matchedEntity) {
         const primaryIds = Array.isArray(matchedEntity.associatedPrimaryIds)
           ? (matchedEntity.associatedPrimaryIds as string[])
           : [];
-        entityId = primaryIds[0] ?? null;
+        if (primaryIds[0]) {
+          entityId = primaryIds[0];
+          routeMethod = "relevance";
+          routeDetail = `Gemini relevanceEntity "${parsed.relevanceEntity}" matched SECONDARY "${relevanceMatch.entityName}" → primary`;
+        }
       }
     }
   }
@@ -319,6 +334,8 @@ export async function extractEmail(
 
       if (matchedEntity.type === "PRIMARY") {
         entityId = matchedEntity.id;
+        routeMethod = "detected";
+        routeDetail = `detectedEntity "${detected.name}" matched PRIMARY "${detectedMatch.entityName}"`;
         break;
       }
       // Secondary detected entity — resolve to associated primary
@@ -327,10 +344,22 @@ export async function extractEmail(
         : [];
       if (primaryIds[0]) {
         entityId = primaryIds[0];
+        routeMethod = "detected";
+        routeDetail = `detectedEntity "${detected.name}" matched SECONDARY "${detectedMatch.entityName}" → primary`;
         break;
       }
     }
   }
+
+  // Build routing decision audit trail
+  const routingDecision = {
+    method: routeMethod,
+    detail: routeDetail,
+    relevanceScore: parsed.relevanceScore,
+    relevanceEntity: parsed.relevanceEntity,
+    detectedEntities: parsed.detectedEntities.map((d) => d.name),
+    senderMatch: entityMatch ? entityMatch.entityName : null,
+  };
 
   // 5. Check if email already exists (to decide whether to increment counts)
   const existingEmail = await prisma.email.findUnique({
@@ -369,6 +398,7 @@ export async function extractEmail(
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
         entityId,
+        routingDecision: routingDecision as any,
       },
       update: {
         summary: parsed.summary,
@@ -381,6 +411,7 @@ export async function extractEmail(
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
         entityId,
+        routingDecision: routingDecision as any,
         reprocessedAt: new Date(),
       },
     });
