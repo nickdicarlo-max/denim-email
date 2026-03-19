@@ -3,11 +3,17 @@
  * Used by @denim/ai prompts and apps/web services.
  */
 
+export interface EntityGroupInput {
+  whats: string[];   // PRIMARY entity names in this sub-group
+  whos: string[];    // SECONDARY entity names in this sub-group
+}
+
 export interface InterviewInput {
   role: string;
   domain: string;
-  whats: string[];
-  whos: string[];
+  whats: string[];             // Flattened from groups (backward compat)
+  whos: string[];              // Flattened from groups (backward compat)
+  groups: EntityGroupInput[];  // The paired structure — source of truth
   goals: string[];
 }
 
@@ -51,6 +57,7 @@ export interface DiscoveryQuery {
   label: string;
   entityName: string | null;
   source: "entity_name" | "domain_default" | "email_scan";
+  groupIndex?: number;
 }
 
 export interface TagSuggestion {
@@ -105,6 +112,7 @@ export interface ExtractionSchemaContext {
   entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[]; isUserInput: boolean }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionPatterns: string[];
+  entityGroups?: EntityGroupInput[];
 }
 
 export interface DetectedEntity {

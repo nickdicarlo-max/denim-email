@@ -1,6 +1,6 @@
 "use client";
 
-import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
+import type { EntityGroupInput, HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useState } from "react";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
@@ -13,6 +13,7 @@ interface Card4Props {
   hypothesis: SchemaHypothesis;
   validation: HypothesisValidation;
   discoveries?: unknown[];
+  groups?: EntityGroupInput[];
   isLoading?: boolean;
   onFinalize: (confirmations: {
     confirmedEntities: string[];
@@ -94,7 +95,26 @@ function confidenceBadgeClasses(score: number): string {
   return "bg-error-soft text-error-text";
 }
 
-export function Card4Review({ hypothesis, validation, isLoading, onFinalize, onBack }: Card4Props) {
+function LinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  );
+}
+
+export function Card4Review({ hypothesis, validation, groups, isLoading, onFinalize, onBack }: Card4Props) {
   const [schemaName, setSchemaName] = useState(hypothesis.schemaName);
   const [removedEntities, setRemovedEntities] = useState<Set<string>>(() => new Set());
   const [addedEntities, setAddedEntities] = useState<string[]>([]);
@@ -255,33 +275,136 @@ export function Card4Review({ hypothesis, validation, isLoading, onFinalize, onB
         <div>
           <SectionLabel>Entities</SectionLabel>
           <div className="space-y-2">
-            {/* Hypothesis entities */}
-            {hypothesis.entities.map((entity) => {
-              const isRemoved = removedEntities.has(entity.name);
-              return (
-                <div
-                  key={entity.name}
-                  className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
-                    isRemoved ? "opacity-40" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <EntityChip
-                      name={entity.name}
-                      entityType={entity.type}
-                      onRemove={() => handleRemoveEntity(entity.name)}
-                    />
-                    <span className="text-xs text-muted truncate">
-                      {entity.source === "user_input"
-                        ? "From your input"
-                        : entity.source === "email_scan"
-                          ? "Discovered in email"
-                          : "AI inferred"}
-                    </span>
+            {groups && groups.length > 0 ? (
+              <>
+                {/* Group cards — mirrors Card 1 visual structure */}
+                {groups.map((group, gi) => {
+                  const groupWhats = hypothesis.entities.filter(
+                    (e) => e.type === "PRIMARY" && group.whats.includes(e.name),
+                  );
+                  const groupWhos = hypothesis.entities.filter(
+                    (e) => e.type === "SECONDARY" && group.whos.includes(e.name),
+                  );
+                  if (groupWhats.length === 0 && groupWhos.length === 0) return null;
+                  return (
+                    <div
+                      key={gi}
+                      className="p-3 rounded-lg border-[1.5px] border-border bg-white"
+                    >
+                      {groups.length > 1 && (
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
+                          Group {gi + 1}
+                        </div>
+                      )}
+                      {/* WHATs */}
+                      <div className="flex flex-wrap gap-1.5 mb-1">
+                        {groupWhats.map((entity) => {
+                          const isRemoved = removedEntities.has(entity.name);
+                          return (
+                            <span
+                              key={entity.name}
+                              className={`transition ${isRemoved ? "opacity-40" : ""}`}
+                            >
+                              <EntityChip
+                                name={entity.name}
+                                entityType="PRIMARY"
+                                onRemove={() => handleRemoveEntity(entity.name)}
+                              />
+                            </span>
+                          );
+                        })}
+                      </div>
+                      {/* WHOs linked to this group */}
+                      {groupWhos.length > 0 && (
+                        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border-light">
+                          <span className="text-muted"><LinkIcon /></span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {groupWhos.map((entity) => {
+                              const isRemoved = removedEntities.has(entity.name);
+                              return (
+                                <span
+                                  key={entity.name}
+                                  className={`transition ${isRemoved ? "opacity-40" : ""}`}
+                                >
+                                  <EntityChip
+                                    name={entity.name}
+                                    entityType="SECONDARY"
+                                    onRemove={() => handleRemoveEntity(entity.name)}
+                                  />
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Ungrouped entities (not in any group — AI-inferred or standalone) */}
+                {(() => {
+                  const groupedNames = new Set(
+                    groups.flatMap((g) => [...g.whats, ...g.whos]),
+                  );
+                  const ungrouped = hypothesis.entities.filter(
+                    (e) => !groupedNames.has(e.name),
+                  );
+                  if (ungrouped.length === 0) return null;
+                  return ungrouped.map((entity) => {
+                    const isRemoved = removedEntities.has(entity.name);
+                    return (
+                      <div
+                        key={entity.name}
+                        className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
+                          isRemoved ? "opacity-40" : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <EntityChip
+                            name={entity.name}
+                            entityType={entity.type}
+                            onRemove={() => handleRemoveEntity(entity.name)}
+                          />
+                          <span className="text-xs text-muted truncate">
+                            {entity.source === "email_scan"
+                              ? "Discovered in email"
+                              : "AI inferred"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </>
+            ) : (
+              /* Fallback: flat list when no groups available */
+              hypothesis.entities.map((entity) => {
+                const isRemoved = removedEntities.has(entity.name);
+                return (
+                  <div
+                    key={entity.name}
+                    className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
+                      isRemoved ? "opacity-40" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <EntityChip
+                        name={entity.name}
+                        entityType={entity.type}
+                        onRemove={() => handleRemoveEntity(entity.name)}
+                      />
+                      <span className="text-xs text-muted truncate">
+                        {entity.source === "user_input"
+                          ? "From your input"
+                          : entity.source === "email_scan"
+                            ? "Discovered in email"
+                            : "AI inferred"}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
 
             {/* Discovered entities from validation */}
             {validation.discoveredEntities.length > 0 && (

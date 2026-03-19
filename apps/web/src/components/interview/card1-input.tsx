@@ -7,12 +7,18 @@ import { Input } from "../ui/input";
 import { ProgressDots } from "../ui/progress-dots";
 import { DOMAIN_CONFIGS, type DomainId, ROLE_OPTIONS, type RoleId } from "./domain-config";
 
+interface EntityGroup {
+  whats: string[];
+  whos: string[];
+}
+
 interface Card1Props {
   onNext: (data: {
     role: string;
     domain: string;
     whats: string[];
     whos: string[];
+    groups: EntityGroup[];
     goals: string[];
   }) => void;
 }
@@ -20,14 +26,13 @@ interface Card1Props {
 export function Card1Input({ onNext }: Card1Props) {
   const [step, setStep] = useState<1 | 2>(1);
   const [role, setRole] = useState<RoleId | null>(null);
-  const [whats, setWhats] = useState<string[]>([]);
-  const [whos, setWhos] = useState<string[]>([]);
-  const [currentWhat, setCurrentWhat] = useState("");
-  const [currentWho, setCurrentWho] = useState("");
-  const [showWho, setShowWho] = useState(false);
+  const [groups, setGroups] = useState<EntityGroup[]>([{ whats: [], whos: [] }]);
+  const [currentWhats, setCurrentWhats] = useState<Record<number, string>>({});
+  const [currentWhos, setCurrentWhos] = useState<Record<number, string>>({});
+  const [showWho, setShowWho] = useState<Record<number, boolean>>({});
   const [goals, setGoals] = useState<string[]>([]);
-  const whatRef = useRef<HTMLInputElement>(null);
-  const whoRef = useRef<HTMLInputElement>(null);
+  const whatRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const whoRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   const selectedRole = role ? ROLE_OPTIONS.find((r) => r.id === role) : null;
   const domain = selectedRole?.domain as DomainId | undefined;
@@ -37,32 +42,56 @@ export function Card1Input({ onNext }: Card1Props) {
     setRole(r.id);
     setTimeout(() => {
       setStep(2);
-      setTimeout(() => whatRef.current?.focus(), 150);
+      setTimeout(() => whatRefs.current[0]?.focus(), 150);
     }, 200);
   };
 
-  const handleAddWhat = () => {
-    const trimmed = currentWhat.trim();
-    if (trimmed && !whats.includes(trimmed)) {
-      setWhats((prev) => [...prev, trimmed]);
-      setCurrentWhat("");
-      setTimeout(() => whatRef.current?.focus(), 50);
-    }
+  const handleAddWhat = (groupIndex: number) => {
+    const trimmed = (currentWhats[groupIndex] ?? "").trim();
+    if (!trimmed) return;
+    if (groups[groupIndex].whats.includes(trimmed)) return;
+    setGroups((prev) =>
+      prev.map((g, i) => (i === groupIndex ? { ...g, whats: [...g.whats, trimmed] } : g)),
+    );
+    setCurrentWhats((prev) => ({ ...prev, [groupIndex]: "" }));
+    setTimeout(() => whatRefs.current[groupIndex]?.focus(), 50);
   };
 
-  const handleAddWho = () => {
-    const trimmed = currentWho.trim();
-    if (trimmed && !whos.includes(trimmed)) {
-      setWhos((prev) => [...prev, trimmed]);
-      setCurrentWho("");
-      setTimeout(() => whoRef.current?.focus(), 50);
-    }
+  const handleAddWho = (groupIndex: number) => {
+    const trimmed = (currentWhos[groupIndex] ?? "").trim();
+    if (!trimmed) return;
+    if (groups[groupIndex].whos.includes(trimmed)) return;
+    setGroups((prev) =>
+      prev.map((g, i) => (i === groupIndex ? { ...g, whos: [...g.whos, trimmed] } : g)),
+    );
+    setCurrentWhos((prev) => ({ ...prev, [groupIndex]: "" }));
+    setTimeout(() => whoRefs.current[groupIndex]?.focus(), 50);
   };
 
-  const handleRemoveWhat = (index: number) =>
-    setWhats((prev) => prev.filter((_, i) => i !== index));
+  const handleRemoveWhat = (groupIndex: number, whatIndex: number) =>
+    setGroups((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex ? { ...g, whats: g.whats.filter((_, j) => j !== whatIndex) } : g,
+      ),
+    );
 
-  const handleRemoveWho = (index: number) => setWhos((prev) => prev.filter((_, i) => i !== index));
+  const handleRemoveWho = (groupIndex: number, whoIndex: number) =>
+    setGroups((prev) =>
+      prev.map((g, i) =>
+        i === groupIndex ? { ...g, whos: g.whos.filter((_, j) => j !== whoIndex) } : g,
+      ),
+    );
+
+  const handleAddGroup = () => {
+    const newIndex = groups.length;
+    setGroups((prev) => [...prev, { whats: [], whos: [] }]);
+    setTimeout(() => whatRefs.current[newIndex]?.focus(), 150);
+  };
+
+  const handleRemoveGroup = (groupIndex: number) => {
+    if (groups.length <= 1) return;
+    setGroups((prev) => prev.filter((_, i) => i !== groupIndex));
+  };
 
   const toggleGoal = (goalId: string) =>
     setGoals((prev) =>
@@ -72,20 +101,25 @@ export function Card1Input({ onNext }: Card1Props) {
   const handleBack = () => {
     setStep(1);
     setRole(null);
-    setWhats([]);
-    setWhos([]);
-    setCurrentWhat("");
-    setCurrentWho("");
-    setShowWho(false);
+    setGroups([{ whats: [], whos: [] }]);
+    setCurrentWhats({});
+    setCurrentWhos({});
+    setShowWho({});
     setGoals([]);
   };
 
   const handleContinue = () => {
     if (!role || !domain) return;
-    onNext({ role, domain, whats, whos, goals });
+    // Filter out empty groups
+    const validGroups = groups.filter((g) => g.whats.length > 0);
+    // Derive flat lists for backward compat
+    const whats = validGroups.flatMap((g) => g.whats);
+    const whos = validGroups.flatMap((g) => g.whos);
+    onNext({ role, domain, whats, whos, groups: validGroups, goals });
   };
 
-  const canContinue = whats.length >= 1;
+  const totalWhats = groups.reduce((sum, g) => sum + g.whats.length, 0);
+  const canContinue = totalWhats >= 1;
 
   return (
     <CardShell className="flex flex-col h-full p-5 md:p-6 max-w-md mx-auto">
@@ -100,7 +134,7 @@ export function Card1Input({ onNext }: Card1Props) {
           <p className="text-sm text-secondary leading-snug">
             {step === 1
               ? "First, tell me about yourself."
-              : "We'll use these names to search your email. You don't have to list them all."}
+              : "Group the things you track with the people involved. You don't have to list them all."}
           </p>
         </div>
 
@@ -120,7 +154,7 @@ export function Card1Input({ onNext }: Card1Props) {
             ))}
           </div>
         ) : (
-          /* Step 2: Names (what + who + goals) */
+          /* Step 2: Groups (what + who per group + goals) */
           <div className="animate-fadeIn">
             {/* Role badge - click to go back */}
             <button
@@ -149,169 +183,225 @@ export function Card1Input({ onNext }: Card1Props) {
 
             {dc && (
               <>
-                {/* WHAT section */}
-                <div className="text-xs font-semibold uppercase tracking-wider text-accent-text mb-1">
-                  {dc.whatLabel}
-                </div>
-                <div className="text-sm text-muted mb-2">{dc.whatHint}</div>
-
-                {whats.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-2">
-                    {whats.map((name, i) => (
-                      <span
-                        key={name}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium"
-                      >
-                        {name}
+                {/* Group cards */}
+                {groups.map((group, gi) => (
+                  <div
+                    key={gi}
+                    className="mb-3 p-3 rounded-lg border-[1.5px] border-border bg-white"
+                  >
+                    {/* Group header */}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-accent-text">
+                        {groups.length > 1 ? `Group ${gi + 1} — ` : ""}{dc.whatLabel}
+                      </div>
+                      {groups.length > 1 && (
                         <button
                           type="button"
-                          onClick={() => handleRemoveWhat(i)}
-                          className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
-                          aria-label={`Remove ${name}`}
+                          onClick={() => handleRemoveGroup(gi)}
+                          className="text-xs text-muted hover:text-error transition cursor-pointer"
+                          aria-label={`Remove group ${gi + 1}`}
                         >
-                          <svg
-                            aria-hidden="true"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M18 6 6 18" />
-                            <path d="m6 6 12 12" />
-                          </svg>
+                          Remove
                         </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                      )}
+                    </div>
 
-                <div className="flex gap-2 mb-4">
-                  <Input
-                    ref={whatRef}
-                    value={currentWhat}
-                    onChange={(e) => setCurrentWhat(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        handleAddWhat();
-                      }
-                    }}
-                    placeholder={dc.whatPlaceholder}
-                    className="flex-1"
-                  />
-                  <Button
-                    variant="primary"
-                    fullWidth={false}
-                    onClick={handleAddWhat}
-                    disabled={!currentWhat.trim()}
-                    className="whitespace-nowrap px-4"
-                  >
-                    Add
-                  </Button>
-                </div>
-
-                {/* WHO section - appears after at least one WHAT */}
-                {whats.length > 0 && (
-                  <>
-                    {!showWho ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowWho(true);
-                          setTimeout(() => whoRef.current?.focus(), 100);
-                        }}
-                        className="flex items-center gap-1.5 w-full p-2.5 rounded-md border-[1.5px] border-dashed border-border bg-transparent cursor-pointer text-sm font-medium text-secondary hover:border-warning hover:text-warning-text transition"
-                      >
-                        <svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M12 5v14" />
-                          <path d="M5 12h14" />
-                        </svg>
-                        Now add some of the people involved (recommended)
-                      </button>
-                    ) : (
-                      <div className="animate-fadeIn">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-warning-text mb-1">
-                          {dc.whoLabel}
-                        </div>
-                        <div className="text-sm text-muted mb-2">{dc.whoHint}</div>
-
-                        {whos.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mb-2">
-                            {whos.map((name, i) => (
-                              <span
-                                key={name}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-warning-soft text-warning-text text-sm font-medium"
-                              >
-                                {name}
-                                <button
-                                  type="button"
-                                  onClick={() => handleRemoveWho(i)}
-                                  className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
-                                  aria-label={`Remove ${name}`}
-                                >
-                                  <svg
-                                    aria-hidden="true"
-                                    width="14"
-                                    height="14"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <path d="M18 6 6 18" />
-                                    <path d="m6 6 12 12" />
-                                  </svg>
-                                </button>
-                              </span>
-                            ))}
-                          </div>
-                        )}
-
-                        <div className="flex gap-2">
-                          <Input
-                            ref={whoRef}
-                            value={currentWho}
-                            onChange={(e) => setCurrentWho(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleAddWho();
-                              }
-                            }}
-                            placeholder={dc.whoPlaceholder}
-                            className="flex-1"
-                          />
-                          <Button
-                            variant="primary"
-                            fullWidth={false}
-                            onClick={handleAddWho}
-                            disabled={!currentWho.trim()}
-                            className="whitespace-nowrap px-4"
+                    {/* WHAT pills */}
+                    {group.whats.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {group.whats.map((name, wi) => (
+                          <span
+                            key={name}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium"
                           >
-                            Add
-                          </Button>
-                        </div>
+                            {name}
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveWhat(gi, wi)}
+                              className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
+                              aria-label={`Remove ${name}`}
+                            >
+                              <svg
+                                aria-hidden="true"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M18 6 6 18" />
+                                <path d="m6 6 12 12" />
+                              </svg>
+                            </button>
+                          </span>
+                        ))}
                       </div>
                     )}
 
+                    {/* WHAT input */}
+                    <div className="flex gap-2 mb-2">
+                      <Input
+                        ref={(el) => { whatRefs.current[gi] = el; }}
+                        value={currentWhats[gi] ?? ""}
+                        onChange={(e) =>
+                          setCurrentWhats((prev) => ({ ...prev, [gi]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddWhat(gi);
+                          }
+                        }}
+                        placeholder={dc.whatPlaceholder}
+                        className="flex-1"
+                      />
+                      <Button
+                        variant="primary"
+                        fullWidth={false}
+                        onClick={() => handleAddWhat(gi)}
+                        disabled={!(currentWhats[gi] ?? "").trim()}
+                        className="whitespace-nowrap px-4"
+                      >
+                        Add
+                      </Button>
+                    </div>
+
+                    {/* WHO section - appears after at least one WHAT */}
+                    {group.whats.length > 0 && (
+                      <>
+                        {!showWho[gi] ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowWho((prev) => ({ ...prev, [gi]: true }));
+                              setTimeout(() => whoRefs.current[gi]?.focus(), 100);
+                            }}
+                            className="flex items-center gap-1.5 w-full p-2 rounded-md border-[1.5px] border-dashed border-border bg-transparent cursor-pointer text-sm font-medium text-secondary hover:border-warning hover:text-warning-text transition"
+                          >
+                            <svg
+                              aria-hidden="true"
+                              width="14"
+                              height="14"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M12 5v14" />
+                              <path d="M5 12h14" />
+                            </svg>
+                            Add people who email you about {group.whats[0] || "this"}
+                          </button>
+                        ) : (
+                          <div className="animate-fadeIn">
+                            <div className="text-xs font-semibold uppercase tracking-wider text-warning-text mb-1">
+                              {dc.whoLabel}
+                            </div>
+
+                            {/* WHO pills */}
+                            {group.whos.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mb-2">
+                                {group.whos.map((name, wi) => (
+                                  <span
+                                    key={name}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-warning-soft text-warning-text text-sm font-medium"
+                                  >
+                                    {name}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRemoveWho(gi, wi)}
+                                      className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
+                                      aria-label={`Remove ${name}`}
+                                    >
+                                      <svg
+                                        aria-hidden="true"
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="2"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      >
+                                        <path d="M18 6 6 18" />
+                                        <path d="m6 6 12 12" />
+                                      </svg>
+                                    </button>
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* WHO input */}
+                            <div className="flex gap-2">
+                              <Input
+                                ref={(el) => { whoRefs.current[gi] = el; }}
+                                value={currentWhos[gi] ?? ""}
+                                onChange={(e) =>
+                                  setCurrentWhos((prev) => ({ ...prev, [gi]: e.target.value }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleAddWho(gi);
+                                  }
+                                }}
+                                placeholder={dc.whoPlaceholder}
+                                className="flex-1"
+                              />
+                              <Button
+                                variant="primary"
+                                fullWidth={false}
+                                onClick={() => handleAddWho(gi)}
+                                disabled={!(currentWhos[gi] ?? "").trim()}
+                                className="whitespace-nowrap px-4"
+                              >
+                                Add
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                ))}
+
+                {/* Add another group button */}
+                {totalWhats >= 1 && (
+                  <button
+                    type="button"
+                    onClick={handleAddGroup}
+                    className="flex items-center gap-1.5 w-full p-2.5 rounded-md border-[1.5px] border-dashed border-border bg-transparent cursor-pointer text-sm font-medium text-secondary hover:border-accent hover:text-accent-text transition mb-3"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M12 5v14" />
+                      <path d="M5 12h14" />
+                    </svg>
+                    Add another group
+                  </button>
+                )}
+
+                {/* Reassurance + Goals (show after at least one what) */}
+                {totalWhats >= 1 && (
+                  <>
                     {/* Reassurance */}
-                    <div className="mt-3.5 p-2.5 rounded-md bg-subtle text-sm text-muted leading-snug flex items-start gap-2">
+                    <div className="p-2.5 rounded-md bg-subtle text-sm text-muted leading-snug flex items-start gap-2">
                       <svg
                         aria-hidden="true"
                         width="16"

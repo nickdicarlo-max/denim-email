@@ -28,6 +28,7 @@ async function wipe() {
     { name: "ExtractedFieldDef", fn: () => prisma.extractedFieldDef.deleteMany() },
     { name: "SchemaTag", fn: () => prisma.schemaTag.deleteMany() },
     { name: "Entity", fn: () => prisma.entity.deleteMany() },
+    { name: "EntityGroup", fn: () => prisma.entityGroup.deleteMany() },
     { name: "CaseSchema", fn: () => prisma.caseSchema.deleteMany() },
     { name: "User", fn: () => prisma.user.deleteMany() },
   ];

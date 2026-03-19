@@ -53,7 +53,16 @@ function buildSchemaContext(schema: {
   entities: { name: string; type: string; aliases: unknown; isActive: boolean; autoDetected: boolean }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[];
+  entityGroups?: { index: number; entities: { name: string; type: string; isActive: boolean }[] }[];
 }): ExtractionSchemaContext {
+  // Build entity groups for the prompt
+  const entityGroups = schema.entityGroups
+    ?.sort((a, b) => a.index - b.index)
+    .map((g) => ({
+      whats: g.entities.filter((e) => e.type === "PRIMARY" && e.isActive).map((e) => e.name),
+      whos: g.entities.filter((e) => e.type === "SECONDARY" && e.isActive).map((e) => e.name),
+    }));
+
   return {
     domain: schema.domain ?? "general",
     tags: schema.tags
@@ -76,6 +85,7 @@ function buildSchemaContext(schema: {
     exclusionPatterns: schema.exclusionRules
       .filter((r) => r.isActive)
       .map((r) => r.pattern),
+    entityGroups,
   };
 }
 
@@ -258,6 +268,25 @@ export async function extractEmail(
         // Sender is secondary — resolve to associated primary
         const primaryIds = Array.isArray(entity.associatedPrimaryIds)
           ? (entity.associatedPrimaryIds as string[])
+          : [];
+        entityId = primaryIds[0] ?? null;
+      }
+    }
+  }
+
+  // Try Gemini's relevanceEntity for routing (group-aware assignment)
+  if (!entityId && parsed.relevanceEntity) {
+    const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.80);
+    if (relevanceMatch) {
+      const matchedEntity = await prisma.entity.findFirst({
+        where: { schemaId, name: relevanceMatch.entityName, isActive: true },
+        select: { id: true, type: true, associatedPrimaryIds: true },
+      });
+      if (matchedEntity?.type === "PRIMARY") {
+        entityId = matchedEntity.id;
+      } else if (matchedEntity) {
+        const primaryIds = Array.isArray(matchedEntity.associatedPrimaryIds)
+          ? (matchedEntity.associatedPrimaryIds as string[])
           : [];
         entityId = primaryIds[0] ?? null;
       }

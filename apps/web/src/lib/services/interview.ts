@@ -8,7 +8,7 @@ import {
   parseHypothesisResponse,
   parseValidationResponse,
 } from "@denim/ai";
-import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
+import type { EntityGroupInput, HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
 import { ExternalAPIError } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 
@@ -144,6 +144,7 @@ interface FinalizeConfirmations {
   addedEntities?: string[];
   addedTags?: string[];
   schemaName?: string;
+  groups?: EntityGroupInput[];
 }
 
 /**
@@ -227,7 +228,9 @@ export async function finalizeSchema(
         description: `${hypothesis.domain} schema`,
         domain: hypothesis.domain,
         status: "ONBOARDING",
-        interviewResponses: {},
+        interviewResponses: {
+          groups: (confirmations.groups ?? []) as unknown as Prisma.InputJsonValue,
+        } as Prisma.InputJsonValue,
         rawHypothesis: hypothesis as unknown as Prisma.InputJsonValue,
         primaryEntityConfig: {
           name: hypothesis.primaryEntity.name,
@@ -258,27 +261,71 @@ export async function finalizeSchema(
         })),
       });
 
-      // Link secondary entities to all primary entities.
-      // Without explicit relationship data from the hypothesis, associate every
-      // secondary entity with every primary entity so that sender→secondary→primary
-      // resolution works in the extraction pipeline.
+      // Load created entities for linking
       const createdEntities = await tx.entity.findMany({
         where: { schemaId: schema.id, isActive: true },
-        select: { id: true, type: true },
+        select: { id: true, name: true, type: true },
       });
-      const primaryIds = createdEntities
-        .filter((e) => e.type === "PRIMARY")
-        .map((e) => e.id);
-      const secondaryIds = createdEntities
-        .filter((e) => e.type === "SECONDARY")
-        .map((e) => e.id);
+      const entityByName = new Map(createdEntities.map((e) => [e.name, e]));
 
-      if (primaryIds.length > 0 && secondaryIds.length > 0) {
-        for (const secId of secondaryIds) {
-          await tx.entity.update({
-            where: { id: secId },
-            data: { associatedPrimaryIds: primaryIds },
+      // Create EntityGroup rows and link entities via groupId + associatedPrimaryIds
+      const groups = confirmations.groups ?? [];
+      if (groups.length > 0) {
+        for (let i = 0; i < groups.length; i++) {
+          const group = groups[i];
+          const allNames = [...group.whats, ...group.whos];
+          const memberIds = allNames
+            .map((name) => entityByName.get(name)?.id)
+            .filter((id): id is string => !!id);
+
+          if (memberIds.length === 0) continue;
+
+          const entityGroup = await tx.entityGroup.create({
+            data: {
+              schemaId: schema.id,
+              index: i,
+            },
           });
+
+          // Link all group members
+          await tx.entity.updateMany({
+            where: { id: { in: memberIds } },
+            data: { groupId: entityGroup.id },
+          });
+
+          // Set associatedPrimaryIds for secondaries in this group
+          const primaryIdsInGroup = group.whats
+            .map((name) => entityByName.get(name)?.id)
+            .filter((id): id is string => !!id);
+          const secondaryIdsInGroup = group.whos
+            .map((name) => entityByName.get(name)?.id)
+            .filter((id): id is string => !!id);
+
+          if (primaryIdsInGroup.length > 0 && secondaryIdsInGroup.length > 0) {
+            for (const secId of secondaryIdsInGroup) {
+              await tx.entity.update({
+                where: { id: secId },
+                data: { associatedPrimaryIds: primaryIdsInGroup },
+              });
+            }
+          }
+        }
+      } else {
+        // Fallback: no groups — associate every secondary with every primary
+        const primaryIds = createdEntities
+          .filter((e) => e.type === "PRIMARY")
+          .map((e) => e.id);
+        const secondaryIds = createdEntities
+          .filter((e) => e.type === "SECONDARY")
+          .map((e) => e.id);
+
+        if (primaryIds.length > 0 && secondaryIds.length > 0) {
+          for (const secId of secondaryIds) {
+            await tx.entity.update({
+              where: { id: secId },
+              data: { associatedPrimaryIds: primaryIds },
+            });
+          }
         }
       }
     }

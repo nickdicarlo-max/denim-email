@@ -9,6 +9,7 @@ export {
 } from "./errors";
 
 export type {
+  EntityGroupInput,
   InterviewInput,
   SchemaHypothesis,
   EntitySuggestion,

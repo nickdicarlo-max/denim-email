@@ -6,11 +6,57 @@ import { Card3Scan } from "@/components/interview/card3-scan";
 import { Card4Review } from "@/components/interview/card4-review";
 import { useInterviewFlow } from "@/hooks/use-interview-flow";
 import { createBrowserClient } from "@/lib/supabase/client";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+function CompleteStep({ schemaId }: { schemaId: string | null }) {
+  const router = useRouter();
+  const dashboardUrl = schemaId ? `/dashboard/${schemaId}` : "/dashboard";
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      router.push(dashboardUrl);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [router, dashboardUrl]);
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
+      <div className="w-16 h-16 rounded-full bg-success-soft flex items-center justify-center mb-4">
+        <svg
+          aria-hidden="true"
+          width="32"
+          height="32"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          className="text-success"
+        >
+          <path d="M5 12L10 17L19 7" />
+        </svg>
+      </div>
+      <h2 className="text-xl font-bold text-primary mb-2">You're all set!</h2>
+      <p className="text-sm text-secondary mb-6">
+        Your email is being organized. Redirecting to your dashboard...
+      </p>
+      <a
+        href={dashboardUrl}
+        className="px-5 py-2.5 text-sm font-medium text-white bg-accent rounded-md hover:opacity-90 transition"
+      >
+        View your cases
+      </a>
+    </div>
+  );
+}
 
 export default function InterviewPage() {
   const flow = useInterviewFlow();
   const [authToken, setAuthToken] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
 
   // Elapsed timer for generating/finalizing overlays
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -50,6 +96,11 @@ export default function InterviewPage() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Prevent hydration mismatch: sessionStorage initializes different state on client vs server
+  if (!mounted) {
+    return <div className="min-h-screen bg-surface" />;
+  }
+
   return (
     <div className="min-h-screen bg-surface">
       <div className="mx-auto max-w-md">
@@ -62,8 +113,8 @@ export default function InterviewPage() {
           />
         )}
 
-        {/* Card 2: Gmail Connect */}
-        {(flow.step === "gmail_connect" || flow.step === "generating") && (
+        {/* Card 2: Gmail Connect (only when waiting for OAuth, NOT during generation) */}
+        {flow.step === "gmail_connect" && (
           <Card2GmailConnect
             onNext={(token) => {
               flow.onGmailConnected(token);
@@ -72,42 +123,87 @@ export default function InterviewPage() {
           />
         )}
 
-        {/* Generating overlay (shows over Card 2 while hypothesis is being generated) */}
+        {/* Generating overlay — shown as a full-screen state, not over Card2 */}
         {flow.step === "generating" && (
-          <div className="fixed inset-0 bg-overlay flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 text-center shadow-xl">
-              <div className="animate-pulse text-accent mb-3">
-                <svg
-                  aria-hidden="true"
-                  width="32"
-                  height="32"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="mx-auto"
-                >
-                  <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" />
-                </svg>
-              </div>
-              <p className="text-sm text-secondary">Generating your schema...</p>
-              <p className="text-xs text-muted mt-1">{elapsedSeconds}s elapsed</p>
-              {elapsedSeconds >= 5 && (
-                <button
-                  type="button"
-                  onClick={flow.goBack}
-                  className="mt-3 text-xs font-medium text-accent-text hover:opacity-70 transition"
-                >
-                  Cancel
-                </button>
+          <div className="flex items-center justify-center min-h-screen">
+            <div className="bg-white rounded-lg p-6 text-center shadow-xl max-w-sm">
+              {flow.error ? (
+                <>
+                  <div className="text-error mb-3">
+                    <svg
+                      aria-hidden="true"
+                      width="32"
+                      height="32"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="mx-auto"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="15" y1="9" x2="9" y2="15" />
+                      <line x1="9" y1="9" x2="15" y2="15" />
+                    </svg>
+                  </div>
+                  <p className="text-sm text-primary font-medium mb-1">Generation failed</p>
+                  <p className="text-xs text-secondary mb-4">{flow.error}</p>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      type="button"
+                      onClick={flow.goBack}
+                      className="px-4 py-2 text-sm font-medium text-secondary hover:text-primary transition rounded-md border border-border"
+                    >
+                      Go back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (authToken) flow.onGmailConnected(authToken);
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-white bg-accent rounded-md hover:opacity-90 transition"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="animate-pulse text-accent mb-3">
+                    <svg
+                      aria-hidden="true"
+                      width="32"
+                      height="32"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="mx-auto"
+                    >
+                      <path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z" />
+                    </svg>
+                  </div>
+                  <p className="text-sm text-secondary">Generating your schema...</p>
+                  <p className="text-xs text-muted mt-1">{elapsedSeconds}s elapsed</p>
+                  {elapsedSeconds >= 5 && (
+                    <button
+                      type="button"
+                      onClick={flow.goBack}
+                      className="mt-3 text-xs font-medium text-accent-text hover:opacity-70 transition"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
         )}
 
-        {/* Card 3: Scan */}
-        {flow.step === "scanning" && flow.hypothesis && (
+        {/* Card 3: Scan (wait for auth token before rendering) */}
+        {flow.step === "scanning" && flow.hypothesis && authToken && (
           <Card3Scan
             hypothesis={flow.hypothesis}
-            authToken={authToken ?? ""}
+            authToken={authToken}
             onNext={flow.onScanComplete}
             onBack={flow.goBack}
           />
@@ -121,6 +217,7 @@ export default function InterviewPage() {
               hypothesis={flow.hypothesis}
               validation={flow.validation}
               discoveries={flow.discoveries}
+              groups={flow.input?.groups}
               isLoading={flow.step === "finalizing"}
               onFinalize={flow.onFinalize}
               onBack={flow.goBack}
@@ -149,31 +246,8 @@ export default function InterviewPage() {
           </div>
         )}
 
-        {/* Complete */}
-        {flow.step === "complete" && (
-          <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
-            <div className="w-16 h-16 rounded-full bg-success-soft flex items-center justify-center mb-4">
-              <svg
-                aria-hidden="true"
-                width="32"
-                height="32"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-                className="text-success"
-              >
-                <path d="M5 12L10 17L19 7" />
-              </svg>
-            </div>
-            <h2 className="text-xl font-bold text-primary mb-2">You're all set!</h2>
-            <p className="text-sm text-secondary mb-6">
-              Your email is being organized. We'll notify you when it's ready.
-            </p>
-            <p className="text-xs text-muted">Schema ID: {flow.schemaId}</p>
-          </div>
-        )}
+        {/* Complete — auto-redirect to dashboard after brief delay */}
+        {flow.step === "complete" && <CompleteStep schemaId={flow.schemaId} />}
 
         {/* Error toast */}
         {flow.error && (

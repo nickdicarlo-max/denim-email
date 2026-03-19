@@ -326,52 +326,102 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 
 **Token refresh verified:** Script successfully refreshed expired OAuth access token using stored refresh token.
 
+### Entity Groups — Paired WHAT+WHO Relationships (2026-03-18)
+
+**Problem:** WHOs (like Ziad Allan) were blanket-associated with ALL primary entities, not just the specific WHAT they belong to. The interview captured flat lists, not pairings.
+
+**Solution:** Entity groups capture natural pairings from the interview (Soccer↔Ziad Allan, Dance alone, Lanier alone, St Agnes alone).
+
+**Changes implemented (all verified: 0 type errors, full build passes, integration test passes):**
+
+1. **Types** (`packages/types/src/schema.ts`) — Added `EntityGroupInput` interface, `groups: EntityGroupInput[]` to `InterviewInput`, `entityGroups` to `ExtractionSchemaContext`, `groupIndex` to `DiscoveryQuery`
+2. **Prisma schema** — New `EntityGroup` model (id, schemaId, index), `Entity.groupId` FK. Pushed to Supabase.
+3. **Extraction prompt** (`packages/ai/src/prompts/extraction.ts`) — `buildEntityGroups()` renders group pairings + scoring guide for Gemini (3+ names same group → 1.0, 2 → 0.8, 1 → 0.6, none → 0.0)
+4. **Extraction service** — `buildSchemaContext()` queries and maps `entityGroups` from DB; added `relevanceEntity` routing between sender resolution and detectedEntities fallback
+5. **Inngest functions** — Updated schema query to include `entityGroups` with entities, passes to schema context
+6. **Validation scan** (`/api/interview/validate`) — `resolveWhoEmails()` fuzzy-matches WHO names against sender display names in sampled emails, enriches hypothesis entity aliases with resolved email addresses
+7. **Hypothesis prompt** — Group-aware discovery query generation: WHAT full-text + WHO `from:` + compound WHAT+WHO queries per group
+8. **Finalize service** — Creates `EntityGroup` rows, links entities via `groupId`, sets **group-scoped** `associatedPrimaryIds` (not blanket). Falls back to blanket only when no groups provided.
+9. **Interview UI** (`card1-input.tsx`) — Group-based input with per-group WHAT/WHO cards, "Add another group" button
+10. **Interview hook** — Updated `InterviewInput` type with `groups`, passes through to finalize. Fixed: gets fresh Supabase token for finalize call.
+11. **Zod validation** — Added `EntityGroupSchema`, `groups` required in `InterviewInputSchema`
+12. **Hydration fix** — Added `mounted` gate to interview page to prevent sessionStorage hydration mismatch
+13. **Session persistence fix** — Stopped clearing `savedInput` from sessionStorage after hypothesis success; groups must survive until finalize
+
+**First live test results (2026-03-18, "Kids Activities" schema):**
+- 54 emails discovered, 28 passed extraction (26 excluded by relevance gate), 0 failed
+- 15 cases created, 17 actions extracted
+- 0/28 emails had NULL entityId — every email got routed (major improvement)
+- Entity groups NOT saved (bug: `clearSavedInput()` wiped groups before finalize) — fixed
+- Strays in soccer group: "Claude AI Skill for Newsletter Summarization", "Houston Innovation & Tech Events" — expected without group context in prompt
+- ZSA Soccer discovered as standalone entity but not merged into Soccer group — Card 4 UX gap
+
+**Bugs found:**
+- [x] **Auth token expired at finalize** — Hook used stale `authTokenRef` from Gmail connect. Fixed: finalize now gets fresh session from `createBrowserClient().auth.getSession()`
+- [x] **Entity groups not saved** — `clearSavedInput()` in `onGmailConnected` wiped groups from sessionStorage before finalize ran. Fixed: input stays in sessionStorage until finalize succeeds.
+- [x] **Hydration mismatch** — sessionStorage-based state differs server vs client. Fixed: `mounted` gate renders empty shell on server.
+
+**Known UX gaps (not blocking, improve later):**
+- [ ] Card 4 Review doesn't visualize group pairings (shows flat entity list)
+- [ ] Discovered entities (e.g., "ZSA Soccer") can't be assigned to existing groups on Card 4
+- [ ] Primary Entity Type description is generic AI boilerplate — should be context-aware using user's groups
+- [ ] Creating 4 groups for 1 WHO + 3 standalone WHATs is clunky — consider flat-first + optional grouping
+
 ## Needs Verification
 
-### Phase 4+5 Live Test (DB wiped 2026-03-15, ready for clean run)
-- [ ] Full pipeline: scan → extract → cluster → synthesize → COMPLETED (end-to-end via Inngest)
-- [ ] Case rows have AI-generated titles (not just first email subject)
+### Phase 4+5 Live Test
+- [x] Full pipeline: scan → extract → cluster → synthesize → COMPLETED (end-to-end via Inngest) — verified 2026-03-18
+- [x] Case rows have AI-generated titles — verified (e.g., "ZSA U11/12 Girls vs. ACDMY FC – Feb 28 Game")
+- [x] CaseAction rows created — 17 actions across 15 cases
+- [x] ScanJob shows COMPLETED phase after synthesis finishes — verified via Inngest dashboard
+- [x] Actions stat card shows real CaseAction count — verified (17)
 - [ ] Case summaries use schema's summaryLabels (beginning/middle/end)
-- [ ] CaseAction rows created with fingerprints and correct actionTypes
 - [ ] Action dedup works: reminder emails don't create duplicate actions
-- [ ] ScanJob shows COMPLETED phase after synthesis finishes
-- [ ] Dashboard schema detail page shows updated caseCount
-- [ ] ExtractionCost rows logged for synthesis calls (model: claude-sonnet-4-5-20250514)
 - [ ] Aggregated field data computed correctly per ExtractedFieldDef.aggregation
-- [ ] Actions stat card shows real CaseAction count (not clustering ops)
 - [ ] Re-scan skips already-extracted emails (emailCount doesn't inflate)
 - [ ] Re-scan skips already-synthesized cases with no new emails (no wasted Claude calls)
-- [ ] CaseSchema.emailCount and caseCount are accurate after first run
+
+### Entity Groups Verification (needs re-run after wipe)
+- [ ] EntityGroup rows created in DB with correct index ordering
+- [ ] Entities have correct `groupId` linking
+- [ ] Ziad Allan's `associatedPrimaryIds` points only to Soccer (not all primaries)
+- [ ] Extraction prompt includes group context (verified in unit test, needs live verification)
+- [ ] `relevanceEntity` routing reduces strays vs blanket association
+- [ ] Discovered entities during validation don't get blanket-associated
 
 ### Bugs / Fixes Needed
-- [x] **Skip already-extracted emails on re-scan** — Fixed: `processEmailBatch` now pre-checks existing emails and skips Gmail fetch + Gemini call. `extractEmail` only increments counts on INSERT, not UPDATE.
-- [x] **Synthesis re-runs on already-synthesized cases** — Fixed: Added `synthesizedAt DateTime?` to Case model. `synthesizeCase()` checks if `synthesizedAt` is set and no new CaseEmail rows exist since then — skips with log "already_synthesized_no_new_emails". Sets `synthesizedAt` in the update transaction.
-- [x] **Actions stat card shows wrong metric** — Fixed: Was showing `casesCreated + casesMerged` (clustering ops). Now queries actual `CaseAction` count from the status API endpoint and displays that.
-- [x] **DB wipe for clean re-test** — All data tables truncated (FK-safe order) via `scripts/wipe-db.ts`. User row deleted; will re-authenticate via OAuth.
+- [x] **Skip already-extracted emails on re-scan** — Fixed
+- [x] **Synthesis re-runs on already-synthesized cases** — Fixed
+- [x] **Actions stat card shows wrong metric** — Fixed
+- [x] **DB wipe for clean re-test** — `scripts/wipe-db.ts`
+- [x] **Auth token expired at finalize** — Fixed: fresh session token
+- [x] **Entity groups not saved** — Fixed: `clearSavedInput` deferred to finalize success
 
 ### Ongoing
-- [x] Token refresh works — confirmed 2026-03-18 via discovery test script (auto-refreshed expired token)
+- [x] Token refresh works — confirmed 2026-03-18
 - [ ] Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
 - [ ] Cost analysis — verify total extraction cost for 58 emails is under $0.50
 - [ ] Integration test (interview-service.test.ts) — needs real DB writes with test data
 - [ ] Playwright e2e for interview flow — Phase 6 per build plan
-- [ ] **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token. For production, use `prompt: "consent"` only on first authorization, then omit it on subsequent sign-ins.
+- [ ] **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token.
 
-## Next Steps (post-relevance-gating)
+## Next Steps
 
-### Immediate: Wipe + Re-scan Validation
-1. **Wipe test schema data** — `npx tsx scripts/wipe-db.ts` to clear all emails, cases, clusters
-2. **Re-run the full pipeline** — re-authenticate, create new schema (interview will use updated prompts with no domain-default queries), scan, extract, cluster, synthesize
-3. **Verify case count** — expect ~10-20 cases (not 76). Check:
-   - Cases exist for soccer/Ziad Allan, St Agnes, Lanier, dance, guitar
-   - No junk cases for unrelated payments, newsletters, marketing
-   - DB has excluded emails with `excludeReason = "relevance:low"`
-   - `rawHypothesis` populated on the new CaseSchema
-   - Emails with null entityId are skipped by clustering (logged as entityFilter)
+### Immediate: Wipe + Re-run with Entity Groups
+1. **Wipe test schema data** — `npx tsx scripts/wipe-db.ts`
+2. **Re-run interview** with group-based input (Soccer + Ziad Allan, Dance, Lanier, St Agnes)
+3. **Verify entity groups saved** — EntityGroup rows, groupId links, group-scoped associatedPrimaryIds
+4. **Verify extraction quality** — fewer strays in soccer group with group context in prompt
+5. **Verify relevanceEntity routing** — Ziad Allan emails route to Soccer specifically
+
+### Then: Card 4 UX Improvements
+- Show group pairings on review screen
+- Allow assigning discovered entities to existing groups
+- Context-aware Primary Entity Type description
 
 ### Then: Resume Phase 6
 - Chrome Extension & Case Feed UI
-- Case feed rendering, Chrome side panel, Playwright e2e tests — see docs/build-plan.md
+- Case feed rendering, Chrome side panel, Playwright e2e tests
 
 ## Pipeline Architecture (complete as of Phase 5)
 

@@ -140,6 +140,7 @@ model CaseSchema {
   tags              SchemaTag[]
   extractedFields   ExtractedFieldDef[]
   entities          Entity[]
+  entityGroups      EntityGroup[]
   emails            Email[]
   cases             Case[]
   clusters          Cluster[]
@@ -259,6 +260,30 @@ enum AggregationType {
 
 
 // =============================================================================
+// ENTITY GROUPS — Paired WHAT+WHO Relationships
+// =============================================================================
+//
+// Groups capture the natural pairings from the interview: Soccer↔Ziad Allan,
+// Dance↔Lanier↔Ms Garza, St Agnes alone. Groups are the source of truth for
+// associatedPrimaryIds (derivable: secondary's group → find PRIMARYs in same group).
+// =============================================================================
+
+model EntityGroup {
+  id        String     @id @default(cuid())
+  schemaId  String
+  schema    CaseSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+  index     Int        // 0, 1, 2... for display ordering
+
+  entities  Entity[]   // All entities (PRIMARY + SECONDARY) in this group
+
+  createdAt DateTime   @default(now())
+
+  @@index([schemaId])
+  @@map("entity_groups")
+}
+
+
+// =============================================================================
 // ENTITIES — Two-Axis Model
 // =============================================================================
 //
@@ -282,9 +307,14 @@ model Entity {
   // Aliases for fuzzy matching
   aliases       Json     @default("[]") // ["Harbor View", "HV Reno", "123 Harbor View Dr"]
   
+  // Group membership (source of truth for WHAT+WHO pairings)
+  groupId   String?
+  group     EntityGroup? @relation(fields: [groupId], references: [id])
+
   // Associations (secondary entities linked to primary entities)
+  // Denormalized cache — derivable from group membership
   associatedPrimaryIds  Json  @default("[]")  // Entity IDs of primary entities this secondary works with
-  
+
   // Detection metadata
   autoDetected  Boolean  @default(true) // Discovered by AI vs manually added
   confidence    Float    @default(1.0)  // How confident the auto-detection was

@@ -1,6 +1,7 @@
 "use client";
 import { checkAndIncrementCallCount } from "@/lib/api-call-guard";
 import type { ScanDiscovery } from "@/lib/gmail/types";
+import { createBrowserClient } from "@/lib/supabase/client";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -16,11 +17,17 @@ export type InterviewStep =
   | "finalizing"
   | "complete";
 
+interface EntityGroupInput {
+  whats: string[];
+  whos: string[];
+}
+
 interface InterviewInput {
   role: string;
   domain: string;
   whats: string[];
   whos: string[];
+  groups: EntityGroupInput[];
   goals: string[];
 }
 
@@ -89,47 +96,37 @@ function isAbortError(err: unknown): boolean {
 }
 
 export function useInterviewFlow() {
-  const [state, setState] = useState<InterviewState>({
-    step: "input",
-    input: null,
-    hypothesis: null,
-    validation: null,
-    discoveries: [],
-    schemaId: null,
-    error: null,
+  // Synchronous initializer reads sessionStorage to avoid flicker on OAuth redirect.
+  // sessionStorage is sync and available in "use client" components.
+  const [state, setState] = useState<InterviewState>(() => {
+    if (typeof window === "undefined") {
+      return { step: "input", input: null, hypothesis: null, validation: null, discoveries: [], schemaId: null, error: null };
+    }
+    const savedHypothesis = loadSavedHypothesis();
+    const savedInput = loadSavedInput();
+    if (savedHypothesis) {
+      return { step: "scanning", input: savedInput, hypothesis: savedHypothesis, validation: null, discoveries: [], schemaId: null, error: null };
+    }
+    if (savedInput) {
+      return { step: "gmail_connect", input: savedInput, hypothesis: null, validation: null, discoveries: [], schemaId: null, error: null };
+    }
+    return { step: "input", input: null, hypothesis: null, validation: null, discoveries: [], schemaId: null, error: null };
   });
 
   // Use refs to avoid stale closures and prevent duplicate calls
   const authTokenRef = useRef<string | null>(null);
-  const inputRef = useRef<InterviewInput | null>(null);
+  const inputRef = useRef<InterviewInput | null>(state.input);
   const generatingRef = useRef(false);
   const finalizingRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const hypothesisFailCountRef = useRef(0);
+  const MAX_HYPOTHESIS_RETRIES = 2;
 
   // Cleanup: abort any in-flight request on unmount
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
     };
-  }, []);
-
-  // On mount: restore saved state from sessionStorage.
-  // If we have a hypothesis, skip straight to scanning.
-  // If we have input, resume at gmail_connect (Card2 will detect the session).
-  useEffect(() => {
-    const savedHypothesis = loadSavedHypothesis();
-    const savedInput = loadSavedInput();
-    if (savedHypothesis) {
-      setState((prev) => ({
-        ...prev,
-        step: "scanning",
-        input: savedInput,
-        hypothesis: savedHypothesis,
-      }));
-    } else if (savedInput) {
-      inputRef.current = savedInput;
-      setState((prev) => ({ ...prev, step: "gmail_connect", input: savedInput }));
-    }
   }, []);
 
   // Card 1 → Card 2 (save input to sessionStorage, move to Gmail connect)
@@ -143,6 +140,17 @@ export function useInterviewFlow() {
   const onGmailConnected = useCallback(async (authToken: string) => {
     // Guard against duplicate calls (React strict mode, effect re-runs)
     if (generatingRef.current) return;
+
+    // Stop retrying after repeated failures (prevents credit-burning loops)
+    if (hypothesisFailCountRef.current >= MAX_HYPOTHESIS_RETRIES) {
+      setState((prev) => ({
+        ...prev,
+        step: "generating",
+        error: "Hypothesis generation failed multiple times. Please try again later.",
+      }));
+      return;
+    }
+
     generatingRef.current = true;
 
     if (!checkAndIncrementCallCount("/api/interview/hypothesis")) {
@@ -180,8 +188,9 @@ export function useInterviewFlow() {
 
       const { data } = await response.json();
 
-      // Input is no longer needed; cache hypothesis for resume
-      clearSavedInput();
+      // Success — reset fail count, cache hypothesis for resume
+      // Keep savedInput alive until finalize succeeds (groups are needed at finalize time)
+      hypothesisFailCountRef.current = 0;
       saveHypothesis(data);
 
       setState((prev) => ({
@@ -191,10 +200,14 @@ export function useInterviewFlow() {
       }));
     } catch (err) {
       if (isAbortError(err) || controller.signal.aborted) return;
+      hypothesisFailCountRef.current += 1;
       generatingRef.current = false;
+
+      // Stay on "generating" step — do NOT go back to gmail_connect
+      // (going back triggers Card2's auto-advance, creating a retry loop)
       setState((prev) => ({
         ...prev,
-        step: "gmail_connect",
+        step: "generating",
         error: err instanceof Error ? err.message : "Failed to generate hypothesis",
       }));
     }
@@ -232,17 +245,28 @@ export function useInterviewFlow() {
       setState((prev) => ({ ...prev, step: "finalizing", error: null }));
 
       try {
-        const currentAuthToken = authTokenRef.current;
+        // Get a fresh Supabase session token (the one from Gmail connect may have expired)
+        const supabase = createBrowserClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        const freshToken = session?.access_token ?? authTokenRef.current;
+
+        if (!freshToken) {
+          throw new Error("Not authenticated. Please refresh the page and try again.");
+        }
+
         const response = await fetch("/api/interview/finalize", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(currentAuthToken ? { Authorization: `Bearer ${currentAuthToken}` } : {}),
+            Authorization: `Bearer ${freshToken}`,
           },
           body: JSON.stringify({
             hypothesis: state.hypothesis,
             validation: state.validation,
-            confirmations,
+            confirmations: {
+              ...confirmations,
+              groups: state.input?.groups,
+            },
           }),
           signal: controller.signal,
         });
@@ -267,7 +291,7 @@ export function useInterviewFlow() {
         }));
       }
     },
-    [state.hypothesis, state.validation],
+    [state.hypothesis, state.validation, state.input],
   );
 
   // Go back one step
@@ -282,7 +306,8 @@ export function useInterviewFlow() {
           return { ...prev, step: "input" as const, input: null };
         case "generating":
           generatingRef.current = false;
-          return { ...prev, step: "gmail_connect" as const };
+          hypothesisFailCountRef.current = 0;
+          return { ...prev, step: "gmail_connect" as const, error: null };
         case "scanning":
           clearSavedHypothesis();
           return { ...prev, step: "gmail_connect" as const, hypothesis: null };

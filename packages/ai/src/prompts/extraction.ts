@@ -2,7 +2,7 @@
  * Extraction prompt builder for email data extraction.
  * Pure function — no I/O, no side effects.
  */
-import type { ExtractionInput, ExtractionSchemaContext } from "@denim/types";
+import type { EntityGroupInput, ExtractionInput, ExtractionSchemaContext } from "@denim/types";
 
 export interface ExtractionPromptResult {
   system: string;
@@ -30,6 +30,31 @@ function buildEntityList(schema: ExtractionSchemaContext): string {
     .join("\n");
 }
 
+function buildEntityGroups(groups: EntityGroupInput[] | undefined): string {
+  if (!groups || groups.length === 0) {
+    return "";
+  }
+  const lines = groups.map((g, i) => {
+    const whats = g.whats.map((w) => `"${w}" (PRIMARY)`).join(", ");
+    const whos = g.whos.map((w) => `"${w}" (SECONDARY)`).join(", ");
+    const parts = [whats, whos].filter(Boolean).join(" + ");
+    return `  Group ${i + 1}: ${parts}`;
+  });
+  return `
+ENTITY GROUPS (these are the user's topics — entities that belong together):
+${lines.join("\n")}
+
+RELEVANCE SCORING GUIDE:
+- Count how many of the user's entered names appear in this email (by name, alias, or clear reference).
+- 3+ names from same group → 1.0
+- 2 names from same group → 0.8
+- 1 name match → 0.6
+- Tangential/passing mention → 0.3
+- No connection → 0.0
+- Set relevanceEntity to the PRIMARY entity from the best-matching group.
+- Partial name matches are NOT matches. "Ziad Jones" is NOT "Ziad Allan". Match the full name or known aliases only.`;
+}
+
 function buildFieldDefinitions(schema: ExtractionSchemaContext): string {
   if (schema.extractedFields.length === 0) {
     return "No extracted fields defined.";
@@ -49,18 +74,19 @@ For each email you must:
 4. Extract fields matching the field definitions below. Only include fields where a value is clearly present in the email.
 5. Detect the language of the email body (ISO 639-1 code, e.g., "en", "es", "fr"). Set to null if uncertain.
 6. Determine if the email is internal/noise. Set isInternal to true if the sender domain matches any exclusion pattern or the email appears to be an automated/system message.
-7. RELEVANCE ASSESSMENT: Does this email substantively relate to at least one [USER-INPUT] entity? Score 0.0-1.0:
+7. RELEVANCE ASSESSMENT: Does this email substantively relate to at least one [USER-INPUT] entity? Score using the entity group guide below if available, otherwise:
    1.0 = directly about a user-input entity (mentions it by name, is from/to someone associated)
    0.5 = tangentially related (mentions entity in passing, loosely connected)
    0.0 = no connection to any user-input entity
    Tags alone do NOT make an email relevant. An email about "soccer" from an unrelated league is NOT relevant just because "soccer" is a tag.
-   Set relevanceEntity to the name of the most relevant [USER-INPUT] entity, or null if none.
+   Set relevanceEntity to the PRIMARY entity from the best-matching group, or null if none.
 
 TAG TAXONOMY (only assign tags from this list):
 ${buildTagTaxonomy(schema)}
 
 KNOWN ENTITIES (detect references to these):
 ${buildEntityList(schema)}
+${buildEntityGroups(schema.entityGroups)}
 
 EXTRACTED FIELDS (extract values for these if present):
 ${buildFieldDefinitions(schema)}

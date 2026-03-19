@@ -7,14 +7,15 @@ import { prisma } from "@/lib/prisma";
 import { runDiscoveryQueries } from "@/lib/services/discovery";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { finalizeSchema } from "@/lib/services/interview";
+import { FinalizeConfirmationsSchema } from "@/lib/validation/interview";
 import { NextResponse } from "next/server";
 
 export const POST = withAuth(async ({ userId, request }) => {
   try {
     const body = await request.json();
-    const { hypothesis, validation, confirmations } = body;
+    const { hypothesis, validation, confirmations: rawConfirmations } = body;
 
-    if (!hypothesis || !validation || !confirmations) {
+    if (!hypothesis || !validation || !rawConfirmations) {
       return NextResponse.json(
         {
           error: "Missing required fields: hypothesis, validation, confirmations",
@@ -22,6 +23,16 @@ export const POST = withAuth(async ({ userId, request }) => {
         { status: 400 },
       );
     }
+
+    // Validate and sanitize confirmations (including groups)
+    const parseResult = FinalizeConfirmationsSchema.safeParse(rawConfirmations);
+    if (!parseResult.success) {
+      return NextResponse.json(
+        { error: `Invalid confirmations: ${parseResult.error.issues.map((i) => i.message).join("; ")}` },
+        { status: 400 },
+      );
+    }
+    const confirmations = parseResult.data;
 
     const schemaId = await finalizeSchema(hypothesis, validation, confirmations, { userId });
 

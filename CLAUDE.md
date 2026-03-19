@@ -14,7 +14,9 @@ from the start. Gmail access means we hold sensitive data and need to earn trust
 https://github.com/nickdicarlo-max/denim-email
 
 ## Supabase Schema
-to update the schema, use the URL in the .env.local file, not the MCP
+This project is NOT connected to the MCP Supabase plugin. The MCP will return permission errors.
+To run SQL or push schema changes, use the DATABASE_URL/DIRECT_URL from `apps/web/.env.local` directly
+(e.g., pass env vars inline to `prisma db push`, or use `psql` with the DIRECT_URL).
 
 ## Stack
 

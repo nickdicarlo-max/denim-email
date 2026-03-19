@@ -96,6 +96,7 @@ export const extractBatch = inngest.createFunction(
           entities: { where: { isActive: true }, select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
           extractedFields: { select: { name: true, type: true, description: true, source: true } },
           exclusionRules: { where: { isActive: true }, select: { ruleType: true, pattern: true, isActive: true } },
+          entityGroups: { orderBy: { index: "asc" }, include: { entities: { where: { isActive: true }, select: { name: true, type: true, isActive: true } } } },
         },
       });
 
@@ -119,6 +120,10 @@ export const extractBatch = inngest.createFunction(
           source: f.source,
         })),
         exclusionPatterns: schema.exclusionRules.map((r) => r.pattern),
+        entityGroups: schema.entityGroups.map((g) => ({
+          whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
+          whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
+        })),
       };
 
       const entities = schema.entities.map((e) => ({
