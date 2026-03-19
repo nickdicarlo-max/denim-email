@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-15 (DB wipe + Phase 4+5 bug fixes)
+Last updated: 2026-03-19 (integration tests 60/60, pre-wipe checkpoint)
 
 ## Completed
 
@@ -397,11 +397,17 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - [x] **Auth token expired at finalize** — Fixed: fresh session token
 - [x] **Entity groups not saved** — Fixed: `clearSavedInput` deferred to finalize success
 
+### Integration Test Suite (2026-03-19)
+- [x] **60/60 tests passing** (all 9 test files green, including Inngest event chain)
+- [x] Interview HTTP tests updated for `groups` field requirement
+- [x] Inngest event chain test verified: `extraction.all.completed` → CLUSTERING → SYNTHESIZING → COMPLETED (41s)
+- Test files: synthesis-edge-cases (5), real-gmail-pipeline (1), inngest-pipeline (2), case-review-ui (14), entity-groups (17), extraction (5), full-pipeline (5), feedback (6), interview (4)
+- Requires: dev server on port 3000/3001 for HTTP tests, Inngest dev server for event chain test
+
 ### Ongoing
 - [x] Token refresh works — confirmed 2026-03-18
 - [ ] Extraction quality review — verify summaries are 1-2 sentences, tags match schema taxonomy, entity detection accuracy >85%
 - [ ] Cost analysis — verify total extraction cost for 58 emails is under $0.50
-- [ ] Integration test (interview-service.test.ts) — needs real DB writes with test data
 - [ ] Playwright e2e for interview flow — Phase 6 per build plan
 - [ ] **Production OAuth: remove `prompt: "consent"`** — Currently forces Google consent screen on every sign-in to guarantee a refresh token.
 

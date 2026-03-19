@@ -6,7 +6,8 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient({
   datasourceUrl:
-    "postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres",
+    process.env.DATABASE_URL ??
+    "postgresql://postgres.xnewghhpuerhaottgalc:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=5",
 });
 
 async function wipe() {
