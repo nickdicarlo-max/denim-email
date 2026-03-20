@@ -148,6 +148,7 @@ model CaseSchema {
   qualitySnapshots  QualitySnapshot[]
   scanJobs          ScanJob[]
   exclusionRules    ExclusionRule[]
+  pipelineIntelligence PipelineIntelligence[]
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -513,6 +514,7 @@ model Case {
 
   // --- STATUS ---
   status        CaseStatus @default(OPEN)
+  urgency       String?    @default("UPCOMING")  // IMMINENT | THIS_WEEK | UPCOMING | NO_ACTION | IRRELEVANT
 
   // --- CONFIGURABLE AGGREGATED DATA ---
   // Rolled up from email-level extractedData per ExtractedFieldDef.aggregation
@@ -950,6 +952,8 @@ model ScanJob {
   // Error info
   errorMessage      String?  @db.Text
   
+  pipelineIntelligence PipelineIntelligence[]
+
   startedAt         DateTime?
   completedAt       DateTime?
   createdAt         DateTime @default(now())
@@ -975,6 +979,34 @@ enum ScanPhase {
   SYNTHESIZING        // AI generating case titles/summaries
   COMPLETED
   FAILED
+}
+
+
+// =============================================================================
+// PIPELINE INTELLIGENCE — AI Reasoning at Each Pipeline Stage
+// =============================================================================
+//
+// Stores AI reasoning for debugging, learning, and audit.
+// - Discovery: sender patterns, social graph, body samples, generated queries
+// - Clustering: proposed email groups, config overrides, AI reasoning
+// =============================================================================
+
+model PipelineIntelligence {
+  id          String   @id @default(cuid())
+  schemaId    String
+  scanJobId   String?
+  stage       String   // "discovery" | "clustering" | "extraction_summary"
+  input       Json     // what was sent to the AI (compact)
+  output      Json     // what the AI returned
+  model       String   // which model was used
+  tokenCount  Int?     // total tokens for cost tracking
+  createdAt   DateTime @default(now())
+
+  schema      CaseSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+  scanJob     ScanJob?   @relation(fields: [scanJobId], references: [id])
+
+  @@index([schemaId, stage])
+  @@map("pipeline_intelligence")
 }
 
 

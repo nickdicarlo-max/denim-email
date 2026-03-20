@@ -38,9 +38,12 @@ export default async function CaseFeedPage({
 		redirect("/dashboard");
 	}
 
-	// Load initial cases
+	// Load initial cases — filter out IRRELEVANT, sort by urgency tier then date
 	const cases = await prisma.case.findMany({
-		where: { schemaId: params.schemaId },
+		where: {
+			schemaId: params.schemaId,
+			urgency: { not: "IRRELEVANT" },
+		},
 		orderBy: { lastEmailDate: "desc" },
 		take: 21,
 		select: {
@@ -53,6 +56,7 @@ export default async function CaseFeedPage({
 			displayTags: true,
 			anchorTags: true,
 			status: true,
+			urgency: true,
 			aggregatedData: true,
 			startDate: true,
 			endDate: true,
@@ -72,6 +76,7 @@ export default async function CaseFeedPage({
 					title: true,
 					actionType: true,
 					dueDate: true,
+					eventStartTime: true,
 					status: true,
 				},
 			},
@@ -91,8 +96,26 @@ export default async function CaseFeedPage({
 	}
 
 	const hasMore = cases.length > 20;
-	const items = hasMore ? cases.slice(0, 20) : cases;
-	const nextCursor = hasMore ? items[items.length - 1].id : null;
+	const trimmed = hasMore ? cases.slice(0, 20) : cases;
+	const nextCursor = hasMore ? trimmed[trimmed.length - 1].id : null;
+
+	// Sort by urgency tier: IMMINENT > THIS_WEEK > UPCOMING > NO_ACTION
+	const URGENCY_ORDER: Record<string, number> = {
+		IMMINENT: 0,
+		THIS_WEEK: 1,
+		UPCOMING: 2,
+		NO_ACTION: 3,
+		IRRELEVANT: 4,
+	};
+	const items = [...trimmed].sort((a, b) => {
+		const aOrder = URGENCY_ORDER[a.urgency ?? "UPCOMING"] ?? 2;
+		const bOrder = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
+		if (aOrder !== bOrder) return aOrder - bOrder;
+		// Within same urgency, sort by lastEmailDate desc
+		const aDate = a.lastEmailDate?.getTime() ?? 0;
+		const bDate = b.lastEmailDate?.getTime() ?? 0;
+		return bDate - aDate;
+	});
 
 	const serializedCases = items.map((c) => ({
 		id: c.id,
@@ -104,6 +127,7 @@ export default async function CaseFeedPage({
 		displayTags: c.displayTags as string[],
 		anchorTags: c.anchorTags as string[],
 		status: c.status as "OPEN" | "IN_PROGRESS" | "RESOLVED",
+		urgency: c.urgency,
 		aggregatedData: c.aggregatedData as Record<string, unknown>,
 		startDate: c.startDate?.toISOString() ?? null,
 		endDate: c.endDate?.toISOString() ?? null,
@@ -119,6 +143,7 @@ export default async function CaseFeedPage({
 			title: a.title,
 			actionType: a.actionType,
 			dueDate: a.dueDate?.toISOString() ?? null,
+			eventStartTime: a.eventStartTime?.toISOString() ?? null,
 			status: a.status,
 		})),
 	}));

@@ -38,8 +38,11 @@ function buildFieldDefinitions(schema: SynthesisSchemaContext): string {
     .join("\n");
 }
 
-function buildSystemPrompt(schema: SynthesisSchemaContext): string {
+function buildSystemPrompt(schema: SynthesisSchemaContext, today: string): string {
   return `You are a case synthesis engine for a "${schema.domain}" case management system. You receive a group of related emails that belong to the same case and must produce a rich case summary.
+
+TODAY'S DATE: ${today}
+Use this to determine urgency. Events/deadlines that have already passed are NOT imminent — they are NO_ACTION (expired).
 
 Your job:
 1. Generate a descriptive TITLE (under 60 characters) that captures the case's essence. Not just the first email subject — synthesize across all emails.
@@ -59,6 +62,17 @@ Your job:
    - "OPEN" — active, needs attention
    - "IN_PROGRESS" — work is underway
    - "RESOLVED" — everything appears handled/completed
+7. Determine URGENCY based on time-sensitive content:
+   - "IMMINENT" — action/event within 48 hours
+   - "THIS_WEEK" — action/event within 7 days
+   - "UPCOMING" — action/event more than 7 days out, or ongoing recurring activity
+   - "NO_ACTION" — relevant content but nothing the user needs to do (completed, informational, expired)
+   - "IRRELEVANT" — emails don't substantively relate to the entity; likely misclassified noise
+
+DELIBERATE INACTION: If the email describes something the user explicitly declined,
+chose not to do, or allowed to expire (e.g., "membership expired, will NOT auto-renew",
+"we chose not to participate", "unsubscribed"), do NOT create an action item.
+These are intentional decisions, not pending tasks. Set urgency to NO_ACTION.
 
 TAG TAXONOMY (select display tags from this list only):
 ${buildTagTaxonomy(schema)}
@@ -108,7 +122,8 @@ Required JSON shape:
       "sourceEmailId": string | null
     }
   ],
-  "status": "OPEN" | "IN_PROGRESS" | "RESOLVED"
+  "status": "OPEN" | "IN_PROGRESS" | "RESOLVED",
+  "urgency": "IMMINENT" | "THIS_WEEK" | "UPCOMING" | "NO_ACTION" | "IRRELEVANT"
 }`;
 }
 
@@ -140,9 +155,11 @@ Return ONLY the JSON object. No other text.`;
 export function buildSynthesisPrompt(
   emails: SynthesisEmailInput[],
   schema: SynthesisSchemaContext,
+  today?: string,
 ): SynthesisPromptResult {
+  const todayStr = today ?? new Date().toISOString().slice(0, 10);
   return {
-    system: buildSystemPrompt(schema),
+    system: buildSystemPrompt(schema, todayStr),
     user: buildUserPrompt(emails),
   };
 }

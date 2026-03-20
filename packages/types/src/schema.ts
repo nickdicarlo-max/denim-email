@@ -218,6 +218,8 @@ export interface SynthesisSchemaContext {
   extractedFields: { name: string; type: string; description: string }[];
 }
 
+export type UrgencyLevel = "IMMINENT" | "THIS_WEEK" | "UPCOMING" | "NO_ACTION" | "IRRELEVANT";
+
 export interface SynthesisResult {
   title: string;
   summary: {
@@ -232,6 +234,7 @@ export interface SynthesisResult {
   } | null;
   actions: SynthesisAction[];
   status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+  urgency: UrgencyLevel;
 }
 
 export interface SynthesisAction {
@@ -246,6 +249,21 @@ export interface SynthesisAction {
   amount: number | null;
   currency: string | null;
   sourceEmailId: string | null;
+}
+
+// =============================================================================
+// CLUSTERING INTELLIGENCE TYPES
+// =============================================================================
+
+export interface ClusteringIntelligenceEmail {
+  id: string;
+  subject: string;
+  senderDisplayName: string;
+  senderDomain: string;
+  date: string;
+  summary: string;
+  tags: string[];
+  entityName: string | null;
 }
 
 export interface HypothesisValidation {

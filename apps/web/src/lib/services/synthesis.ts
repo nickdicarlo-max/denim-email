@@ -290,6 +290,11 @@ export async function synthesizeCase(
   // 9. Write everything in a transaction
   await prisma.$transaction(async (tx) => {
     // Update Case with synthesis results
+    // If urgency is IRRELEVANT, auto-resolve the case
+    const effectiveStatus = synthesisResult.urgency === "IRRELEVANT"
+      ? "RESOLVED" as const
+      : synthesisResult.status;
+
     await tx.case.update({
       where: { id: caseId },
       data: {
@@ -297,7 +302,8 @@ export async function synthesizeCase(
         summary: synthesisResult.summary,
         displayTags: synthesisResult.displayTags,
         primaryActor: synthesisResult.primaryActor ?? Prisma.JsonNull,
-        status: synthesisResult.status,
+        status: effectiveStatus,
+        urgency: synthesisResult.urgency,
         aggregatedData: aggregatedData as Prisma.InputJsonValue,
         lastSenderName,
         lastSenderEntity,

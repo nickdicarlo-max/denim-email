@@ -395,16 +395,16 @@ export const runSynthesis = inngest.createFunction(
     });
 
     // 4. Synthesize each case sequentially
-    let synthesizedCount = 0;
-    let failedCount = 0;
+    // NOTE: counters must be derived from step.run return values, not outer variables.
+    // Inngest re-initializes function scope between steps, so outer `let` variables reset to 0.
+    const results: Array<{ caseId: string; status: "ok" | "failed" }> = [];
 
     for (const caseId of caseIds) {
-      await step.run(`synthesize-${caseId}`, async () => {
+      const result = await step.run(`synthesize-${caseId}`, async () => {
         try {
           await synthesizeCase(caseId, schemaId, scanJobId ?? undefined);
-          synthesizedCount++;
+          return { caseId, status: "ok" as const };
         } catch (error) {
-          failedCount++;
           logger.error({
             service: "inngest",
             operation: "runSynthesis.caseFailed",
@@ -413,9 +413,14 @@ export const runSynthesis = inngest.createFunction(
             error,
           });
           // Continue with other cases — don't let one failure stop the pipeline
+          return { caseId, status: "failed" as const };
         }
       });
+      results.push(result);
     }
+
+    const synthesizedCount = results.filter((r) => r.status === "ok").length;
+    const failedCount = results.filter((r) => r.status === "failed").length;
 
     // 5. Update scan job to COMPLETED
     if (scanJobId) {

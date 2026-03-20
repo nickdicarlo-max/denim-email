@@ -30,7 +30,7 @@ function buildEntityList(schema: ExtractionSchemaContext): string {
     .join("\n");
 }
 
-function buildEntityGroups(groups: EntityGroupInput[] | undefined): string {
+function buildEntityGroups(groups: EntityGroupInput[] | undefined, domain: string): string {
   if (!groups || groups.length === 0) {
     return "";
   }
@@ -44,13 +44,22 @@ function buildEntityGroups(groups: EntityGroupInput[] | undefined): string {
 ENTITY GROUPS (these are the user's topics — entities that belong together):
 ${lines.join("\n")}
 
-RELEVANCE SCORING GUIDE:
-- Count how many of the user's entered names appear in this email (by name, alias, or clear reference).
-- 3+ names from same group → 1.0
-- 2 names from same group → 0.8
-- 1 name match → 0.6
-- Tangential/passing mention → 0.3
-- No connection → 0.0
+RELEVANCE ASSESSMENT:
+Consider the FULL CONTEXT of this schema: domain "${domain}", with these entity groups.
+Ask: "Would a ${domain} user who set up tracking for these entities want to see this email?"
+
+Score holistically — consider sender, subject, body content, and relationship to the user's entities:
+- 1.0 = Email is directly about one of these entities. From/to a known person, about a tracked activity.
+- 0.7 = Email is clearly related — involves the same organization, team, school, or activity.
+- 0.4 = Email has a real but indirect connection (e.g., a league-wide announcement that includes the tracked team).
+- 0.1 = Entity name appears incidentally in an unrelated email (newsletter digest, AI summary mentioning sports, promotional content).
+- 0.0 = No connection.
+
+CRITICAL: A passing mention of an entity name in an otherwise unrelated email scores 0.1 at most.
+The email must be ABOUT the entity's activities or people to score above 0.4.
+Newsletters, digests, promotional emails, and AI-generated summaries that happen to mention
+an entity name are NOT relevant to that entity.
+
 - Set relevanceEntity to the PRIMARY entity from the best-matching group.
 - Partial name matches are NOT matches. "Ziad Jones" is NOT "Ziad Allan". Match the full name or known aliases only.`;
 }
@@ -75,10 +84,12 @@ For each email you must:
 5. Detect the language of the email body (ISO 639-1 code, e.g., "en", "es", "fr"). Set to null if uncertain.
 6. Determine if the email is internal/noise. Set isInternal to true if the sender domain matches any exclusion pattern or the email appears to be an automated/system message.
 7. RELEVANCE ASSESSMENT: Does this email substantively relate to at least one [USER-INPUT] entity? Score using the entity group guide below if available, otherwise:
-   1.0 = directly about a user-input entity (mentions it by name, is from/to someone associated)
-   0.5 = tangentially related (mentions entity in passing, loosely connected)
+   1.0 = directly about a user-input entity (from/to a known person, about a tracked activity)
+   0.7 = clearly related (same organization, team, school, or activity)
+   0.4 = real but indirect connection (league-wide announcement mentioning tracked team)
+   0.1 = entity name appears incidentally in unrelated content (newsletter, digest, promotional)
    0.0 = no connection to any user-input entity
-   Tags alone do NOT make an email relevant. An email about "soccer" from an unrelated league is NOT relevant just because "soccer" is a tag.
+   CRITICAL: Tags alone do NOT make an email relevant. A newsletter mentioning "soccer" is NOT relevant to the user's soccer entity. The email must be ABOUT the entity's activities or people, not just mention keywords in passing.
    Set relevanceEntity to the PRIMARY entity from the best-matching group, or null if none.
 
 TAG TAXONOMY (only assign tags from this list):
@@ -86,7 +97,7 @@ ${buildTagTaxonomy(schema)}
 
 KNOWN ENTITIES (detect references to these):
 ${buildEntityList(schema)}
-${buildEntityGroups(schema.entityGroups)}
+${buildEntityGroups(schema.entityGroups, schema.domain)}
 
 EXTRACTED FIELDS (extract values for these if present):
 ${buildFieldDefinitions(schema)}

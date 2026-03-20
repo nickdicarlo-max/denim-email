@@ -37,6 +37,7 @@ const synthesisResultSchema = z.object({
     .nullable(),
   actions: z.array(synthesisActionSchema),
   status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED"]),
+  urgency: z.enum(["IMMINENT", "THIS_WEEK", "UPCOMING", "NO_ACTION", "IRRELEVANT"]).default("UPCOMING"),
 });
 
 /**

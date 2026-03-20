@@ -49,6 +49,13 @@ interface CaseDetailProps {
 	summaryLabels: { beginning: string; middle: string; end: string };
 	extractedFieldDefs: { name: string; type: string; format: string | null }[];
 	schemaId: string;
+	clusterRecords?: {
+		action: string;
+		emailIds: string[];
+		score: number | null;
+		primaryTag: string | null;
+		scoreBreakdown: Record<string, number> | null;
+	}[];
 }
 
 const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> = {
@@ -63,6 +70,7 @@ export function CaseDetail({
 	summaryLabels,
 	extractedFieldDefs,
 	schemaId,
+	clusterRecords,
 }: CaseDetailProps) {
 	const badge = STATUS_BADGE[caseData.status] ?? STATUS_BADGE.OPEN;
 
@@ -128,7 +136,7 @@ export function CaseDetail({
 			/>
 
 			{/* Clustering debug */}
-			<ClusteringDebug emails={emails} />
+			<ClusteringDebug emails={emails} clusterRecords={clusterRecords as any} />
 		</div>
 	);
 }

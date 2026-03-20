@@ -188,7 +188,7 @@ export async function extractEmail(
   const parsed: ExtractionResult = parseExtractionResponse(aiResult.content);
 
   // 3a. Relevance gate: reject emails that don't connect to user-input entities
-  const RELEVANCE_THRESHOLD = 0.3;
+  const RELEVANCE_THRESHOLD = 0.4;
   if (parsed.relevanceScore < RELEVANCE_THRESHOLD) {
     const email = await prisma.email.upsert({
       where: {

@@ -54,6 +54,7 @@ export default async function CaseDetailPage({
 							clusteringConfidence: true,
 							alternativeCaseId: true,
 							isExcluded: true,
+							routingDecision: true,
 						},
 					},
 				},
@@ -72,6 +73,18 @@ export default async function CaseDetailPage({
 		data: { viewedAt: new Date() },
 	});
 
+	// Load cluster records for this case (debug info)
+	const clusterRecords = await prisma.cluster.findMany({
+		where: { schemaId: params.schemaId, resultCaseId: params.caseId },
+		select: {
+			action: true,
+			emailIds: true,
+			score: true,
+			primaryTag: true,
+			scoreBreakdown: true,
+		},
+	});
+
 	const emails = caseRow.caseEmails.map((ce) => ({
 		id: ce.email.id,
 		schemaId: ce.email.schemaId,
@@ -86,6 +99,7 @@ export default async function CaseDetailPage({
 		clusteringConfidence: ce.email.clusteringConfidence,
 		alternativeCaseId: ce.email.alternativeCaseId,
 		isExcluded: ce.email.isExcluded,
+		routingDecision: ce.email.routingDecision as Record<string, unknown> | null,
 		assignedBy: ce.assignedBy,
 		clusteringScore: ce.clusteringScore,
 	}));
@@ -155,6 +169,13 @@ export default async function CaseDetailPage({
 					}
 					extractedFieldDefs={caseRow.schema.extractedFields}
 					schemaId={params.schemaId}
+					clusterRecords={clusterRecords.map((c) => ({
+						action: c.action,
+						emailIds: c.emailIds as string[],
+						score: c.score,
+						primaryTag: c.primaryTag,
+						scoreBreakdown: c.scoreBreakdown as Record<string, number> | null,
+					}))}
 				/>
 			</div>
 		</main>

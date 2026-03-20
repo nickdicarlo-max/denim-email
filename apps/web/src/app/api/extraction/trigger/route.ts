@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { inngest } from "@/lib/inngest/client";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { GmailClient } from "@/lib/gmail/client";
-import { runDiscoveryQueries } from "@/lib/services/discovery";
+import { runSmartDiscovery } from "@/lib/services/discovery";
 import { logger } from "@/lib/logger";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -25,14 +25,28 @@ export const POST = withAuth(async ({ userId, request }) => {
 
   const { schemaId } = parsed.data;
 
-  // Verify schema belongs to user
+  // Verify schema belongs to user and load entity groups for smart discovery
   const schema = await prisma.caseSchema.findUnique({
     where: { id: schemaId },
     select: {
       id: true,
       userId: true,
+      domain: true,
       discoveryQueries: true,
       status: true,
+      entityGroups: {
+        orderBy: { index: "asc" },
+        include: {
+          entities: {
+            where: { isActive: true },
+            select: { name: true, type: true },
+          },
+        },
+      },
+      entities: {
+        where: { isActive: true },
+        select: { name: true },
+      },
     },
   });
 
@@ -44,13 +58,27 @@ export const POST = withAuth(async ({ userId, request }) => {
   const accessToken = await getValidGmailToken(userId);
   const gmailClient = new GmailClient(accessToken);
 
-  // Run discovery queries with safety limits (8 week lookback, 200 email cap)
+  // Run smart discovery: broad scan → social graph → body sampling → AI queries
   const queries = schema.discoveryQueries as Array<{
     query: string;
     label: string;
   }>;
 
-  const { emailIds } = await runDiscoveryQueries(gmailClient, queries);
+  const entityGroups = schema.entityGroups.map((g) => ({
+    whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
+    whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
+  }));
+
+  const knownEntityNames = schema.entities.map((e) => e.name);
+
+  const { emailIds } = await runSmartDiscovery(
+    gmailClient,
+    queries,
+    entityGroups,
+    knownEntityNames,
+    schema.domain ?? "general",
+    schemaId,
+  );
 
   if (emailIds.length === 0) {
     return NextResponse.json(

@@ -1,6 +1,6 @@
 "use client";
 
-import { formatRelativeTime } from "@/lib/utils/format-time";
+import { formatRelativeTime, formatEventDate } from "@/lib/utils/format-time";
 import Link from "next/link";
 import { CardShell } from "../ui/card-shell";
 import { Tag } from "../ui/tag";
@@ -15,6 +15,7 @@ export interface CaseCardData {
 	displayTags: string[];
 	anchorTags: string[];
 	status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+	urgency?: string | null;
 	aggregatedData: Record<string, unknown>;
 	startDate: string | null;
 	endDate: string | null;
@@ -30,6 +31,7 @@ export interface CaseCardData {
 		title: string;
 		actionType: string;
 		dueDate: string | null;
+		eventStartTime?: string | null;
 		status: string;
 	}[];
 }
@@ -40,6 +42,29 @@ const STATUS_BADGE: Record<string, { label: string; bg: string; text: string }> 
 	RESOLVED: { label: "Resolved", bg: "bg-green-100", text: "text-green-700" },
 };
 
+const URGENCY_BADGE: Record<string, { label: string; bg: string; text: string } | undefined> = {
+	IMMINENT: { label: "Imminent", bg: "bg-red-100", text: "text-red-700" },
+	THIS_WEEK: { label: "This Week", bg: "bg-amber-100", text: "text-amber-700" },
+	UPCOMING: undefined, // no extra badge for default
+	NO_ACTION: { label: "No Action", bg: "bg-gray-100", text: "text-gray-500" },
+	IRRELEVANT: { label: "Hidden", bg: "bg-gray-100", text: "text-gray-400" },
+};
+
+/**
+ * Find the next future EVENT action to display prominently on the card.
+ */
+function getNextEvent(actions: CaseCardData["actions"]): { title: string; date: Date } | null {
+	const now = new Date();
+	for (const action of actions) {
+		if (action.actionType !== "EVENT") continue;
+		const dateStr = action.eventStartTime ?? action.dueDate;
+		if (!dateStr) continue;
+		const date = new Date(dateStr);
+		if (date > now) return { title: action.title, date };
+	}
+	return null;
+}
+
 export function CaseCard({
 	caseData,
 	schemaId,
@@ -48,11 +73,14 @@ export function CaseCard({
 	schemaId: string;
 }) {
 	const badge = STATUS_BADGE[caseData.status] ?? STATUS_BADGE.OPEN;
+	const urgencyBadge = caseData.urgency ? URGENCY_BADGE[caseData.urgency] : undefined;
 	const isUnread = caseData.viewedAt === null;
+	const isMuted = caseData.urgency === "NO_ACTION" || caseData.urgency === "IRRELEVANT";
+	const nextEvent = getNextEvent(caseData.actions);
 
 	return (
 		<Link href={`/dashboard/${schemaId}/cases/${caseData.id}`}>
-			<CardShell className="flex flex-col gap-2 hover:shadow-md hover:border-accent/30 border border-transparent transition-all cursor-pointer">
+			<CardShell className={`flex flex-col gap-2 hover:shadow-md hover:border-accent/30 border border-transparent transition-all cursor-pointer ${isMuted ? "opacity-60" : ""}`}>
 				{/* Line 1: Title + unread dot */}
 				<div className="flex items-start gap-2">
 					{isUnread && (
@@ -77,13 +105,28 @@ export function CaseCard({
 					)}
 				</div>
 
-				{/* Line 3: Status badge + summary.end preview */}
+				{/* Next event date (prominent) */}
+				{nextEvent && (
+					<div className="flex items-center gap-1.5 text-xs font-medium text-accent-text bg-accent/10 rounded px-2 py-1">
+						<span>Next: {nextEvent.title}</span>
+						<span className="ml-auto whitespace-nowrap">{formatEventDate(nextEvent.date)}</span>
+					</div>
+				)}
+
+				{/* Line 3: Status badge + urgency badge + summary.end preview */}
 				<div className="flex items-start gap-2">
 					<span
 						className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${badge.bg} ${badge.text}`}
 					>
 						{badge.label}
 					</span>
+					{urgencyBadge && (
+						<span
+							className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${urgencyBadge.bg} ${urgencyBadge.text}`}
+						>
+							{urgencyBadge.label}
+						</span>
+					)}
 					{caseData.summary?.end && (
 						<p className="text-xs text-secondary line-clamp-2 flex-1">
 							{caseData.summary.end}
