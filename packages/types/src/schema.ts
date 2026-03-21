@@ -337,6 +337,7 @@ export interface HypothesisValidation {
     secondaryTypeName: string | null;
     confidence: number;
     source: string;
+    emailCount?: number;
   }[];
   confirmedTags: string[];
   suggestedTags: {

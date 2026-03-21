@@ -265,7 +265,7 @@ export function useInterviewFlow() {
             validation: state.validation,
             confirmations: {
               ...confirmations,
-              groups: state.input?.groups,
+              groups: (confirmations as Record<string, unknown>).groups ?? state.input?.groups,
             },
           }),
           signal: controller.signal,

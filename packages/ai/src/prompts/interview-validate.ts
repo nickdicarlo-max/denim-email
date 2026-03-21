@@ -20,7 +20,7 @@ export function buildValidationPrompt(
 
 Analyze the email samples and return a JSON object with these fields:
 - confirmedEntities: string[] — entity names from the hypothesis that appear in the email samples
-- discoveredEntities: array of { name, type ("PRIMARY" or "SECONDARY"), secondaryTypeName (string or null), confidence (0-1), source: "email_scan" } — new entities discovered in the email that weren't in the hypothesis
+- discoveredEntities: array of { name, type ("PRIMARY" or "SECONDARY"), secondaryTypeName (string or null), confidence (0-1), source: "email_scan", emailCount: number } — new entities discovered in the email that weren't in the hypothesis. emailCount = how many of the sample emails mention or relate to this entity
 - confirmedTags: string[] — tag names from the hypothesis that match content in the email samples
 - suggestedTags: array of { name, description, expectedFrequency ("high"|"medium"|"low"), isActionable: boolean } — new tags suggested by patterns in the email
 - noisePatterns: string[] — sender domains that appear to be automated/marketing noise (e.g. noreply@, newsletter@)

@@ -7,6 +7,7 @@ const DiscoveredEntitySchema = z.object({
   secondaryTypeName: z.string().nullable(),
   confidence: z.number().min(0).max(1),
   source: z.string(),
+  emailCount: z.number().int().nonnegative().default(0),
 });
 
 const SuggestedTagSchema = z.object({

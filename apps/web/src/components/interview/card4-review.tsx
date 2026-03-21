@@ -2,6 +2,17 @@
 
 import type { EntityGroupInput, HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useState } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
 import { EntityChip } from "../ui/entity-chip";
@@ -23,6 +34,7 @@ interface Card4Props {
     addedEntities?: string[];
     addedTags?: string[];
     schemaName?: string;
+    groups?: EntityGroupInput[];
   }) => void;
   onBack: () => void;
 }
@@ -114,6 +126,98 @@ function LinkIcon() {
   );
 }
 
+function UndoIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 7v6h6" />
+      <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.69 3L3 13" />
+    </svg>
+  );
+}
+
+// --- Drag-and-drop components ---
+
+function DraggableEntityChip({
+  entity,
+  isRemoved,
+  onRemove,
+}: {
+  entity: { name: string; type: "PRIMARY" | "SECONDARY"; emailCount?: number };
+  isRemoved: boolean;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `discovered-${entity.name}`,
+    data: { entityName: entity.name, entityType: entity.type },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`flex items-center justify-between p-2 rounded-md border border-border-light transition mb-1.5 ${
+        isRemoved ? "opacity-40" : ""
+      } ${isDragging ? "opacity-30" : ""}`}
+    >
+      <div
+        className="flex items-center gap-2 min-w-0 cursor-grab active:cursor-grabbing touch-none"
+        {...listeners}
+        {...attributes}
+      >
+        <EntityChip
+          name={entity.name}
+          entityType={entity.type}
+          onRemove={onRemove}
+        />
+        <span className={`text-xs truncate ${entity.emailCount != null && entity.emailCount <= 1 ? "text-orange-500" : "text-muted"}`}>
+          {entity.emailCount != null ? `${entity.emailCount} email${entity.emailCount !== 1 ? "s" : ""}` : "Discovered in email"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DroppableGroupCard({
+  groupIndex,
+  children,
+}: {
+  groupIndex: number;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `group-${groupIndex}`,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`p-3 rounded-lg border-[1.5px] transition-colors ${
+        isOver
+          ? "border-accent bg-accent-soft/30"
+          : "border-border bg-white"
+      }`}
+    >
+      {children}
+      {isOver && (
+        <div className="text-[10px] font-medium text-accent-text text-center mt-2 py-1">
+          Drop here
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Main component ---
+
 export function Card4Review({ hypothesis, validation, groups, isLoading, onFinalize, onBack }: Card4Props) {
   const [schemaName, setSchemaName] = useState(hypothesis.schemaName);
   const [removedEntities, setRemovedEntities] = useState<Set<string>>(() => new Set());
@@ -123,6 +227,13 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
     () => new Set(),
   );
   const [addedTags, setAddedTags] = useState<string[]>([]);
+  const [entityGroupAssignments, setEntityGroupAssignments] = useState<Map<string, number>>(() => new Map());
+
+  // Drag-and-drop active item for overlay
+  const [activeDragEntity, setActiveDragEntity] = useState<{
+    name: string;
+    type: "PRIMARY" | "SECONDARY";
+  } | null>(null);
 
   // Add entity inline form state
   const [addingEntity, setAddingEntity] = useState(false);
@@ -131,6 +242,15 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
   // Add tag inline form state
   const [addingTag, setAddingTag] = useState(false);
   const [newTagName, setNewTagName] = useState("");
+
+  // Sensors: touch (long-press 250ms) + mouse (5px distance)
+  const touchSensor = useSensor(TouchSensor, {
+    activationConstraint: { delay: 250, tolerance: 5 },
+  });
+  const mouseSensor = useSensor(MouseSensor, {
+    activationConstraint: { distance: 5 },
+  });
+  const sensors = useSensors(touchSensor, mouseSensor);
 
   const handleRemoveEntity = useCallback((name: string) => {
     setRemovedEntities((prev) => {
@@ -141,6 +261,15 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
         next.add(name);
       }
       return next;
+    });
+    // Also clear from group assignments if removed
+    setEntityGroupAssignments((prev) => {
+      if (prev.has(name)) {
+        const next = new Map(prev);
+        next.delete(name);
+        return next;
+      }
+      return prev;
     });
   }, []);
 
@@ -190,7 +319,62 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
     }
   }, [newTagName]);
 
+  const handleAssignToGroup = useCallback((entityName: string, groupIndex: number) => {
+    setEntityGroupAssignments((prev) => {
+      const next = new Map(prev);
+      next.set(entityName, groupIndex);
+      return next;
+    });
+  }, []);
+
+  const handleUnassignFromGroup = useCallback((entityName: string) => {
+    setEntityGroupAssignments((prev) => {
+      const next = new Map(prev);
+      next.delete(entityName);
+      return next;
+    });
+  }, []);
+
+  const handleDragStart = useCallback((event: { active: { data: { current?: { entityName: string; entityType: "PRIMARY" | "SECONDARY" } } } }) => {
+    const data = event.active.data.current;
+    if (data) {
+      setActiveDragEntity({ name: data.entityName, type: data.entityType });
+    }
+  }, []);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveDragEntity(null);
+    const { active, over } = event;
+    if (!over) return;
+
+    const entityName = active.data.current?.entityName as string | undefined;
+    const dropId = over.id as string;
+    if (!entityName || !dropId.startsWith("group-")) return;
+
+    const groupIndex = Number.parseInt(dropId.replace("group-", ""), 10);
+    if (!Number.isNaN(groupIndex)) {
+      handleAssignToGroup(entityName, groupIndex);
+    }
+  }, [handleAssignToGroup]);
+
   const handleFinalize = useCallback(() => {
+    // Build updated groups with assigned discovered entities merged in
+    const updatedGroups = groups?.map((group, gi) => {
+      const assignedToThisGroup = validation.discoveredEntities.filter(
+        (e) => entityGroupAssignments.get(e.name) === gi && !removedEntities.has(e.name),
+      );
+      return {
+        whats: [
+          ...group.whats,
+          ...assignedToThisGroup.filter((e) => e.type === "PRIMARY").map((e) => e.name),
+        ],
+        whos: [
+          ...group.whos,
+          ...assignedToThisGroup.filter((e) => e.type === "SECONDARY").map((e) => e.name),
+        ],
+      };
+    });
+
     const confirmations = {
       confirmedEntities: validation.discoveredEntities
         .filter((e) => !removedEntities.has(e.name))
@@ -204,6 +388,7 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
       addedEntities: addedEntities.length > 0 ? addedEntities : undefined,
       addedTags: addedTags.length > 0 ? addedTags : undefined,
       schemaName,
+      groups: updatedGroups,
     };
     onFinalize(confirmations);
   }, [
@@ -215,10 +400,19 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
     addedEntities,
     addedTags,
     schemaName,
+    groups,
+    entityGroupAssignments,
     onFinalize,
   ]);
 
   const { clusteringConfig } = hypothesis;
+
+  // Compute unassigned discovered entities
+  const unassignedDiscovered = validation.discoveredEntities.filter(
+    (e) => !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
+  );
+
+  const hasGroups = groups && groups.length > 0;
 
   return (
     <CardShell className="flex flex-col h-full">
@@ -274,148 +468,149 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
         {/* Entities */}
         <div>
           <SectionLabel>Entities</SectionLabel>
-          <div className="space-y-2">
-            {groups && groups.length > 0 ? (
-              <>
-                {/* Group cards — mirrors Card 1 visual structure */}
-                {groups.map((group, gi) => {
-                  const groupWhats = hypothesis.entities.filter(
-                    (e) => e.type === "PRIMARY" && group.whats.includes(e.name),
-                  );
-                  const groupWhos = hypothesis.entities.filter(
-                    (e) => e.type === "SECONDARY" && group.whos.includes(e.name),
-                  );
-                  if (groupWhats.length === 0 && groupWhos.length === 0) return null;
-                  return (
-                    <div
-                      key={gi}
-                      className="p-3 rounded-lg border-[1.5px] border-border bg-white"
-                    >
-                      {groups.length > 1 && (
-                        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
-                          Group {gi + 1}
+          <DndContext
+            sensors={sensors}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+          >
+            <div className="space-y-2">
+              {hasGroups ? (
+                <>
+                  {/* Group cards — mirrors Card 1 visual structure */}
+                  {groups.map((group, gi) => {
+                    const groupWhats = hypothesis.entities.filter(
+                      (e) => e.type === "PRIMARY" && group.whats.includes(e.name),
+                    );
+                    const groupWhos = hypothesis.entities.filter(
+                      (e) => e.type === "SECONDARY" && group.whos.includes(e.name),
+                    );
+                    // Discovered entities assigned to this group
+                    const assignedDiscovered = validation.discoveredEntities.filter(
+                      (e) => entityGroupAssignments.get(e.name) === gi && !removedEntities.has(e.name),
+                    );
+                    if (groupWhats.length === 0 && groupWhos.length === 0 && assignedDiscovered.length === 0) return null;
+                    return (
+                      <DroppableGroupCard key={gi} groupIndex={gi}>
+                        {groups.length > 1 && (
+                          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-2">
+                            Group {gi + 1}
+                          </div>
+                        )}
+                        {/* WHATs */}
+                        <div className="flex flex-wrap gap-1.5 mb-1">
+                          {groupWhats.map((entity) => {
+                            const isRemoved = removedEntities.has(entity.name);
+                            return (
+                              <span
+                                key={entity.name}
+                                className={`transition ${isRemoved ? "opacity-40" : ""}`}
+                              >
+                                <EntityChip
+                                  name={entity.name}
+                                  entityType="PRIMARY"
+                                  onRemove={() => handleRemoveEntity(entity.name)}
+                                />
+                              </span>
+                            );
+                          })}
                         </div>
-                      )}
-                      {/* WHATs */}
-                      <div className="flex flex-wrap gap-1.5 mb-1">
-                        {groupWhats.map((entity) => {
-                          const isRemoved = removedEntities.has(entity.name);
-                          return (
-                            <span
-                              key={entity.name}
-                              className={`transition ${isRemoved ? "opacity-40" : ""}`}
-                            >
-                              <EntityChip
-                                name={entity.name}
-                                entityType="PRIMARY"
-                                onRemove={() => handleRemoveEntity(entity.name)}
-                              />
-                            </span>
-                          );
-                        })}
-                      </div>
-                      {/* WHOs linked to this group */}
-                      {groupWhos.length > 0 && (
-                        <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border-light">
-                          <span className="text-muted"><LinkIcon /></span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {groupWhos.map((entity) => {
-                              const isRemoved = removedEntities.has(entity.name);
-                              return (
-                                <span
-                                  key={entity.name}
-                                  className={`transition ${isRemoved ? "opacity-40" : ""}`}
-                                >
+                        {/* WHOs linked to this group */}
+                        {groupWhos.length > 0 && (
+                          <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border-light">
+                            <span className="text-muted"><LinkIcon /></span>
+                            <div className="flex flex-wrap gap-1.5">
+                              {groupWhos.map((entity) => {
+                                const isRemoved = removedEntities.has(entity.name);
+                                return (
+                                  <span
+                                    key={entity.name}
+                                    className={`transition ${isRemoved ? "opacity-40" : ""}`}
+                                  >
+                                    <EntityChip
+                                      name={entity.name}
+                                      entityType="SECONDARY"
+                                      onRemove={() => handleRemoveEntity(entity.name)}
+                                    />
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        {/* Assigned discovered entities */}
+                        {assignedDiscovered.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-dashed border-border-light">
+                            <div className="text-[10px] font-medium text-muted mb-1.5">discovered</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {assignedDiscovered.map((entity) => (
+                                <span key={entity.name} className="inline-flex items-center gap-1">
                                   <EntityChip
                                     name={entity.name}
-                                    entityType="SECONDARY"
+                                    entityType={entity.type}
                                     onRemove={() => handleRemoveEntity(entity.name)}
+                                    className="border border-dashed border-current"
                                   />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnassignFromGroup(entity.name)}
+                                    className="text-muted hover:text-accent-text transition p-1"
+                                    aria-label={`Unassign ${entity.name}`}
+                                    title="Return to discovered"
+                                  >
+                                    <UndoIcon />
+                                  </button>
                                 </span>
-                              );
-                            })}
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </DroppableGroupCard>
+                    );
+                  })}
+
+                  {/* Ungrouped entities (not in any group — AI-inferred or standalone) */}
+                  {(() => {
+                    const groupedNames = new Set(
+                      groups.flatMap((g) => [...g.whats, ...g.whos]),
+                    );
+                    const ungrouped = hypothesis.entities.filter(
+                      (e) => !groupedNames.has(e.name),
+                    );
+                    if (ungrouped.length === 0) return null;
+                    return ungrouped.map((entity) => {
+                      const isRemoved = removedEntities.has(entity.name);
+                      return (
+                        <div
+                          key={entity.name}
+                          className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
+                            isRemoved ? "opacity-40" : ""
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <EntityChip
+                              name={entity.name}
+                              entityType={entity.type}
+                              onRemove={() => handleRemoveEntity(entity.name)}
+                            />
+                            <span className="text-xs text-muted truncate">
+                              {entity.source === "email_scan"
+                                ? "Discovered in email"
+                                : "AI inferred"}
+                            </span>
                           </div>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
-
-                {/* Ungrouped entities (not in any group — AI-inferred or standalone) */}
-                {(() => {
-                  const groupedNames = new Set(
-                    groups.flatMap((g) => [...g.whats, ...g.whos]),
-                  );
-                  const ungrouped = hypothesis.entities.filter(
-                    (e) => !groupedNames.has(e.name),
-                  );
-                  if (ungrouped.length === 0) return null;
-                  return ungrouped.map((entity) => {
-                    const isRemoved = removedEntities.has(entity.name);
-                    return (
-                      <div
-                        key={entity.name}
-                        className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
-                          isRemoved ? "opacity-40" : ""
-                        }`}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <EntityChip
-                            name={entity.name}
-                            entityType={entity.type}
-                            onRemove={() => handleRemoveEntity(entity.name)}
-                          />
-                          <span className="text-xs text-muted truncate">
-                            {entity.source === "email_scan"
-                              ? "Discovered in email"
-                              : "AI inferred"}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  });
-                })()}
-              </>
-            ) : (
-              /* Fallback: flat list when no groups available */
-              hypothesis.entities.map((entity) => {
-                const isRemoved = removedEntities.has(entity.name);
-                return (
-                  <div
-                    key={entity.name}
-                    className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
-                      isRemoved ? "opacity-40" : ""
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <EntityChip
-                        name={entity.name}
-                        entityType={entity.type}
-                        onRemove={() => handleRemoveEntity(entity.name)}
-                      />
-                      <span className="text-xs text-muted truncate">
-                        {entity.source === "user_input"
-                          ? "From your input"
-                          : entity.source === "email_scan"
-                            ? "Discovered in email"
-                            : "AI inferred"}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-
-            {/* Discovered entities from validation */}
-            {validation.discoveredEntities.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs text-muted mb-1.5 font-medium">Discovered</p>
-                {validation.discoveredEntities.map((entity) => {
+                      );
+                    });
+                  })()}
+                </>
+              ) : (
+                /* Fallback: flat list when no groups available */
+                hypothesis.entities.map((entity) => {
                   const isRemoved = removedEntities.has(entity.name);
                   return (
                     <div
                       key={entity.name}
-                      className={`flex items-center justify-between p-2 rounded-md border border-border-light transition mb-1.5 ${
+                      className={`flex items-center justify-between p-2 rounded-md border border-border-light transition ${
                         isRemoved ? "opacity-40" : ""
                       }`}
                     >
@@ -425,77 +620,134 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                           entityType={entity.type}
                           onRemove={() => handleRemoveEntity(entity.name)}
                         />
-                        <span className="text-xs text-muted truncate">Discovered in email</span>
+                        <span className="text-xs text-muted truncate">
+                          {entity.source === "user_input"
+                            ? "From your input"
+                            : entity.source === "email_scan"
+                              ? "Discovered in email"
+                              : "AI inferred"}
+                        </span>
                       </div>
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
 
-            {/* User-added entities */}
-            {addedEntities.map((name) => (
-              <div
-                key={name}
-                className="flex items-center justify-between p-2 rounded-md border border-border-light"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <EntityChip
-                    name={name}
-                    entityType="PRIMARY"
-                    onRemove={() => handleRemoveAddedEntity(name)}
-                  />
-                  <span className="text-xs text-muted truncate">Added by you</span>
+              {/* Discovered entities from validation — only show unassigned */}
+              {unassignedDiscovered.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-muted mb-1.5 font-medium">
+                    {hasGroups
+                      ? "Drag into a group above, or remove what you don\u2019t need"
+                      : "Discovered"}
+                  </p>
+                  {unassignedDiscovered.map((entity) => (
+                    <DraggableEntityChip
+                      key={entity.name}
+                      entity={entity}
+                      isRemoved={false}
+                      onRemove={() => handleRemoveEntity(entity.name)}
+                    />
+                  ))}
                 </div>
-              </div>
-            ))}
+              )}
 
-            {/* Add entity inline */}
-            {addingEntity ? (
-              <div className="flex items-center gap-2 p-2 rounded-md border border-accent bg-white">
-                <input
-                  value={newEntityName}
-                  onChange={(e) => setNewEntityName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleAddEntity();
-                    if (e.key === "Escape") {
+              {/* Removed discovered entities (shown faded, clickable to restore) */}
+              {(() => {
+                const removedDiscovered = validation.discoveredEntities.filter(
+                  (e) => removedEntities.has(e.name) && !entityGroupAssignments.has(e.name),
+                );
+                if (removedDiscovered.length === 0) return null;
+                return removedDiscovered.map((entity) => (
+                  <div
+                    key={entity.name}
+                    className="flex items-center justify-between p-2 rounded-md border border-border-light transition mb-1.5 opacity-40"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <EntityChip
+                        name={entity.name}
+                        entityType={entity.type}
+                        onRemove={() => handleRemoveEntity(entity.name)}
+                      />
+                      <span className="text-xs text-muted truncate">Removed</span>
+                    </div>
+                  </div>
+                ));
+              })()}
+
+              {/* User-added entities */}
+              {addedEntities.map((name) => (
+                <div
+                  key={name}
+                  className="flex items-center justify-between p-2 rounded-md border border-border-light"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <EntityChip
+                      name={name}
+                      entityType="PRIMARY"
+                      onRemove={() => handleRemoveAddedEntity(name)}
+                    />
+                    <span className="text-xs text-muted truncate">Added by you</span>
+                  </div>
+                </div>
+              ))}
+
+              {/* Add entity inline */}
+              {addingEntity ? (
+                <div className="flex items-center gap-2 p-2 rounded-md border border-accent bg-white">
+                  <input
+                    value={newEntityName}
+                    onChange={(e) => setNewEntityName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleAddEntity();
+                      if (e.key === "Escape") {
+                        setAddingEntity(false);
+                        setNewEntityName("");
+                      }
+                    }}
+                    placeholder="Entity name"
+                    className="flex-1 text-sm px-2 py-1 border-none outline-none bg-transparent text-primary placeholder:text-muted"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddEntity}
+                    disabled={!newEntityName.trim()}
+                    className="text-xs font-semibold px-3 py-1 rounded bg-accent text-inverse disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setAddingEntity(false);
                       setNewEntityName("");
-                    }
-                  }}
-                  placeholder="Entity name"
-                  className="flex-1 text-sm px-2 py-1 border-none outline-none bg-transparent text-primary placeholder:text-muted"
-                />
+                    }}
+                    className="text-muted hover:opacity-70 text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  onClick={handleAddEntity}
-                  disabled={!newEntityName.trim()}
-                  className="text-xs font-semibold px-3 py-1 rounded bg-accent text-inverse disabled:opacity-50"
+                  onClick={() => setAddingEntity(true)}
+                  className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-md border-[1.5px] border-dashed border-border text-sm font-medium text-accent-text hover:border-accent hover:bg-accent-soft transition"
                 >
-                  Add
+                  <PlusIcon />
+                  Add entity
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingEntity(false);
-                    setNewEntityName("");
-                  }}
-                  className="text-muted hover:opacity-70 text-sm"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setAddingEntity(true)}
-                className="flex items-center justify-center gap-1.5 w-full py-2.5 rounded-md border-[1.5px] border-dashed border-border text-sm font-medium text-accent-text hover:border-accent hover:bg-accent-soft transition"
-              >
-                <PlusIcon />
-                Add entity
-              </button>
-            )}
-          </div>
+              )}
+            </div>
+
+            {/* Drag overlay — floating chip while dragging */}
+            <DragOverlay>
+              {activeDragEntity ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full font-medium text-sm px-3 py-2 shadow-lg scale-105 bg-entity-primary-bg text-entity-primary">
+                  {activeDragEntity.name}
+                </span>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
         </div>
 
         {/* Tags */}
