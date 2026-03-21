@@ -119,6 +119,12 @@ model CaseSchema {
   // --- CLUSTERING CONFIG ---
   // Proven defaults from TCS, tunable per schema
   clusteringConfig  Json               // See ClusteringConfig type below
+
+  // --- LEARNING LOOP ---
+  qualityPhase            String  @default("CALIBRATING")  // CALIBRATING | TRACKING | STABLE
+  calibrationRunCount     Int     @default(0)
+  tunedClusteringConfig   Json?   // Learned gravity params (overrides clusteringConfig when set)
+  discriminatorVocabulary Json?   // Learned discriminators per entity
   // Default: { mergeThreshold: 45, tagMatchScore: 60, subjectMatchScore: 50,
   //            weakTagDiscount: 0.3, anchorTagLimit: 2, timeDecayDays: { fresh: 45, recent: 75, stale: 120 },
   //            caseSizeThreshold: 10, caseSizeMaxBonus: 25, subjectAdditiveBonus: 25,
@@ -180,6 +186,7 @@ model SchemaTag {
   schema        CaseSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
 
   name          String                  // "Permits", "HVAC", "Contract Review"
+  kind          String   @default("CATEGORY") // CATEGORY | DISCRIMINATOR
   description   String?  @db.Text       // For AI extraction guidance
 
   // Weights
@@ -387,6 +394,7 @@ model Email {
   // --- AI EXTRACTION (from first pass) ---
   summary         String   @db.Text     // 1-2 sentence AI summary
   tags            Json     @default("[]") // String array: AI-extracted, maps to SchemaTag names
+  discriminators  Json     @default("[]") // String array: discriminator words assigned during case splitting
   extractedData   Json     @default("{}") // Schema-defined fields: { cost: 8200, deadline: "2026-04-01" }
   
   // Body metadata (useful for search without storing full body)
@@ -726,6 +734,7 @@ model Cluster {
   // What this cluster decided
   action        ClusterAction           // MERGE into existing case or CREATE new case
   targetCaseId  String?                 // For MERGE: which case to merge into
+  clusterPass   String?                 // "COARSE" | "SPLIT" — which pass created this
   
   // Cluster contents
   emailIds      Json     @default("[]") // Email IDs in this cluster

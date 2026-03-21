@@ -13,6 +13,13 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { callClaude } from "@/lib/ai/client";
+
+/** Safely parse a date string, returning null if invalid. */
+function safeDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 import { buildSynthesisPrompt, parseSynthesisResponse } from "@denim/ai";
 import { generateFingerprint, matchAction } from "@denim/engine";
 import type {
@@ -332,9 +339,9 @@ export async function synthesizeCase(
             data: {
               title: action.title,
               description: action.description,
-              dueDate: action.dueDate ? new Date(action.dueDate) : undefined,
-              eventStartTime: action.eventStartTime ? new Date(action.eventStartTime) : undefined,
-              eventEndTime: action.eventEndTime ? new Date(action.eventEndTime) : undefined,
+              dueDate: safeDate(action.dueDate) ?? undefined,
+              eventStartTime: safeDate(action.eventStartTime) ?? undefined,
+              eventEndTime: safeDate(action.eventEndTime) ?? undefined,
               eventLocation: action.eventLocation,
               confidence: action.confidence,
               amount: action.amount,
@@ -356,9 +363,9 @@ export async function synthesizeCase(
             title: action.title,
             description: action.description,
             actionType: action.actionType,
-            dueDate: action.dueDate ? new Date(action.dueDate) : null,
-            eventStartTime: action.eventStartTime ? new Date(action.eventStartTime) : null,
-            eventEndTime: action.eventEndTime ? new Date(action.eventEndTime) : null,
+            dueDate: safeDate(action.dueDate),
+            eventStartTime: safeDate(action.eventStartTime),
+            eventEndTime: safeDate(action.eventEndTime),
             eventLocation: action.eventLocation,
             confidence: action.confidence,
             amount: action.amount,

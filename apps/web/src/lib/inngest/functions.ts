@@ -1,6 +1,6 @@
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { processEmailBatch } from "@/lib/services/extraction";
-import { clusterNewEmails } from "@/lib/services/cluster";
+import { coarseCluster, splitCoarseClusters, applyCalibration } from "@/lib/services/cluster";
 import { synthesizeCase } from "@/lib/services/synthesis";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
@@ -259,12 +259,12 @@ export const checkExtractionComplete = inngest.createFunction(
 );
 
 /**
- * Run clustering after all extraction is complete.
- * CPU + DB only (no external API calls), so a single function is fine.
+ * Pass 1: Run coarse clustering after all extraction is complete.
+ * Simplified gravity model — deterministic, no AI calls.
  */
-export const runClustering = inngest.createFunction(
+export const runCoarseClustering = inngest.createFunction(
   {
-    id: "run-clustering",
+    id: "run-coarse-clustering",
     concurrency: {
       limit: 1,
       key: "event.data.schemaId",
@@ -281,14 +281,14 @@ export const runClustering = inngest.createFunction(
         where: { id: scanJobId },
         data: {
           phase: "CLUSTERING",
-          statusMessage: "Clustering emails into cases...",
+          statusMessage: "Pass 1: Coarse clustering by entity...",
         },
       });
     });
 
-    // 2. Run clustering
-    const result = await step.run("cluster-emails", async () => {
-      return await clusterNewEmails(schemaId, scanJobId);
+    // 2. Run coarse clustering
+    const result = await step.run("coarse-cluster", async () => {
+      return await coarseCluster(schemaId, scanJobId);
     });
 
     // 3. Update scan job counts
@@ -299,29 +299,145 @@ export const runClustering = inngest.createFunction(
           clustersCreated: result.clustersCreated,
           casesCreated: result.casesCreated,
           casesMerged: result.casesMerged,
-          statusMessage: `Clustering done: ${result.casesCreated} cases created, ${result.casesMerged} merged`,
+          statusMessage: `Coarse clustering done: ${result.casesCreated} clusters created, ${result.casesMerged} merged. Starting case splitting...`,
         },
       });
     });
 
-    // 4. Emit clustering.completed event
+    // 4. Emit coarse.clustering.completed → triggers case splitting
     await step.run("emit-completed", async () => {
       await inngest.send({
-        name: "clustering.completed",
+        name: "coarse.clustering.completed",
         data: {
           schemaId,
-          clusterIds: result.clusterIds,
+          scanJobId,
+          coarseClusterIds: result.clusterIds,
         },
       });
 
       logger.info({
         service: "inngest",
-        operation: "clusteringComplete",
+        operation: "coarseClusteringComplete",
         schemaId,
         casesCreated: result.casesCreated,
         casesMerged: result.casesMerged,
-        clustersCreated: result.clustersCreated,
       });
+    });
+  },
+);
+
+/**
+ * Pass 2: Split coarse clusters into specific cases using frequency analysis + AI.
+ * In STABLE phase, uses deterministic word matching (no AI calls).
+ */
+export const runCaseSplitting = inngest.createFunction(
+  {
+    id: "run-case-splitting",
+    concurrency: {
+      limit: 1,
+      key: "event.data.schemaId",
+    },
+    retries: 2,
+  },
+  { event: "coarse.clustering.completed" },
+  async ({ event, step }) => {
+    const { schemaId, scanJobId, coarseClusterIds } = event.data;
+
+    // 1. Update status
+    await step.run("update-phase", async () => {
+      await prisma.scanJob.update({
+        where: { id: scanJobId },
+        data: {
+          statusMessage: "Pass 2: Splitting cases by topic...",
+        },
+      });
+    });
+
+    // 2. Run case splitting
+    const splitResult = await step.run("split-clusters", async () => {
+      return await splitCoarseClusters(schemaId, scanJobId);
+    });
+
+    // 3. Combine cluster IDs from both passes
+    const allClusterIds = [...coarseClusterIds, ...splitResult.clusterIds];
+
+    // 4. Update counts
+    await step.run("update-counts", async () => {
+      await prisma.scanJob.update({
+        where: { id: scanJobId },
+        data: {
+          casesCreated: { increment: splitResult.casesCreated },
+          statusMessage: `Case splitting done: ${splitResult.casesCreated} cases split`,
+        },
+      });
+    });
+
+    // 5. Emit clustering.completed → triggers synthesis (unchanged event)
+    await step.run("emit-completed", async () => {
+      await inngest.send({
+        name: "clustering.completed",
+        data: {
+          schemaId,
+          clusterIds: allClusterIds,
+        },
+      });
+
+      logger.info({
+        service: "inngest",
+        operation: "caseSplittingComplete",
+        schemaId,
+        splitCasesCreated: splitResult.casesCreated,
+        totalClusterIds: allClusterIds.length,
+      });
+    });
+  },
+);
+
+/**
+ * Run calibration after synthesis completes.
+ * Reads user corrections, calls Claude to adjust params + vocabulary.
+ * Only runs in CALIBRATING or TRACKING phases.
+ */
+export const runClusteringCalibration = inngest.createFunction(
+  {
+    id: "run-clustering-calibration",
+    concurrency: {
+      limit: 1,
+      key: "event.data.schemaId",
+    },
+    retries: 1,
+  },
+  { event: "synthesis.case.completed" },
+  async ({ event, step }) => {
+    const { schemaId } = event.data;
+
+    // Only calibrate once per pipeline run (debounce by checking if we already calibrated recently)
+    const shouldCalibrate = await step.run("check-should-calibrate", async () => {
+      const schema = await prisma.caseSchema.findUniqueOrThrow({
+        where: { id: schemaId },
+        select: { qualityPhase: true },
+      });
+
+      // Skip if STABLE
+      if (schema.qualityPhase === "STABLE") return false;
+
+      // Check if we already calibrated in the last 5 minutes (debounce)
+      const recentCalibration = await prisma.pipelineIntelligence.findFirst({
+        where: {
+          schemaId,
+          stage: "clustering-calibration",
+          createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+        },
+        select: { id: true },
+      });
+
+      return recentCalibration === null;
+    });
+
+    if (!shouldCalibrate) return;
+
+    await step.run("calibrate", async () => {
+      await applyCalibration(schemaId);
     });
   },
 );
@@ -459,4 +575,4 @@ export const runSynthesis = inngest.createFunction(
   },
 );
 
-export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runClustering, runSynthesis];
+export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration];

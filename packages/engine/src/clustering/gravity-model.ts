@@ -11,14 +11,10 @@ import type {
   ClusteringConfig,
   ScoreBreakdown,
   ScoringResult,
-  TagFrequencyMap,
 } from "@denim/types";
 import {
   actorScore,
-  caseSizeBonus,
-  normalizeSubject,
   subjectScore,
-  tagScore,
   threadScore,
   timeDecayMultiplier,
 } from "./scoring";
@@ -27,7 +23,6 @@ import {
 export function scoreEmailAgainstCase(
   email: ClusterEmailInput,
   existingCase: ClusterCaseInput,
-  tagFrequencies: TagFrequencyMap,
   config: ClusteringConfig,
   now: Date,
 ): ScoringResult {
@@ -45,24 +40,17 @@ export function scoreEmailAgainstCase(
   }
 
   const thread = threadScore(email.threadId, existingCase.threadIds, config);
-  const tag = tagScore(email.tags, existingCase.anchorTags, tagFrequencies, config);
   const subject = subjectScore(email.subject, existingCase.subject, config);
   const actor = actorScore(email.senderEntityId, existingCase.senderEntityIds, config);
-  const sizeBonus = caseSizeBonus(existingCase.emailCount, config);
   const decay = timeDecayMultiplier(email.date, now, config);
 
-  // Subject additive bonus when both tag and subject match
-  const additiveBonus = tag > 0 && subject > 0 ? config.subjectAdditiveBonus : 0;
-
-  const rawScore = thread + tag + subject + actor + sizeBonus + additiveBonus;
+  const rawScore = thread + subject + actor;
   const finalScore = rawScore * decay;
 
   const breakdown: ScoreBreakdown = {
     threadScore: thread,
-    tagScore: tag,
     subjectScore: subject,
     actorScore: actor,
-    caseSizeBonus: sizeBonus,
     timeDecayMultiplier: decay,
     rawScore,
     finalScore,
@@ -75,14 +63,13 @@ export function scoreEmailAgainstCase(
 export function findBestCase(
   email: ClusterEmailInput,
   cases: ClusterCaseInput[],
-  tagFrequencies: TagFrequencyMap,
   config: ClusteringConfig,
   now: Date,
 ): ScoringResult | null {
   let best: ScoringResult | null = null;
 
   for (const c of cases) {
-    const result = scoreEmailAgainstCase(email, c, tagFrequencies, config, now);
+    const result = scoreEmailAgainstCase(email, c, config, now);
     if (result.score >= config.mergeThreshold && (best === null || result.score > best.score)) {
       best = result;
     }
@@ -102,7 +89,6 @@ export function findBestCase(
 export function clusterEmails(
   emails: ClusterEmailInput[],
   existingCases: ClusterCaseInput[],
-  tagFrequencies: TagFrequencyMap,
   config: ClusteringConfig,
   now: Date,
 ): ClusterDecision[] {
@@ -116,7 +102,7 @@ export function clusterEmails(
   for (const group of sortedGroups) {
     // Use the oldest email as the representative for scoring
     const representative = group[0];
-    const bestMatch = findBestCase(representative, activeCases, tagFrequencies, config, now);
+    const bestMatch = findBestCase(representative, activeCases, config, now);
 
     const groupEmailIds = group.map((e) => e.id);
     const groupThreadIds = [...new Set(group.map((e) => e.threadId))];
@@ -141,10 +127,6 @@ export function clusterEmails(
       if (caseToUpdate) {
         caseToUpdate.threadIds = [...new Set([...caseToUpdate.threadIds, ...groupThreadIds])];
         caseToUpdate.emailCount += group.length;
-        caseToUpdate.anchorTags = computeAnchorTags(
-          [...caseToUpdate.anchorTags, ...collectAllTags(group)],
-          config.anchorTagLimit,
-        );
         caseToUpdate.senderEntityIds = [
           ...new Set([...caseToUpdate.senderEntityIds, ...collectSenderEntityIds(group)]),
         ];
@@ -177,7 +159,6 @@ export function clusterEmails(
         id: newCaseId,
         entityId: groupEntityId ?? "",
         threadIds: groupThreadIds,
-        anchorTags: computeAnchorTags(collectAllTags(group), config.anchorTagLimit),
         senderEntityIds: collectSenderEntityIds(group),
         subject: representative.subject,
         emailCount: group.length,
@@ -238,26 +219,6 @@ function computePrimaryTag(emails: ClusterEmailInput[]): string | null {
   return best;
 }
 
-/** Compute the top N anchor tags by frequency. */
-export function computeAnchorTags(tags: string[], limit: number): string[] {
-  const counts = new Map<string, number>();
-  for (const tag of tags) {
-    counts.set(tag, (counts.get(tag) ?? 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, limit)
-    .map(([tag]) => tag);
-}
-
-function collectAllTags(emails: ClusterEmailInput[]): string[] {
-  const tags: string[] = [];
-  for (const email of emails) {
-    tags.push(...email.tags);
-  }
-  return tags;
-}
-
 function collectSenderEntityIds(emails: ClusterEmailInput[]): string[] {
   const ids: string[] = [];
   for (const email of emails) {
@@ -279,10 +240,8 @@ function resolveGroupEntityId(emails: ClusterEmailInput[]): string | null {
 function zeroBreakdown(): ScoreBreakdown {
   return {
     threadScore: 0,
-    tagScore: 0,
     subjectScore: 0,
     actorScore: 0,
-    caseSizeBonus: 0,
     timeDecayMultiplier: 0,
     rawScore: 0,
     finalScore: 0,

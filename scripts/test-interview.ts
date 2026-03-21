@@ -123,7 +123,7 @@ function evaluate(name: string, hypothesis: SchemaHypothesis, input: InterviewIn
   checks.push({
     name: "Domain-specific clustering",
     passed: config.mergeThreshold > 0 && config.mergeThreshold <= 100,
-    detail: `mergeThreshold=${config.mergeThreshold}, timeDecay.fresh=${config.timeDecayDays.fresh}, caseSizeThreshold=${config.caseSizeThreshold}, reminderCollapse=${config.reminderCollapseEnabled}`,
+    detail: `mergeThreshold=${config.mergeThreshold}, timeDecay.fresh=${config.timeDecayDays.fresh}, reminderCollapse=${config.reminderCollapseEnabled}`,
   });
 
   // Summary labels non-empty
@@ -295,12 +295,12 @@ async function main() {
 
   // Clustering comparison
   md += "\n## Cross-Domain Clustering Constants\n\n";
-  md += "| Domain | mergeThreshold | timeDecay.fresh | caseSizeThreshold | reminderCollapse |\n";
-  md += "|---|---|---|---|---|\n";
+  md += "| Domain | mergeThreshold | timeDecay.fresh | reminderCollapse |\n";
+  md += "|---|---|---|---|\n";
   for (const r of results) {
     if (r.hypothesis) {
       const c = r.hypothesis.clusteringConfig;
-      md += `| ${r.name} | ${c.mergeThreshold} | ${c.timeDecayDays.fresh} | ${c.caseSizeThreshold} | ${c.reminderCollapseEnabled} |\n`;
+      md += `| ${r.name} | ${c.mergeThreshold} | ${c.timeDecayDays.fresh} | ${c.reminderCollapseEnabled} |\n`;
     }
   }
 

@@ -4,7 +4,7 @@
  * Zero I/O, no Date.now(), no console.log.
  */
 
-import type { ClusteringConfig, TagFrequencyMap } from "@denim/types";
+import type { ClusteringConfig } from "@denim/types";
 import { jaroWinkler } from "../entity/matching";
 
 /** Strip RE:/FW:/FWD: prefixes (possibly chained) and lowercase for comparison. */
@@ -25,33 +25,6 @@ export function threadScore(
   config: ClusteringConfig,
 ): number {
   return caseThreadIds.includes(emailThreadId) ? config.threadMatchScore : 0;
-}
-
-/**
- * Tag overlap score with weak tag discount.
- * Each overlapping tag contributes tagMatchScore / anchorTagLimit,
- * discounted by weakTagDiscount if the tag is high-frequency.
- */
-export function tagScore(
-  emailTags: string[],
-  caseAnchorTags: string[],
-  tagFrequencies: TagFrequencyMap,
-  config: ClusteringConfig,
-): number {
-  if (emailTags.length === 0 || caseAnchorTags.length === 0) return 0;
-
-  let score = 0;
-  const perTagScore = config.tagMatchScore / Math.max(config.anchorTagLimit, 1);
-
-  for (const tag of emailTags) {
-    if (caseAnchorTags.includes(tag)) {
-      const freq = tagFrequencies[tag];
-      const discount = freq?.isWeak ? config.weakTagDiscount : 1;
-      score += perTagScore * discount;
-    }
-  }
-
-  return Math.min(score, config.tagMatchScore);
 }
 
 /**
@@ -87,24 +60,9 @@ export function actorScore(
 }
 
 /**
- * Case size bonus: larger cases attract more emails (gravity).
- * Scales linearly from 0 to caseSizeMaxBonus as emailCount approaches caseSizeThreshold.
- */
-export function caseSizeBonus(
-  caseEmailCount: number,
-  config: ClusteringConfig,
-): number {
-  if (caseEmailCount <= 1) return 0;
-  const ratio = Math.min(caseEmailCount / config.caseSizeThreshold, 1);
-  return config.caseSizeMaxBonus * ratio;
-}
-
-/**
- * Time decay: recent emails score higher. Returns a multiplier 0-1.
- * fresh (<=freshDays): 1.0
- * recent (<=recentDays): 0.7
- * stale (<=staleDays): 0.4
- * ancient (>staleDays): 0.2
+ * Time decay: recent emails score higher. Returns a multiplier 0.2-1.0.
+ * Within fresh days: 1.0
+ * Beyond fresh: linearly decays to 0.2 at 365 days.
  */
 export function timeDecayMultiplier(
   emailDate: Date,
@@ -114,7 +72,7 @@ export function timeDecayMultiplier(
   const daysSince = (now.getTime() - emailDate.getTime()) / 86_400_000;
 
   if (daysSince <= config.timeDecayDays.fresh) return 1.0;
-  if (daysSince <= config.timeDecayDays.recent) return 0.7;
-  if (daysSince <= config.timeDecayDays.stale) return 0.4;
-  return 0.2;
+
+  const decay = 1.0 - (0.8 * (daysSince - config.timeDecayDays.fresh)) / (365 - config.timeDecayDays.fresh);
+  return Math.max(decay, 0.2);
 }

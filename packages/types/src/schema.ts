@@ -80,16 +80,9 @@ export interface ExtractedFieldSuggestion {
 export interface ClusteringConfig {
   mergeThreshold: number;
   threadMatchScore: number;
-  tagMatchScore: number;
   subjectMatchScore: number;
   actorAffinityScore: number;
-  subjectAdditiveBonus: number;
-  timeDecayDays: { fresh: number; recent: number; stale: number };
-  weakTagDiscount: number;
-  frequencyThreshold: number;
-  anchorTagLimit: number;
-  caseSizeThreshold: number;
-  caseSizeMaxBonus: number;
+  timeDecayDays: { fresh: number };
   reminderCollapseEnabled: boolean;
   reminderSubjectSimilarity: number;
   reminderMaxAge: number;
@@ -141,6 +134,7 @@ export interface ClusterEmailInput {
   id: string;
   threadId: string;
   subject: string;
+  summary: string;
   tags: string[];
   date: Date;
   senderEntityId: string | null;
@@ -152,7 +146,6 @@ export interface ClusterCaseInput {
   id: string;
   entityId: string;
   threadIds: string[];
-  anchorTags: string[];
   senderEntityIds: string[];
   subject: string;
   emailCount: number;
@@ -162,10 +155,8 @@ export interface ClusterCaseInput {
 /** Audit trail for a single email-vs-case scoring. */
 export interface ScoreBreakdown {
   threadScore: number;
-  tagScore: number;
   subjectScore: number;
   actorScore: number;
-  caseSizeBonus: number;
   timeDecayMultiplier: number;
   rawScore: number;
   finalScore: number;
@@ -190,10 +181,82 @@ export interface ClusterDecision {
   entityId: string | null;
 }
 
-/** Tag frequency data for weak tag discount. */
+/** Tag frequency data for weak tag discount (legacy, kept for compatibility). */
 export interface TagFrequencyMap {
   [tagName: string]: { frequency: number; isWeak: boolean };
 }
+
+// =============================================================================
+// FREQUENCY ANALYSIS TYPES (Two-Pass Clustering)
+// =============================================================================
+
+/** Word frequency entry for a single cluster. */
+export interface FrequencyWord {
+  word: string;
+  frequency: number;       // 0.0-1.0 within cluster
+  weightedScore: number;   // frequency adjusted by source weight + cross-entity penalty
+  emailIds: string[];      // which emails contain this word
+  coOccursWith: string[];  // words that frequently appear alongside this one
+}
+
+/** Frequency table for one coarse cluster. */
+export interface FrequencyTable {
+  clusterId: string;
+  entityName: string;
+  emailCount: number;
+  words: FrequencyWord[];
+}
+
+/** A case definition output from AI case splitting. */
+export interface CaseSplitDefinition {
+  caseTitle: string;
+  discriminators: string[];   // words that identify this case
+  emailIds: string[];         // emails assigned to this case
+  reasoning: string;
+}
+
+/** Result of case splitting (AI or deterministic). */
+export interface CaseSplitResult {
+  cases: CaseSplitDefinition[];
+  catchAllEmailIds: string[];   // emails with no discriminator match
+  reasoning: string;
+}
+
+/** Input for the clustering calibration AI call. */
+export interface CalibrationInput {
+  currentConfig: ClusteringConfig;
+  coarseClusters: {
+    entityName: string;
+    emailCount: number;
+    casesSplit: number;
+  }[];
+  frequencyTables: Record<string, { word: string; pct: number; caseAssignment: string }[]>;
+  corrections: {
+    type: "EMAIL_MOVED" | "CASES_MERGED" | "THUMBS_UP" | "THUMBS_DOWN";
+    from?: string;
+    to?: string;
+    cases?: string[];
+    caseId?: string;
+  }[];
+}
+
+/** Result of the clustering calibration AI call. */
+export interface CalibrationResult {
+  tunedConfig: {
+    mergeThreshold: number;
+    subjectMatchScore: number;
+    actorAffinityScore: number;
+    timeDecayFreshDays: number;
+  };
+  discriminatorVocabulary: Record<string, {
+    words: Record<string, number>;   // word → confidence score
+    mergedAway: string[];            // words that should NOT discriminate
+  }>;
+  reasoning: string;
+}
+
+/** Quality phase for learning loop. */
+export type QualityPhaseType = "CALIBRATING" | "TRACKING" | "STABLE";
 
 // =============================================================================
 // SYNTHESIS TYPES

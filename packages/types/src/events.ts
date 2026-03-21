@@ -40,6 +40,13 @@ export type DenimEvents = {
       scanJobId: string;
     };
   };
+  "coarse.clustering.completed": {
+    data: {
+      schemaId: string;
+      scanJobId: string;
+      coarseClusterIds: string[];
+    };
+  };
   "clustering.completed": {
     data: {
       schemaId: string;

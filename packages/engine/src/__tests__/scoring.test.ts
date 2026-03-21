@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { ClusteringConfig, TagFrequencyMap } from "@denim/types";
+import type { ClusteringConfig } from "@denim/types";
 import {
   threadScore,
-  tagScore,
   subjectScore,
   actorScore,
-  caseSizeBonus,
   timeDecayMultiplier,
   normalizeSubject,
 } from "../clustering/scoring";
@@ -13,16 +11,9 @@ import {
 const defaultConfig: ClusteringConfig = {
   mergeThreshold: 45,
   threadMatchScore: 100,
-  tagMatchScore: 60,
   subjectMatchScore: 50,
   actorAffinityScore: 30,
-  subjectAdditiveBonus: 25,
-  timeDecayDays: { fresh: 45, recent: 75, stale: 120 },
-  weakTagDiscount: 0.3,
-  frequencyThreshold: 0.3,
-  anchorTagLimit: 2,
-  caseSizeThreshold: 10,
-  caseSizeMaxBonus: 25,
+  timeDecayDays: { fresh: 45 },
   reminderCollapseEnabled: true,
   reminderSubjectSimilarity: 0.9,
   reminderMaxAge: 30,
@@ -46,42 +37,6 @@ describe("threadScore", () => {
 
   it("returns 0 on no match", () => {
     expect(threadScore("t3", ["t1", "t2"], defaultConfig)).toBe(0);
-  });
-});
-
-describe("tagScore", () => {
-  const noWeak: TagFrequencyMap = {
-    Permits: { frequency: 0.1, isWeak: false },
-    HVAC: { frequency: 0.05, isWeak: false },
-  };
-
-  const withWeak: TagFrequencyMap = {
-    Permits: { frequency: 0.5, isWeak: true },
-    HVAC: { frequency: 0.05, isWeak: false },
-  };
-
-  it("scores single tag overlap", () => {
-    const score = tagScore(["Permits"], ["Permits", "HVAC"], noWeak, defaultConfig);
-    expect(score).toBe(30); // 60 / 2 anchorTagLimit
-  });
-
-  it("scores multiple tag overlaps", () => {
-    const score = tagScore(["Permits", "HVAC"], ["Permits", "HVAC"], noWeak, defaultConfig);
-    expect(score).toBe(60); // capped at tagMatchScore
-  });
-
-  it("applies weak tag discount", () => {
-    const score = tagScore(["Permits"], ["Permits"], withWeak, defaultConfig);
-    expect(score).toBe(30 * 0.3); // perTag * weakDiscount
-  });
-
-  it("returns 0 for no overlap", () => {
-    expect(tagScore(["Plumbing"], ["Permits"], noWeak, defaultConfig)).toBe(0);
-  });
-
-  it("returns 0 for empty arrays", () => {
-    expect(tagScore([], ["Permits"], noWeak, defaultConfig)).toBe(0);
-    expect(tagScore(["Permits"], [], noWeak, defaultConfig)).toBe(0);
   });
 });
 
@@ -121,41 +76,44 @@ describe("actorScore", () => {
   });
 });
 
-describe("caseSizeBonus", () => {
-  it("returns 0 for single email", () => {
-    expect(caseSizeBonus(1, defaultConfig)).toBe(0);
-  });
-
-  it("scales linearly up to threshold", () => {
-    const bonus = caseSizeBonus(5, defaultConfig);
-    expect(bonus).toBe(25 * (5 / 10)); // 12.5
-  });
-
-  it("caps at maxBonus", () => {
-    expect(caseSizeBonus(20, defaultConfig)).toBe(25);
-  });
-});
-
 describe("timeDecayMultiplier", () => {
   const now = new Date("2026-03-14");
 
-  it("returns 1.0 for fresh emails", () => {
-    const date = new Date("2026-03-01"); // 13 days ago
+  it("returns 1.0 for fresh emails (within fresh days)", () => {
+    const date = new Date("2026-03-01"); // 13 days ago, within 45-day fresh window
     expect(timeDecayMultiplier(date, now, defaultConfig)).toBe(1.0);
   });
 
-  it("returns 0.7 for recent emails", () => {
-    const date = new Date("2026-01-15"); // ~58 days ago
-    expect(timeDecayMultiplier(date, now, defaultConfig)).toBe(0.7);
+  it("returns 1.0 at exactly the fresh boundary", () => {
+    // 45 days before now
+    const date = new Date("2026-01-28");
+    expect(timeDecayMultiplier(date, now, defaultConfig)).toBe(1.0);
   });
 
-  it("returns 0.4 for stale emails", () => {
-    const date = new Date("2025-12-01"); // ~103 days ago
-    expect(timeDecayMultiplier(date, now, defaultConfig)).toBe(0.4);
+  it("decays linearly beyond fresh days", () => {
+    // 100 days ago — beyond 45-day fresh window
+    const date = new Date("2025-12-04");
+    const result = timeDecayMultiplier(date, now, defaultConfig);
+    // Should be between 0.2 and 1.0
+    expect(result).toBeGreaterThan(0.2);
+    expect(result).toBeLessThan(1.0);
   });
 
-  it("returns 0.2 for ancient emails", () => {
-    const date = new Date("2025-06-01"); // >120 days ago
+  it("returns approximately 0.6 at halfway between fresh and 365", () => {
+    // Halfway point: 45 + (365-45)/2 = 45 + 160 = 205 days
+    const date = new Date(now.getTime() - 205 * 86_400_000);
+    const result = timeDecayMultiplier(date, now, defaultConfig);
+    // Expected: 1.0 - 0.8 * (205-45)/(365-45) = 1.0 - 0.8 * 0.5 = 0.6
+    expect(result).toBeCloseTo(0.6, 1);
+  });
+
+  it("returns 0.2 for very old emails (365+ days)", () => {
+    const date = new Date("2025-01-01"); // ~437 days ago
+    expect(timeDecayMultiplier(date, now, defaultConfig)).toBe(0.2);
+  });
+
+  it("never goes below 0.2", () => {
+    const date = new Date("2023-01-01"); // ~1168 days ago
     expect(timeDecayMultiplier(date, now, defaultConfig)).toBe(0.2);
   });
 });

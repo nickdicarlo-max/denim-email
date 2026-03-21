@@ -13,7 +13,8 @@ interface DomainConfig {
   mergeThreshold: number;
   timeDecayFresh: number;
   reminderCollapseEnabled: boolean;
-  caseSizeThreshold: number;
+  subjectMatchScore: number;
+  actorAffinityScore: number;
   tags: {
     name: string;
     description: string;
@@ -36,7 +37,8 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     mergeThreshold: 35,
     timeDecayFresh: 60,
     reminderCollapseEnabled: true,
-    caseSizeThreshold: 5,
+    subjectMatchScore: 20,
+    actorAffinityScore: 10,
     tags: [
       {
         name: "Action Required",
@@ -100,7 +102,8 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     mergeThreshold: 45,
     timeDecayFresh: 45,
     reminderCollapseEnabled: false,
-    caseSizeThreshold: 10,
+    subjectMatchScore: 20,
+    actorAffinityScore: 10,
     tags: [
       {
         name: "Maintenance",
@@ -163,7 +166,8 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     mergeThreshold: 45,
     timeDecayFresh: 45,
     reminderCollapseEnabled: false,
-    caseSizeThreshold: 10,
+    subjectMatchScore: 20,
+    actorAffinityScore: 10,
     tags: [
       {
         name: "RFI",
@@ -233,7 +237,8 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     mergeThreshold: 55,
     timeDecayFresh: 90,
     reminderCollapseEnabled: false,
-    caseSizeThreshold: 15,
+    subjectMatchScore: 25,
+    actorAffinityScore: 15,
     tags: [
       {
         name: "Filing",
@@ -296,7 +301,8 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     mergeThreshold: 45,
     timeDecayFresh: 45,
     reminderCollapseEnabled: false,
-    caseSizeThreshold: 8,
+    subjectMatchScore: 20,
+    actorAffinityScore: 10,
     tags: [
       {
         name: "Deliverable",
@@ -365,7 +371,8 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     mergeThreshold: 45,
     timeDecayFresh: 45,
     reminderCollapseEnabled: false,
-    caseSizeThreshold: 8,
+    subjectMatchScore: 20,
+    actorAffinityScore: 10,
     tags: [
       {
         name: "Action Required",
@@ -434,16 +441,9 @@ function buildClusteringConfigBlock(config: DomainConfig): string {
   return `{
     "mergeThreshold": ${config.mergeThreshold},
     "threadMatchScore": 100,
-    "tagMatchScore": 15,
-    "subjectMatchScore": 20,
-    "actorAffinityScore": 10,
-    "subjectAdditiveBonus": 5,
-    "timeDecayDays": { "fresh": ${config.timeDecayFresh}, "recent": 120, "stale": 365 },
-    "weakTagDiscount": 0.5,
-    "frequencyThreshold": 0.1,
-    "anchorTagLimit": 3,
-    "caseSizeThreshold": ${config.caseSizeThreshold},
-    "caseSizeMaxBonus": 10,
+    "subjectMatchScore": ${config.subjectMatchScore},
+    "actorAffinityScore": ${config.actorAffinityScore},
+    "timeDecayDays": { "fresh": ${config.timeDecayFresh} },
     "reminderCollapseEnabled": ${config.reminderCollapseEnabled},
     "reminderSubjectSimilarity": 0.85,
     "reminderMaxAge": 7
@@ -489,7 +489,7 @@ function buildSystemPrompt(domain: string): string {
   const allDomainSummary = Object.entries(DOMAIN_CONFIGS)
     .map(
       ([key, cfg]) =>
-        `  - ${key}: mergeThreshold=${cfg.mergeThreshold}, timeDecay.fresh=${cfg.timeDecayFresh}, caseSizeThreshold=${cfg.caseSizeThreshold}, reminderCollapse=${cfg.reminderCollapseEnabled}`,
+        `  - ${key}: mergeThreshold=${cfg.mergeThreshold}, timeDecay.fresh=${cfg.timeDecayFresh}, subjectMatchScore=${cfg.subjectMatchScore}, actorAffinityScore=${cfg.actorAffinityScore}, reminderCollapse=${cfg.reminderCollapseEnabled}`,
     )
     .join("\n");
 
@@ -501,7 +501,8 @@ ${allDomainSummary}
 For the "${domain}" domain, use these defaults:
 - Merge threshold: ${config.mergeThreshold} (lower = more cases, higher = more merging)
 - Time decay fresh window: ${config.timeDecayFresh} days
-- Case size threshold: ${config.caseSizeThreshold} emails before case splitting is considered
+- Subject match score: ${config.subjectMatchScore} (points for similar subjects)
+- Actor affinity score: ${config.actorAffinityScore} (points for same sender)
 - Reminder collapse: ${config.reminderCollapseEnabled}
 
 Domain-specific tags for "${domain}":

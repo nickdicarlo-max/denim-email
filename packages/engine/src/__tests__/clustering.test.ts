@@ -3,7 +3,6 @@ import type {
   ClusterCaseInput,
   ClusterEmailInput,
   ClusteringConfig,
-  TagFrequencyMap,
 } from "@denim/types";
 import {
   clusterEmails,
@@ -15,16 +14,9 @@ import { isReminder } from "../clustering/reminder-detection";
 const defaultConfig: ClusteringConfig = {
   mergeThreshold: 45,
   threadMatchScore: 100,
-  tagMatchScore: 60,
   subjectMatchScore: 50,
   actorAffinityScore: 30,
-  subjectAdditiveBonus: 25,
-  timeDecayDays: { fresh: 45, recent: 75, stale: 120 },
-  weakTagDiscount: 0.3,
-  frequencyThreshold: 0.3,
-  anchorTagLimit: 2,
-  caseSizeThreshold: 10,
-  caseSizeMaxBonus: 25,
+  timeDecayDays: { fresh: 45 },
   reminderCollapseEnabled: true,
   reminderSubjectSimilarity: 0.9,
   reminderMaxAge: 30,
@@ -32,16 +24,11 @@ const defaultConfig: ClusteringConfig = {
 
 const now = new Date("2026-03-14T00:00:00Z");
 
-const noWeak: TagFrequencyMap = {
-  Permits: { frequency: 0.1, isWeak: false },
-  HVAC: { frequency: 0.05, isWeak: false },
-  Plumbing: { frequency: 0.05, isWeak: false },
-};
-
 function makeEmail(overrides: Partial<ClusterEmailInput> & { id: string }): ClusterEmailInput {
   return {
     threadId: "thread-1",
     subject: "Test Subject",
+    summary: "Test summary",
     tags: [],
     date: new Date("2026-03-10"),
     senderEntityId: null,
@@ -54,7 +41,6 @@ function makeCase(overrides: Partial<ClusterCaseInput> & { id: string }): Cluste
   return {
     entityId: "entity-1",
     threadIds: [],
-    anchorTags: [],
     senderEntityIds: [],
     subject: "Test Case",
     emailCount: 3,
@@ -68,7 +54,7 @@ describe("scoreEmailAgainstCase", () => {
     const email = makeEmail({ id: "e1", entityId: "entity-A" });
     const caseInput = makeCase({ id: "c1", entityId: "entity-B" });
 
-    const result = scoreEmailAgainstCase(email, caseInput, noWeak, defaultConfig, now);
+    const result = scoreEmailAgainstCase(email, caseInput, defaultConfig, now);
     expect(result.score).toBe(0);
   });
 
@@ -76,40 +62,54 @@ describe("scoreEmailAgainstCase", () => {
     const email = makeEmail({ id: "e1", threadId: "t1", entityId: "entity-1" });
     const caseInput = makeCase({ id: "c1", threadIds: ["t1"] });
 
-    const result = scoreEmailAgainstCase(email, caseInput, noWeak, defaultConfig, now);
+    const result = scoreEmailAgainstCase(email, caseInput, defaultConfig, now);
     expect(result.score).toBeGreaterThan(defaultConfig.mergeThreshold);
     expect(result.breakdown.threadScore).toBe(100);
   });
 
-  it("applies subject additive bonus when tag + subject both match", () => {
+  it("scores subject similarity", () => {
     const email = makeEmail({
       id: "e1",
       subject: "Kitchen Remodel Permits",
-      tags: ["Permits"],
       entityId: "entity-1",
     });
     const caseInput = makeCase({
       id: "c1",
       subject: "Kitchen Remodel Permits",
-      anchorTags: ["Permits"],
     });
 
-    const result = scoreEmailAgainstCase(email, caseInput, noWeak, defaultConfig, now);
-    // Should include tag + subject + additive bonus
-    expect(result.breakdown.tagScore).toBeGreaterThan(0);
+    const result = scoreEmailAgainstCase(email, caseInput, defaultConfig, now);
     expect(result.breakdown.subjectScore).toBeGreaterThan(0);
-    // rawScore includes additive bonus
-    expect(result.breakdown.rawScore).toBeGreaterThan(
-      result.breakdown.tagScore + result.breakdown.subjectScore,
-    );
   });
 
   it("allows null entityId emails to match any case", () => {
     const email = makeEmail({ id: "e1", entityId: null, threadId: "t1" });
     const caseInput = makeCase({ id: "c1", entityId: "entity-1", threadIds: ["t1"] });
 
-    const result = scoreEmailAgainstCase(email, caseInput, noWeak, defaultConfig, now);
+    const result = scoreEmailAgainstCase(email, caseInput, defaultConfig, now);
     expect(result.score).toBeGreaterThan(0);
+  });
+
+  it("formula is (thread + subject + actor) * decay", () => {
+    const email = makeEmail({
+      id: "e1",
+      threadId: "t1",
+      entityId: "entity-1",
+      senderEntityId: "sender-1",
+      subject: "Kitchen Permits",
+    });
+    const caseInput = makeCase({
+      id: "c1",
+      threadIds: ["t1"],
+      senderEntityIds: ["sender-1"],
+      subject: "Kitchen Permits",
+    });
+
+    const result = scoreEmailAgainstCase(email, caseInput, defaultConfig, now);
+    const { threadScore, subjectScore, actorScore, timeDecayMultiplier } = result.breakdown;
+    const expectedRaw = threadScore + subjectScore + actorScore;
+    expect(result.breakdown.rawScore).toBe(expectedRaw);
+    expect(result.breakdown.finalScore).toBe(expectedRaw * timeDecayMultiplier);
   });
 });
 
@@ -122,7 +122,7 @@ describe("findBestCase", () => {
     });
     const cases = [makeCase({ id: "c1", subject: "Kitchen Remodel Permits Review" })];
 
-    const result = findBestCase(email, cases, noWeak, defaultConfig, now);
+    const result = findBestCase(email, cases, defaultConfig, now);
     expect(result).toBeNull();
   });
 
@@ -133,7 +133,7 @@ describe("findBestCase", () => {
       makeCase({ id: "c2", threadIds: ["t2"] }),
     ];
 
-    const result = findBestCase(email, cases, noWeak, defaultConfig, now);
+    const result = findBestCase(email, cases, defaultConfig, now);
     expect(result).not.toBeNull();
     expect(result!.caseId).toBe("c1");
   });
@@ -147,10 +147,8 @@ describe("clusterEmails", () => {
       makeEmail({ id: "e3", threadId: "t2", entityId: "entity-1", date: new Date("2026-03-12") }),
     ];
 
-    const decisions = clusterEmails(emails, [], noWeak, defaultConfig, now);
-    // Two thread groups → two decisions
+    const decisions = clusterEmails(emails, [], defaultConfig, now);
     expect(decisions).toHaveLength(2);
-    // First group (t1) has both emails
     const t1Decision = decisions.find((d) => d.threadIds.includes("t1"));
     expect(t1Decision).toBeDefined();
     expect(t1Decision!.emailIds).toHaveLength(2);
@@ -164,7 +162,7 @@ describe("clusterEmails", () => {
       makeCase({ id: "c1", threadIds: ["t1"] }),
     ];
 
-    const decisions = clusterEmails(emails, existingCases, noWeak, defaultConfig, now);
+    const decisions = clusterEmails(emails, existingCases, defaultConfig, now);
     expect(decisions).toHaveLength(1);
     expect(decisions[0].action).toBe("MERGE");
     expect(decisions[0].targetCaseId).toBe("c1");
@@ -183,7 +181,7 @@ describe("clusterEmails", () => {
       makeCase({ id: "c1", threadIds: ["t-other"], subject: "Kitchen Remodel Permits Review" }),
     ];
 
-    const decisions = clusterEmails(emails, existingCases, noWeak, defaultConfig, now);
+    const decisions = clusterEmails(emails, existingCases, defaultConfig, now);
     expect(decisions).toHaveLength(1);
     expect(decisions[0].action).toBe("CREATE");
   });
@@ -196,7 +194,7 @@ describe("clusterEmails", () => {
       makeCase({ id: "c1", entityId: "entity-B", threadIds: ["t1"] }),
     ];
 
-    const decisions = clusterEmails(emails, existingCases, noWeak, defaultConfig, now);
+    const decisions = clusterEmails(emails, existingCases, defaultConfig, now);
     expect(decisions[0].action).toBe("CREATE");
   });
 
@@ -205,7 +203,7 @@ describe("clusterEmails", () => {
       makeEmail({ id: "e1", threadId: "t-orphan", entityId: null }),
     ];
 
-    const decisions = clusterEmails(emails, [], noWeak, defaultConfig, now);
+    const decisions = clusterEmails(emails, [], defaultConfig, now);
     expect(decisions).toHaveLength(0);
   });
 
@@ -216,7 +214,6 @@ describe("clusterEmails", () => {
         threadId: "t1",
         entityId: "entity-1",
         date: new Date("2026-03-01"),
-        tags: ["Permits"],
         subject: "Kitchen Permits",
       }),
       makeEmail({
@@ -224,12 +221,11 @@ describe("clusterEmails", () => {
         threadId: "t1",
         entityId: "entity-1",
         date: new Date("2026-03-05"),
-        tags: ["Permits"],
         subject: "RE: Kitchen Permits",
       }),
     ];
 
-    const decisions = clusterEmails(emails, [], noWeak, defaultConfig, now);
+    const decisions = clusterEmails(emails, [], defaultConfig, now);
     // Same thread → single group → single CREATE decision with both emails
     expect(decisions).toHaveLength(1);
     expect(decisions[0].emailIds).toHaveLength(2);
@@ -237,28 +233,23 @@ describe("clusterEmails", () => {
 
   it("new case attracts subsequent similar emails", () => {
     const emails: ClusterEmailInput[] = [
-      // First group creates a case
       makeEmail({
         id: "e1",
         threadId: "t1",
         date: new Date("2026-03-01"),
-        tags: ["Permits"],
         subject: "Kitchen Permits Review",
         entityId: "entity-1",
       }),
-      // Second group should merge (same tag + similar subject)
       makeEmail({
         id: "e2",
         threadId: "t2",
         date: new Date("2026-03-05"),
-        tags: ["Permits"],
         subject: "Kitchen Permits Update",
         entityId: "entity-1",
       }),
     ];
 
-    const decisions = clusterEmails(emails, [], noWeak, defaultConfig, now);
-    // First creates, second should merge into first
+    const decisions = clusterEmails(emails, [], defaultConfig, now);
     expect(decisions).toHaveLength(2);
     expect(decisions[0].action).toBe("CREATE");
     expect(decisions[1].action).toBe("MERGE");
@@ -270,7 +261,6 @@ describe("clusterEmails", () => {
         id: "e1",
         threadId: "t1",
         date: new Date("2026-03-01"),
-        tags: ["Permits"],
         subject: "Kitchen Permits",
         entityId: "entity-1",
       }),
@@ -278,7 +268,6 @@ describe("clusterEmails", () => {
         id: "e2",
         threadId: "t2",
         date: new Date("2026-03-05"),
-        tags: ["Permits"],
         subject: "Kitchen Permits Follow-up",
         entityId: "entity-1",
       }),
@@ -287,13 +276,12 @@ describe("clusterEmails", () => {
     const strictConfig = { ...defaultConfig, mergeThreshold: 200 };
     const looseConfig = { ...defaultConfig, mergeThreshold: 10 };
 
-    const strictDecisions = clusterEmails(emails, [], noWeak, strictConfig, now);
-    const looseDecisions = clusterEmails(emails, [], noWeak, looseConfig, now);
+    const strictDecisions = clusterEmails(emails, [], strictConfig, now);
+    const looseDecisions = clusterEmails(emails, [], looseConfig, now);
 
     const strictCreates = strictDecisions.filter((d) => d.action === "CREATE").length;
     const looseCreates = looseDecisions.filter((d) => d.action === "CREATE").length;
 
-    // Strict threshold creates more cases (fewer merges)
     expect(strictCreates).toBeGreaterThanOrEqual(looseCreates);
   });
 });
