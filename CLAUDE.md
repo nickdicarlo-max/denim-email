@@ -774,7 +774,10 @@ Do not build in-memory caches in services.
 
 ## Current Status
 
-Phase 0: Not started. Beginning project scaffolding.
+Phases 0–5 complete. Phase 6A (Case Review UI) complete. Pipeline quality fixes
+verified (2026-03-20). See docs/00_denim_current_status.md for full details.
+
+**Next:** Card 4 UX improvements, Phase 6 (Chrome Extension), schema ACTIVE transition.
 
 ## Commands
 

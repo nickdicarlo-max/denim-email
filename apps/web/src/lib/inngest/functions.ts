@@ -483,21 +483,16 @@ export const runSynthesis = inngest.createFunction(
       });
     }
 
-    // 3. Load case IDs from cluster records
+    // 3. Load case IDs — query all OPEN unsynthesized cases for this schema.
+    // Two-pass clustering may delete coarse cases and create split replacements,
+    // so cluster.resultCaseId from pass 1 can point to deleted cases.
     const caseIds = await step.run("load-cases", async () => {
-      // Get cases from the clusters created in this run
-      const clusters = await prisma.cluster.findMany({
-        where: { id: { in: clusterIds } },
-        select: { resultCaseId: true },
+      const cases = await prisma.case.findMany({
+        where: { schemaId, status: "OPEN" },
+        select: { id: true },
       });
 
-      const ids = [
-        ...new Set(
-          clusters
-            .map((c) => c.resultCaseId)
-            .filter((id): id is string => id !== null),
-        ),
-      ];
+      const ids = cases.map((c) => c.id);
 
       logger.info({
         service: "inngest",

@@ -120,19 +120,15 @@ describe("Pipeline Wiring: ScanJob phase transitions + clustering → synthesis"
         },
       });
 
-      // Load case IDs from Cluster records (same pattern as runSynthesis in functions.ts)
-      const clusters = await prisma.cluster.findMany({
-        where: { id: { in: clusterResult.clusterIds } },
-        select: { resultCaseId: true },
+      // Load all OPEN cases for this schema (same pattern as runSynthesis in functions.ts)
+      // Two-pass clustering may delete coarse cases and create split replacements,
+      // so cluster.resultCaseId from pass 1 can point to deleted cases.
+      const openCases = await prisma.case.findMany({
+        where: { schemaId, status: "OPEN" },
+        select: { id: true },
       });
 
-      const caseIds = [
-        ...new Set(
-          clusters
-            .map((c) => c.resultCaseId)
-            .filter((id): id is string => id !== null),
-        ),
-      ];
+      const caseIds = openCases.map((c) => c.id);
 
       expect(caseIds.length).toBeGreaterThan(0);
 

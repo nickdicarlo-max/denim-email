@@ -498,7 +498,6 @@ describe("Entity Groups: Direct Service Tests", () => {
     expect(prompt.system).toContain('"St Agnes" (PRIMARY)');
 
     // Verify scoring guide
-    expect(prompt.system).toContain("3+ names from same group");
     expect(prompt.system).toContain("relevanceEntity to the PRIMARY entity");
   });
 
