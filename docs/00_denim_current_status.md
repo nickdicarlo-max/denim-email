@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-21 (content-first entity routing, ungrouped WHOs, Card 4 drag-and-drop)
+Last updated: 2026-03-22 (auto-promote discovered entities, Gemini thinking fix, case feed UX fixes)
 
 ## Completed
 
@@ -375,7 +375,7 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - [x] CaseAction rows created — 17 actions across 15 cases
 - [x] ScanJob shows COMPLETED phase after synthesis finishes — verified via Inngest dashboard
 - [x] Actions stat card shows real CaseAction count — verified (17)
-- [ ] Case summaries use schema's summaryLabels (beginning/middle/end)
+- [x] Case summaries use schema's summaryLabels (beginning/middle/end) — verified 2026-03-22, working but low priority for UI quality
 - [ ] Action dedup works: reminder emails don't create duplicate actions
 - [ ] Aggregated field data computed correctly per ExtractedFieldDef.aggregation
 - [ ] Re-scan skips already-extracted emails (emailCount doesn't inflate)
@@ -388,7 +388,7 @@ First successful end-to-end extraction pipeline run with nick.dicarlo@gmail.com:
 - [x] Extraction prompt includes group context — verified via live pipeline
 - [x] `relevanceEntity` routing reduces strays vs blanket association — 48/48 emails routed (100%)
 - [x] Discovered entities during validation don't get blanket-associated — ZSA Soccer (U11/12 Girls) has groupId=null (ungrouped)
-- [ ] Discovered entities need Card 4 UX to assign to groups — ZSA Soccer should be in Group 0
+- [x] Discovered entities Card 4 UX — auto-promote to own groups implemented 2026-03-22, drag-and-drop working on desktop
 
 ### Bugs / Fixes Needed
 - [x] **Skip already-extracted emails on re-scan** — Fixed
@@ -533,30 +533,90 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 
 **Root cause:** All 3 managers in one EntityGroup with `associatedPrimaryIds` pointing to all 3 properties. Sender routing picked `[0]` = 1501 Sylvan for every email from any manager.
 
-**Post-fix:** Content-first routing checks email subject/body for property addresses before falling back to sender. Shared WHOs (managers) generate discovery queries but don't determine routing. Awaiting human re-test with new UI flow.
+**Post-fix:** Content-first routing checks email subject/body for property addresses before falling back to sender. Shared WHOs (managers) generate discovery queries but don't determine routing.
+
+### March 22 Fixes & Human Test Results
+
+**Gemini Thinking Token Fix:**
+- Gemini 2.5 Flash has "thinking" mode enabled by default, consuming output tokens for internal reasoning
+- Added `thinkingConfig: { thinkingBudget: 0 }` to `genAI.getGenerativeModel()` in `client.ts`
+- Single change covers all Gemini calls (extraction, discovery intelligence, etc.)
+- `@ts-expect-error` needed — SDK types don't include `thinkingConfig` yet
+
+**Auto-Promote Discovered PRIMARY Entities (2026-03-22):**
+- Discovered PRIMARY entities from validation scan now auto-promote to their own EntityGroup during finalize
+- No manual drag-and-drop required — scan findings automatically generate cases
+- Card 4 shows discovered primaries as dashed-border "Discovered" group cards with email counts
+- User-added PRIMARY entities from Card 4 also auto-promote if ungrouped
+- Backend: `interview.ts` `finalizeSchema()` creates EntityGroup rows for ungrouped primaries after existing group loop
+- Frontend: `card4-review.tsx` splits unassigned discovered into PRIMARY (auto-group cards) vs SECONDARY (ungrouped draggable)
+
+**Case Feed UX Fixes (2026-03-22):**
+1. **Active filter** — now sends `OPEN,IN_PROGRESS` (was only OPEN, causing "No cases found")
+2. **Multi-status API** — `validation/cases.ts` accepts comma-separated statuses, API filters with `{ in: [...] }`
+3. **Sort order** — both server page and API sort: active first → urgency tier (IMMINENT > THIS_WEEK > UPCOMING > NO_ACTION) → date. Resolved always last.
+4. **Past events** — case cards show past events dimmed with "Past:" label instead of hiding them
+5. **Case detail perf** — emails capped at 25 per case detail load, dropped unused fields from select
+6. **DB index** — added `@@index([schemaId, status, urgency])` on Case model
+
+**Kids Activities Test (2026-03-22, "Girls Activities Test 2 March 22 Cases"):**
+- 160 emails discovered, 56 extracted (104 excluded by relevance gate)
+- 37 cases created (55 coarse → 37 after splitting), 45 clusters, 13 actions
+- Entity routing: Soccer (48), Lanier (3), St. Agnes (3), Dance (1), Martial Arts/Belt Testing (1)
+- Auto-promoted entities working: "TeamSnap / ZSA U11/12 Girls Soccer" dragged into Soccer group, "2109 Meadfoot" auto-promoted as discovered PRIMARY
+- Summary labels verified — working but not a high-leverage UI element yet
+- Card 4 drag-and-drop tested on desktop (click-drag) — working
+
+**Property Management Test (2026-03-22):**
+- Content-first routing working well — properties separated correctly
+- Shared managers (Timothy Bishop, Vivek Gupta, Krystin Jernigan) entered as ungrouped WHOs
+- Judge Fite correctly left as ungrouped SECONDARY (sender, not property)
+- 2109 Meadfoot auto-discovered and auto-promoted to its own group
+
+**Known Bugs (not yet fixed):**
+- Game sort order: games appear farthest-first instead of nearest-first within same urgency tier
+- Past practice showing as THIS_WEEK: March 18 practice still shows "In Progress" + "This Week" on March 22 — synthesis urgency classification not marking past events as NO_ACTION despite date-awareness fix
+- Mobile drag-and-drop not yet tested (Card 4 long-press)
+
+### Needs Verification (updated 2026-03-22)
+- [ ] Case summaries use summaryLabels — verified working but low priority for UI quality
+- [x] Discovered entities Card 4 UX — auto-promote implemented, drag-and-drop working on desktop
+- [x] Property Management content-first routing — verified working 2026-03-22
+- [ ] Action dedup: reminder emails don't create duplicate actions — not yet verified
+- [ ] Aggregated field data computed correctly per ExtractedFieldDef.aggregation — not yet verified
+- [ ] Re-scan skips already-extracted emails (emailCount doesn't inflate) — not yet verified
+- [ ] Re-scan skips already-synthesized cases with no new emails — not yet verified
+- [ ] Card 4 drag-and-drop on mobile (long-press) — not yet tested
 
 ## Next Steps
 
-### Human Testing (immediate)
-- Property Management: enter properties as separate groups, managers as shared People. Verify content-based routing.
-- Kids Activities regression: verify Soccer + Ziad Allan still works (content routing finds "soccer").
-- Card 4 drag-and-drop: test on mobile (long-press) and desktop (click-drag).
+### Phase 6A Remaining (immediate)
+- Case corrections: Email Move, Email Exclude, Case Merge, Case Split
+- Action checkboxes (mark done from feed)
+- "Might belong in" hints (clusteringConfidence < 0.7 + alternativeCaseId)
+- Quality metrics page / admin dashboard
+- Full UI refactor (planned)
 
-### Broader Validation Scan
-- Use WHO `from:` queries to discover more WHATs during validation (e.g., `from:Vivek Gupta` reveals all 11 properties). Show on Card 4 for review before finalize. Currently planned but not yet implemented.
+### Phase 7: Feedback & Quality System
+- FeedbackService corrections processing
+- QualityService accuracy computation + phase transitions
+- ExclusionRule auto-creation after 3 excludes
+- Admin dashboard
 
-### Dashboard Entity Management (future)
-- Add/remove entities post-finalize from schema detail page
-- Entity merge UI (combine "2310 Healey Dr" and "2310 Healey Drive")
-
-### Resume Phase 6
-- Chrome Extension & Case Feed UI
-- Case feed rendering, Chrome side panel, Playwright e2e tests
-
-### Minor Fixes
-- Re-synthesize existing cases to pick up date-aware urgency fix
-- Schema status stays ONBOARDING after pipeline completes — should transition to ACTIVE
+### Minor Fixes (ongoing)
+- Game sort order within urgency tier (nearest-first for future events)
+- Past event urgency classification (synthesis not marking past events as NO_ACTION)
+- Schema status ONBOARDING → ACTIVE transition after pipeline completes
 - Context-aware Primary Entity Type description on Card 4
+- Production OAuth: remove `prompt: "consent"` (forces consent screen every sign-in)
+
+### Future
+- Phase 6B: Chrome Extension & Side Panel (deferred until web quality validated)
+- Phase 7.5: Periodic scanning (automated daily scans at set times)
+- Phase 8: Calendar Integration (progressive OAuth, CalendarService)
+- Phase 9: Scan Automation & Delta Processing
+- Broader validation scan (WHO `from:` queries discovering more WHATs)
+- Dashboard entity management (add/remove/merge entities post-finalize)
 
 ## Pipeline Architecture (updated 2026-03-21)
 

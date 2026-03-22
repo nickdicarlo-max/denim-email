@@ -12,6 +12,7 @@ export const FeedbackInputSchema = z.object({
 		"TAG_EDIT",
 		"ENTITY_MERGE",
 		"ENTITY_EDIT",
+		"ACTION_STATUS_CHANGE",
 	]),
 	caseId: z.string().min(1).optional(),
 	emailId: z.string().min(1).optional(),

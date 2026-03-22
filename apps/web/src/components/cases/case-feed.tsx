@@ -13,6 +13,7 @@ interface CaseFeedProps {
 	initialNextCursor: string | null;
 	entities: { id: string; name: string; emailCount: number }[];
 	statusCounts: Record<string, number>;
+	qualityPhase: string;
 }
 
 type StatusFilter = "ALL" | "OPEN" | "IN_PROGRESS" | "RESOLVED";
@@ -23,6 +24,7 @@ export function CaseFeed({
 	initialNextCursor,
 	entities,
 	statusCounts,
+	qualityPhase,
 }: CaseFeedProps) {
 	const [cases, setCases] = useState(initialCases);
 	const [nextCursor, setNextCursor] = useState(initialNextCursor);
@@ -135,7 +137,7 @@ export function CaseFeed({
 
 	return (
 		<div className="space-y-4">
-			<MetricBar phase="CALIBRATING" />
+			<MetricBar phase={qualityPhase as "CALIBRATING" | "TRACKING" | "STABLE"} />
 
 			{entities.length > 1 && (
 				<ScopeHeaders

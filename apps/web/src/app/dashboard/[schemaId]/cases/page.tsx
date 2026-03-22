@@ -26,6 +26,7 @@ export default async function CaseFeedPage({
 			domain: true,
 			userId: true,
 			summaryLabels: true,
+			qualityPhase: true,
 			entities: {
 				where: { type: "PRIMARY", isActive: true },
 				select: { id: true, name: true, emailCount: true },
@@ -186,6 +187,7 @@ export default async function CaseFeedPage({
 					initialNextCursor={nextCursor}
 					entities={schema.entities}
 					statusCounts={counts}
+					qualityPhase={schema.qualityPhase}
 				/>
 			</div>
 		</main>

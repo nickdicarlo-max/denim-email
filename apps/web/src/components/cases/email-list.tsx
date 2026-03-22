@@ -15,8 +15,6 @@ export interface EmailWithAssignment {
 	summary: string;
 	tags: string[];
 	attachmentCount: number;
-	clusteringConfidence: number | null;
-	alternativeCaseId: string | null;
 	isExcluded: boolean;
 	assignedBy: string;
 	clusteringScore: number | null;
@@ -91,9 +89,6 @@ function EmailItem({
 		}
 	}
 
-	const lowConfidence =
-		email.clusteringConfidence != null && email.clusteringConfidence < 0.7;
-
 	return (
 		<div
 			className={`border border-border rounded-lg p-3 space-y-1.5 ${
@@ -141,12 +136,7 @@ function EmailItem({
 					<Tag key={tag} label={tag} size="sm" />
 				))}
 
-				{lowConfidence && (
-					<span className="text-xs text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
-						Low confidence
-					</span>
-				)}
-			</div>
+				</div>
 		</div>
 	);
 }

@@ -126,7 +126,7 @@ export function CaseDetail({
 
 			{/* Actions */}
 			{caseData.actions.length > 0 && (
-				<ActionList actions={caseData.actions} />
+				<ActionList actions={caseData.actions} schemaId={schemaId} />
 			)}
 
 			{/* Emails */}

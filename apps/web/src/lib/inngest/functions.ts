@@ -548,7 +548,15 @@ export const runSynthesis = inngest.createFunction(
       });
     }
 
-    // 6. Emit synthesis.case.completed events
+    // 6. Transition schema from ONBOARDING to ACTIVE
+    await step.run("activate-schema", async () => {
+      await prisma.caseSchema.updateMany({
+        where: { id: schemaId, status: "ONBOARDING" },
+        data: { status: "ACTIVE" },
+      });
+    });
+
+    // 7. Emit synthesis.case.completed events
     await step.run("emit-events", async () => {
       const events = caseIds.map((caseId) => ({
         name: "synthesis.case.completed" as const,

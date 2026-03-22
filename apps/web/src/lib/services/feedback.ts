@@ -50,6 +50,13 @@ export async function recordFeedback(
     });
   }
 
+  if ((input.type === "THUMBS_UP" || input.type === "THUMBS_DOWN") && input.caseId) {
+    await prisma.case.update({
+      where: { id: input.caseId },
+      data: { feedbackRating: input.type === "THUMBS_UP" ? "up" : "down" },
+    });
+  }
+
   const durationMs = Date.now() - start;
   logger.info({
     service: "feedback",
