@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-20 (pipeline quality comparison verified, new pipeline live)
+Last updated: 2026-03-21 (content-first entity routing, ungrouped WHOs, Card 4 drag-and-drop)
 
 ## Completed
 
@@ -505,12 +505,49 @@ Schema: "Kids Activities" (school_parent), schemaId: cmmxt6x6l0001qej8m63epuhb
 
 **Fix:** Added `TODAY'S DATE: YYYY-MM-DD` to synthesis system prompt with instruction: "Events/deadlines that have already passed are NOT imminent — they are NO_ACTION (expired)." The `buildSynthesisPrompt()` function now accepts an optional `today` parameter (defaults to current date). No caller changes needed.
 
+### Content-First Entity Routing (2026-03-21)
+
+**Problem:** Property Management test with 1501 Sylvan, 3305 Cardinal, 851 Peavy + 3 shared managers (Timothy Bishop, Vivek Gupta, Krystin Jernigan) in one group. 1501 Sylvan got 134 emails and 51 cases — most about OTHER properties. Sender-based routing picked `associatedPrimaryIds[0]` as a catch-all.
+
+**Design principle:** WHOs are discovery channels (where to find emails), not routing destinations. The WHAT in the email content determines routing.
+
+**Changes:**
+1. **Content-first routing order** (`extraction.ts`): Gemini relevanceEntity → content match (subject/summary scan for known PRIMARY names) → detectedEntities → sender (last resort, only when exactly 1 associated primary)
+2. **Ungrouped WHOs** — Card 1 "People who email you" section for shared senders. Become SECONDARY entities with empty `associatedPrimaryIds`. Generate `from:` discovery queries but don't drive routing.
+3. **Card 4 drag-and-drop** — discovered entities draggable into group cards via @dnd-kit/core (touch long-press 250ms + mouse). Assigned entities appear inside group with undo button.
+4. **Email counts on discovered entities** — validation prompt returns `emailCount` per discovered entity, displayed on Card 4.
+5. **Finalize handles sharedWhos** — creates SECONDARY entities with no group, empty associatedPrimaryIds.
+6. **Hypothesis prompt** — generates `from:` queries for shared WHOs without compound queries.
+7. **Synthesis fix** — `runSynthesis` queries all OPEN cases directly instead of following stale cluster record refs (two-pass clustering deletes coarse cases).
+
+**Files changed:** extraction.ts, card1-input.tsx, card4-review.tsx, use-interview-flow.ts, interview.ts (service), interview.ts (validation), interview-hypothesis.ts, schema.ts (types), cluster.ts (startTime bugfix)
+
+**Integration tests:** 60/60 passed + 1 skipped (Inngest event chain — passes in isolation but Inngest server causes race conditions with parallel test files). Type check clean.
+
+### Property Management Test Results (2026-03-21)
+
+Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all problem:
+- 1501 Sylvan: **134 emails, 51 cases** (most about other properties — 205 Freedom Trail, 2310 Healey, 3910 Bucknell, etc.)
+- 851 Peavy: 34 emails, 17 cases (correctly scoped)
+- 3305 Cardinal: 2 emails
+
+**Root cause:** All 3 managers in one EntityGroup with `associatedPrimaryIds` pointing to all 3 properties. Sender routing picked `[0]` = 1501 Sylvan for every email from any manager.
+
+**Post-fix:** Content-first routing checks email subject/body for property addresses before falling back to sender. Shared WHOs (managers) generate discovery queries but don't determine routing. Awaiting human re-test with new UI flow.
+
 ## Next Steps
 
-### Card 4 UX Improvements
-- Show group pairings on review screen
-- Allow assigning discovered entities to existing groups
-- Context-aware Primary Entity Type description
+### Human Testing (immediate)
+- Property Management: enter properties as separate groups, managers as shared People. Verify content-based routing.
+- Kids Activities regression: verify Soccer + Ziad Allan still works (content routing finds "soccer").
+- Card 4 drag-and-drop: test on mobile (long-press) and desktop (click-drag).
+
+### Broader Validation Scan
+- Use WHO `from:` queries to discover more WHATs during validation (e.g., `from:Vivek Gupta` reveals all 11 properties). Show on Card 4 for review before finalize. Currently planned but not yet implemented.
+
+### Dashboard Entity Management (future)
+- Add/remove entities post-finalize from schema detail page
+- Entity merge UI (combine "2310 Healey Dr" and "2310 Healey Drive")
 
 ### Resume Phase 6
 - Chrome Extension & Case Feed UI
@@ -519,13 +556,15 @@ Schema: "Kids Activities" (school_parent), schemaId: cmmxt6x6l0001qej8m63epuhb
 ### Minor Fixes
 - Re-synthesize existing cases to pick up date-aware urgency fix
 - Schema status stays ONBOARDING after pipeline completes — should transition to ACTIVE
+- Context-aware Primary Entity Type description on Card 4
 
-## Pipeline Architecture (updated 2026-03-19)
+## Pipeline Architecture (updated 2026-03-21)
 
 ```
 Interview finalize / Dashboard "Scan Emails"
   → ScanJob created (PENDING)
   → Smart Discovery: broad scan → social graph → body sampling → AI queries
+  → Shared WHO "from:" queries (ungrouped people)
   → discovery.ts finds Gmail messages (hybrid: hypothesis + AI-generated queries)
   → emits scan.emails.discovered
 
@@ -536,26 +575,38 @@ fanOutExtraction (concurrency: 1/schema)
 extractBatch (concurrency: 3/schema, retries: 3)
   → Gemini extracts summary/tags/entities per email
   → Holistic relevance scoring (threshold 0.4)
+  → Content-first entity routing:
+    1. Gemini relevanceEntity → match known PRIMARY
+    2. Subject/summary scan → match known PRIMARY names + aliases
+    3. Gemini detectedEntities → match known entities
+    4. Sender match (last resort, only 1:1 WHO↔WHAT pairings)
   → emits extraction.batch.completed
 
 checkExtractionComplete (concurrency: 1/schema)
   → updates tag frequencies
   → emits extraction.all.completed
 
-runClustering (concurrency: 1/schema, retries: 2)
-  → NEW: Claude clustering intelligence (AI groups + config overrides)
-  → AI-suggested excludes marked
-  → Cases created from AI groups first
-  → Gravity model on remaining emails with AI-tuned config
+runCoarseClustering (concurrency: 1/schema, retries: 2)
+  → Pass 1: Simplified gravity model groups by entity
+  → emits coarse.clustering.completed
+
+runCaseSplitting (concurrency: 1/schema, retries: 2)
+  → Pass 2: AI or deterministic case splitting by topic
+  → Deletes coarse cases, creates split replacements
   → emits clustering.completed
 
 runSynthesis (concurrency: 2/schema, retries: 2)
+  → Loads ALL OPEN cases for schema (not from cluster refs)
   → Claude enriches each case: title, summary, tags, actor, actions, urgency
   → Negative action filter (expired/declined → NO_ACTION, no action items)
   → IRRELEVANT cases auto-resolved
   → action dedup via fingerprinting
   → ScanJob → COMPLETED
   → emits synthesis.case.completed per case
+
+runClusteringCalibration (concurrency: 1/schema, retries: 1)
+  → Reads user corrections, adjusts params + vocabulary
+  → Only runs in CALIBRATING or TRACKING phases
 ```
 
 ## Environment
