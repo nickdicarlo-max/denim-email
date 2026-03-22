@@ -21,7 +21,22 @@ const STATUS_ORDER: Record<string, number> = {
 	RESOLVED: 1,
 };
 
-function sortCases<T extends { status: string; urgency?: string | null; lastEmailDate?: string | null }>(
+/** Find the earliest future event date from a case's actions */
+function getNextEventTime(actions?: { eventStartTime?: string | null; dueDate?: string | null; actionType?: string }[]): number | null {
+	if (!actions) return null;
+	const now = Date.now();
+	let earliest: number | null = null;
+	for (const a of actions) {
+		if (a.actionType !== "EVENT") continue;
+		const dateStr = a.eventStartTime ?? a.dueDate;
+		if (!dateStr) continue;
+		const t = new Date(dateStr).getTime();
+		if (t > now && (earliest === null || t < earliest)) earliest = t;
+	}
+	return earliest;
+}
+
+function sortCases<T extends { status: string; urgency?: string | null; lastEmailDate?: string | null; actions?: { eventStartTime?: string | null; dueDate?: string | null; actionType?: string }[] }>(
 	cases: T[],
 ): T[] {
 	return [...cases].sort((a, b) => {
@@ -35,7 +50,14 @@ function sortCases<T extends { status: string; urgency?: string | null; lastEmai
 		const bUrg = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
 		if (aUrg !== bUrg) return aUrg - bUrg;
 
-		// Tertiary: most recent email first
+		// Tertiary: nearest upcoming event first (for cases with events)
+		const aEvent = getNextEventTime(a.actions);
+		const bEvent = getNextEventTime(b.actions);
+		if (aEvent !== null && bEvent !== null) return aEvent - bEvent;
+		if (aEvent !== null) return -1; // cases with events before those without
+		if (bEvent !== null) return 1;
+
+		// Quaternary: most recent email first (fallback)
 		const aDate = a.lastEmailDate ? new Date(a.lastEmailDate).getTime() : 0;
 		const bDate = b.lastEmailDate ? new Date(b.lastEmailDate).getTime() : 0;
 		return bDate - aDate;

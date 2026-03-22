@@ -443,6 +443,67 @@ export const runClusteringCalibration = inngest.createFunction(
 );
 
 /**
+ * Re-synthesize a case after user feedback (email move, merge, etc.).
+ * Triggered by feedback.case.modified events from FeedbackService.
+ */
+export const resynthesizeOnFeedback = inngest.createFunction(
+  {
+    id: "resynthesize-on-feedback",
+    concurrency: {
+      limit: 2,
+      key: "event.data.schemaId",
+    },
+    retries: 2,
+  },
+  { event: "feedback.case.modified" },
+  async ({ event, step }) => {
+    const { schemaId, caseId } = event.data;
+
+    // Verify the case still exists and has emails
+    const caseExists = await step.run("verify-case", async () => {
+      const c = await prisma.case.findFirst({
+        where: { id: caseId, schemaId },
+        select: { id: true, _count: { select: { caseEmails: true } } },
+      });
+      return c && c._count.caseEmails > 0;
+    });
+
+    if (!caseExists) return;
+
+    await step.run("resynthesize", async () => {
+      await synthesizeCase(caseId, schemaId);
+    });
+  },
+);
+
+/**
+ * Daily quality snapshot computation for all ACTIVE schemas.
+ * Computes accuracy, detects regressions, updates phase transitions.
+ */
+export const dailyQualitySnapshot = inngest.createFunction(
+  {
+    id: "daily-quality-snapshot",
+    retries: 1,
+  },
+  { cron: "0 0 * * *" }, // midnight daily
+  async ({ step }) => {
+    const schemas = await step.run("load-schemas", async () => {
+      return prisma.caseSchema.findMany({
+        where: { status: "ACTIVE" },
+        select: { id: true },
+      });
+    });
+
+    for (const schema of schemas) {
+      await step.run(`snapshot-${schema.id}`, async () => {
+        const { computeSnapshot } = await import("@/lib/services/quality");
+        await computeSnapshot(schema.id, new Date());
+      });
+    }
+  },
+);
+
+/**
  * Run synthesis after clustering is complete.
  * Calls Claude for each case to generate titles, summaries, tags, and actions.
  * Sequential per case to respect API rate limits.

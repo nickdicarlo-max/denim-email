@@ -359,6 +359,16 @@ export async function coarseCluster(
       }
     }
 
+    // Write alternativeCaseId for emails with second-best matches
+    for (const decision of decisions) {
+      if (decision.alternativeCaseId && decision.emailIds.length > 0) {
+        await tx.email.updateMany({
+          where: { id: { in: decision.emailIds } },
+          data: { alternativeCaseId: decision.alternativeCaseId },
+        });
+      }
+    }
+
     // Update CaseSchema.caseCount
     const totalCases = await tx.case.count({ where: { schemaId } });
     await tx.caseSchema.update({

@@ -170,10 +170,17 @@ export interface ScoringResult {
   breakdown: ScoreBreakdown;
 }
 
+/** Result of finding best + alternative case match. */
+export interface BestCaseResult {
+  best: ScoringResult;
+  alternative: ScoringResult | null;
+}
+
 /** Output decision for a thread group. */
 export interface ClusterDecision {
   action: "MERGE" | "CREATE";
   targetCaseId: string | null;
+  alternativeCaseId: string | null;
   emailIds: string[];
   threadIds: string[];
   score: number;

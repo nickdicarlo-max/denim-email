@@ -113,6 +113,20 @@ export default async function CaseFeedPage({
 		IN_PROGRESS: 0,
 		RESOLVED: 1,
 	};
+	// Find earliest future event date from a case's actions
+	const now = Date.now();
+	function getNextEventTime(actions: { eventStartTime: Date | null; dueDate: Date | null; actionType: string }[]): number | null {
+		let earliest: number | null = null;
+		for (const a of actions) {
+			if (a.actionType !== "EVENT") continue;
+			const d = a.eventStartTime ?? a.dueDate;
+			if (!d) continue;
+			const t = d.getTime();
+			if (t > now && (earliest === null || t < earliest)) earliest = t;
+		}
+		return earliest;
+	}
+
 	const items = [...trimmed].sort((a, b) => {
 		// Primary: active cases first, resolved last
 		const aStatus = STATUS_ORDER[a.status] ?? 0;
@@ -122,7 +136,13 @@ export default async function CaseFeedPage({
 		const aOrder = URGENCY_ORDER[a.urgency ?? "UPCOMING"] ?? 2;
 		const bOrder = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
 		if (aOrder !== bOrder) return aOrder - bOrder;
-		// Tertiary: most recent email first
+		// Tertiary: nearest upcoming event first
+		const aEvent = getNextEventTime(a.actions);
+		const bEvent = getNextEventTime(b.actions);
+		if (aEvent !== null && bEvent !== null) return aEvent - bEvent;
+		if (aEvent !== null) return -1;
+		if (bEvent !== null) return 1;
+		// Quaternary: most recent email first
 		const aDate = a.lastEmailDate?.getTime() ?? 0;
 		const bDate = b.lastEmailDate?.getTime() ?? 0;
 		return bDate - aDate;

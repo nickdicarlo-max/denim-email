@@ -224,7 +224,8 @@ export async function synthesizeCase(
   }));
 
   // 4. Build prompt and call Claude
-  const prompt = buildSynthesisPrompt(emailInputs, schemaContext);
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = buildSynthesisPrompt(emailInputs, schemaContext, today);
 
   const aiResult = await callClaude({
     model: "claude-sonnet-4-6",
@@ -380,7 +381,23 @@ export async function synthesizeCase(
     }
   });
 
-  // 10. Log extraction cost
+  // 10. Deterministic urgency override: if all event actions are in the past, force NO_ACTION
+  const nowMs = Date.now();
+  const eventActions = synthesisResult.actions.filter((a) => a.actionType === "EVENT");
+  if (eventActions.length > 0) {
+    const allPast = eventActions.every((a) => {
+      const dateStr = a.eventStartTime ?? a.dueDate;
+      return dateStr ? new Date(dateStr).getTime() < nowMs : true;
+    });
+    if (allPast && synthesisResult.urgency !== "NO_ACTION" && synthesisResult.urgency !== "IRRELEVANT") {
+      await prisma.case.update({
+        where: { id: caseId },
+        data: { urgency: "NO_ACTION" },
+      });
+    }
+  }
+
+  // 11. Log extraction cost
   const estimatedCost =
     aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
     aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;

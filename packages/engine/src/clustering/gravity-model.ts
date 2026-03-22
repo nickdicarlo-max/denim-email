@@ -59,23 +59,41 @@ export function scoreEmailAgainstCase(
   return { caseId: existingCase.id, score: finalScore, breakdown };
 }
 
-/** Find the best matching case above mergeThreshold, or null. */
+/** Find the best matching case above mergeThreshold, or null. Also returns second-best for alternativeCaseId hints. */
 export function findBestCase(
   email: ClusterEmailInput,
   cases: ClusterCaseInput[],
   config: ClusteringConfig,
   now: Date,
 ): ScoringResult | null {
+  const result = findTopCases(email, cases, config, now);
+  return result?.best ?? null;
+}
+
+/** Find top 2 matching cases above mergeThreshold. */
+export function findTopCases(
+  email: ClusterEmailInput,
+  cases: ClusterCaseInput[],
+  config: ClusteringConfig,
+  now: Date,
+): { best: ScoringResult; alternative: ScoringResult | null } | null {
   let best: ScoringResult | null = null;
+  let secondBest: ScoringResult | null = null;
 
   for (const c of cases) {
     const result = scoreEmailAgainstCase(email, c, config, now);
-    if (result.score >= config.mergeThreshold && (best === null || result.score > best.score)) {
-      best = result;
+    if (result.score >= config.mergeThreshold) {
+      if (best === null || result.score > best.score) {
+        secondBest = best;
+        best = result;
+      } else if (secondBest === null || result.score > secondBest.score) {
+        secondBest = result;
+      }
     }
   }
 
-  return best;
+  if (!best) return null;
+  return { best, alternative: secondBest };
 }
 
 /**
@@ -102,28 +120,29 @@ export function clusterEmails(
   for (const group of sortedGroups) {
     // Use the oldest email as the representative for scoring
     const representative = group[0];
-    const bestMatch = findBestCase(representative, activeCases, config, now);
+    const topCases = findTopCases(representative, activeCases, config, now);
 
     const groupEmailIds = group.map((e) => e.id);
     const groupThreadIds = [...new Set(group.map((e) => e.threadId))];
     const groupEntityId = resolveGroupEntityId(group);
     const groupPrimaryTag = computePrimaryTag(group);
 
-    if (bestMatch !== null) {
+    if (topCases !== null) {
       // MERGE into existing case
       decisions.push({
         action: "MERGE",
-        targetCaseId: bestMatch.caseId,
+        targetCaseId: topCases.best.caseId,
+        alternativeCaseId: topCases.alternative?.caseId ?? null,
         emailIds: groupEmailIds,
         threadIds: groupThreadIds,
-        score: bestMatch.score,
-        breakdown: bestMatch.breakdown,
+        score: topCases.best.score,
+        breakdown: topCases.best.breakdown,
         primaryTag: groupPrimaryTag,
         entityId: groupEntityId,
       });
 
       // Update the active case with new data
-      const caseToUpdate = activeCases.find((c) => c.id === bestMatch.caseId);
+      const caseToUpdate = activeCases.find((c) => c.id === topCases.best.caseId);
       if (caseToUpdate) {
         caseToUpdate.threadIds = [...new Set([...caseToUpdate.threadIds, ...groupThreadIds])];
         caseToUpdate.emailCount += group.length;
@@ -146,6 +165,7 @@ export function clusterEmails(
       decisions.push({
         action: "CREATE",
         targetCaseId: null,
+        alternativeCaseId: null,
         emailIds: groupEmailIds,
         threadIds: groupThreadIds,
         score: 0,
