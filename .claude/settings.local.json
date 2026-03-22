@@ -57,7 +57,15 @@
       "Bash(DATABASE_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" DIRECT_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" pnpm exec prisma db push --accept-data-loss)",
       "Bash(agent-browser open:*)",
       "Bash(agent-browser wait:*)",
-      "Bash(agent-browser screenshot:*)"
+      "Bash(agent-browser screenshot:*)",
+      "Bash(PGPASSWORD=j4vcoiu2yfjhbdfv78ywekhjbadvhjae psql \"postgresql://postgres.xnewghhpuerhaottgalc@aws-0-us-west-2.pooler.supabase.com:6543/postgres?sslmode=require\" -c \"\nSELECT cs.id, cs.name, cs.domain, cs.\\\\\"emailCount\\\\\", cs.\\\\\"caseCount\\\\\"\nFROM \\\\\"CaseSchema\\\\\" cs\nORDER BY cs.\\\\\"createdAt\\\\\" DESC\nLIMIT 10;\n\" 2>&1)",
+      "Bash(npx tsx -e \":*)",
+      "Bash(node -e \":*)",
+      "Bash(TEST_INNGEST=false npx vitest run --config vitest.integration.config.ts --no-file-parallelism)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\alkam\\\\Documents\\\\NDSoftware\\\\denim-email\\\\apps\\\\web\\\\src\\\\app\\\\api\\\\quality\\\\[schemaId]\")",
+      "Bash(mkdir -p \"C:\\\\Users\\\\alkam\\\\Documents\\\\NDSoftware\\\\denim-email\\\\apps\\\\web\\\\src\\\\app\\\\api\\\\quality\\\\[schemaId]\\\\history\")"
     ]
   }
 }

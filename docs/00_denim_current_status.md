@@ -573,52 +573,97 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 - Judge Fite correctly left as ungrouped SECONDARY (sender, not property)
 - 2109 Meadfoot auto-discovered and auto-promoted to its own group
 
-**Known Bugs (not yet fixed):**
-- Game sort order: games appear farthest-first instead of nearest-first within same urgency tier
-- Past practice showing as THIS_WEEK: March 18 practice still shows "In Progress" + "This Week" on March 22 — synthesis urgency classification not marking past events as NO_ACTION despite date-awareness fix
-- Mobile drag-and-drop not yet tested (Card 4 long-press)
+**Bugs Fixed (2026-03-22, later session):**
+- [x] Game sort order — now sorts by nearest future event date ASC within urgency tier (was lastEmailDate DESC)
+- [x] Past events urgency — deterministic post-synthesis override: if ALL event actions are in the past, force urgency to NO_ACTION
+- [x] Schema ONBOARDING → ACTIVE — auto-transitions after pipeline completes (new Inngest step)
+- [x] feedbackRating persistence — THUMBS_UP/DOWN now updates Case.feedbackRating
+- [x] MetricBar hardcoded — now wired to real CaseSchema.qualityPhase
+- [x] Action toggle — new PATCH /api/actions/[id] route, clickable ○/✓ in action list with optimistic updates
+- [x] alternativeCaseId — gravity model now returns second-best match, written to Email records during clustering
+
+### Phase 6A Quick Wins (2026-03-22)
+- Schema ONBOARDING → ACTIVE transition after pipeline completes
+- Case.feedbackRating updated on thumbs up/down (was only creating FeedbackEvent)
+- Action status toggle: PENDING ↔ DONE with optimistic UI
+- MetricBar wired to real qualityPhase from schema
+- Synthesis passes explicit `today` to prompt builder
+
+### Phase 7: Feedback & Quality System (2026-03-22)
+
+**Completed:**
+- **EMAIL_MOVE correction** — FeedbackService reassigns CaseEmail, updates denormalized counts, emits `feedback.case.modified` events for re-synthesis of both source and target cases
+- **ExclusionRule auto-creation** — after 3+ EMAIL_EXCLUDE events from same sender domain, auto-creates DOMAIN rule (`source: system_suggested`)
+- **QualityService** (`apps/web/src/lib/services/quality.ts`) — `computeSnapshot()` aggregates 30-day rolling window, computes accuracy = `1 - (corrections / casesViewed)`, handles phase transitions
+- **Phase transitions** — CALIBRATING → TRACKING (≥5 signals), TRACKING → STABLE (≥95% accuracy for 7 consecutive days)
+- **Re-synthesis on feedback** — Inngest `resynthesizeOnFeedback` function listens for `feedback.case.modified`, re-synthesizes affected case
+- **Daily quality snapshot** — Inngest cron job (midnight daily) computes snapshots for all ACTIVE schemas
+- **Quality API routes** — `GET /api/quality/[schemaId]` (current accuracy + phase), `GET /api/quality/[schemaId]/history` (paginated snapshots)
+- **alternativeCaseId population** — gravity model `findTopCases()` returns best + second-best match; clustering writes to Email records
+
+**Not implemented (logged for future):**
+- Learning loop: gravity model weight adjustment from user corrections (tag weights, actor weights, entity confidence)
+- CASE_MERGE / CASE_SPLIT correction processing (FeedbackEvent types exist, side effects not implemented)
 
 ### Needs Verification (updated 2026-03-22)
-- [ ] Case summaries use summaryLabels — verified working but low priority for UI quality
-- [x] Discovered entities Card 4 UX — auto-promote implemented, drag-and-drop working on desktop
-- [x] Property Management content-first routing — verified working 2026-03-22
+- [x] Case summaries use summaryLabels — verified working, low priority
+- [x] Discovered entities Card 4 UX — auto-promote + drag-and-drop working on desktop
+- [x] Property Management content-first routing — verified 2026-03-22
 - [ ] Action dedup: reminder emails don't create duplicate actions — not yet verified
 - [ ] Aggregated field data computed correctly per ExtractedFieldDef.aggregation — not yet verified
-- [ ] Re-scan skips already-extracted emails (emailCount doesn't inflate) — not yet verified
+- [ ] Re-scan skips already-extracted emails — not yet verified
 - [ ] Re-scan skips already-synthesized cases with no new emails — not yet verified
 - [ ] Card 4 drag-and-drop on mobile (long-press) — not yet tested
+- [ ] Game sort order fix — needs human re-test (implemented but not verified with live data)
+- [ ] Past event urgency override — needs human re-test (implemented but not verified with live data)
+- [ ] EMAIL_MOVE end-to-end — UI for email move not yet built (API + service ready)
+- [ ] ExclusionRule auto-creation — needs 3 excludes from same domain to trigger
+- [ ] Quality snapshot computation — needs feedback events to test (run after rating cases)
+- [ ] Phase transition CALIBRATING → TRACKING — needs 5+ feedback signals
+- [ ] Re-synthesis on feedback.case.modified — needs EMAIL_MOVE UI to trigger
+- [ ] Daily quality cron job — needs ACTIVE schema + Inngest cron support
+
+## Phase Completion Status
+
+| Phase | Status | Notes |
+|---|---|---|
+| 0: Scaffolding | **Complete** | Monorepo, Prisma, auth, logging, CI |
+| 1: Interview Service | **Complete** | Hypothesis generation, validation, finalization |
+| 2: Gmail + Interview UI | **Complete** | OAuth, Gmail client, Cards 1-4, entity groups |
+| 3: Extraction Pipeline | **Complete** | Gemini extraction, relevance gating, entity routing |
+| 4: Clustering Engine | **Complete** | Two-pass gravity model, case splitting |
+| 5: Synthesis Service | **Complete** | Claude enrichment, urgency, action dedup |
+| 6A: Case Review UI | **Mostly complete** | Feed, detail, filters, actions, feedback. **Remaining:** Email Move UI, Case Merge/Split UI, full UI refactor (user designing) |
+| 6B: Chrome Extension | Deferred | After web quality validated |
+| 7: Feedback & Quality | **Mostly complete** | EMAIL_MOVE + ExclusionRule + QualityService + re-synthesis + API. **Remaining:** CASE_MERGE/SPLIT processing, Admin dashboard, learning loop |
+| 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
+| 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
+| 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
 
 ## Next Steps
 
-### Phase 6A Remaining (immediate)
-- Case corrections: Email Move, Email Exclude, Case Merge, Case Split
-- Action checkboxes (mark done from feed)
-- "Might belong in" hints (clusteringConfidence < 0.7 + alternativeCaseId)
-- Quality metrics page / admin dashboard
-- Full UI refactor (planned)
+### Needs Scoping (design + plan before building)
+- **Learning loop** — gravity model weight adjustment from user corrections. Tag weight recalibration, entity confidence adjustment, ClusteringConfig param updates. The `runClusteringCalibration` Inngest function exists as a stub — needs real learning algorithm.
+- **Admin dashboard** — per-schema quality metrics, accuracy graph, correction breakdown, event log, email-level clustering debug. Decide: separate `/admin` page or integrated into schema detail?
 
-### Phase 7: Feedback & Quality System
-- FeedbackService corrections processing
-- QualityService accuracy computation + phase transitions
-- ExclusionRule auto-creation after 3 excludes
-- Admin dashboard
+### Phase 6A Remaining
+- Email Move UI in case detail (case picker dropdown)
+- Case Merge / Case Split UI + backend processing
+- Full UI refactor (user will provide designs)
 
 ### Minor Fixes (ongoing)
-- Game sort order within urgency tier (nearest-first for future events)
-- Past event urgency classification (synthesis not marking past events as NO_ACTION)
-- Schema status ONBOARDING → ACTIVE transition after pipeline completes
 - Context-aware Primary Entity Type description on Card 4
 - Production OAuth: remove `prompt: "consent"` (forces consent screen every sign-in)
 
-### Future
-- Phase 6B: Chrome Extension & Side Panel (deferred until web quality validated)
+### Future Phases
+- Phase 6B: Chrome Extension & Side Panel
 - Phase 7.5: Periodic scanning (automated daily scans at set times)
 - Phase 8: Calendar Integration (progressive OAuth, CalendarService)
 - Phase 9: Scan Automation & Delta Processing
 - Broader validation scan (WHO `from:` queries discovering more WHATs)
 - Dashboard entity management (add/remove/merge entities post-finalize)
 
-## Pipeline Architecture (updated 2026-03-21)
+## Pipeline Architecture (updated 2026-03-22)
 
 ```
 Interview finalize / Dashboard "Scan Emails"
@@ -648,6 +693,7 @@ checkExtractionComplete (concurrency: 1/schema)
 
 runCoarseClustering (concurrency: 1/schema, retries: 2)
   → Pass 1: Simplified gravity model groups by entity
+  → Writes alternativeCaseId (second-best match) to Email records
   → emits coarse.clustering.completed
 
 runCaseSplitting (concurrency: 1/schema, retries: 2)
@@ -658,15 +704,26 @@ runCaseSplitting (concurrency: 1/schema, retries: 2)
 runSynthesis (concurrency: 2/schema, retries: 2)
   → Loads ALL OPEN cases for schema (not from cluster refs)
   → Claude enriches each case: title, summary, tags, actor, actions, urgency
-  → Negative action filter (expired/declined → NO_ACTION, no action items)
+  → Passes explicit today to synthesis prompt for date-aware urgency
+  → Post-synthesis: deterministic urgency override (all-past-events → NO_ACTION)
   → IRRELEVANT cases auto-resolved
   → action dedup via fingerprinting
+  → Schema ONBOARDING → ACTIVE transition
   → ScanJob → COMPLETED
   → emits synthesis.case.completed per case
 
 runClusteringCalibration (concurrency: 1/schema, retries: 1)
   → Reads user corrections, adjusts params + vocabulary
   → Only runs in CALIBRATING or TRACKING phases
+  → Learning loop NOT YET IMPLEMENTED (stub only)
+
+resynthesizeOnFeedback (concurrency: 2/schema, retries: 2)
+  → Triggered by feedback.case.modified events
+  → Re-synthesizes affected case after email move or other corrections
+
+dailyQualitySnapshot (cron: midnight daily)
+  → Computes QualitySnapshot for all ACTIVE schemas
+  → 30-day rolling accuracy, phase transitions
 ```
 
 ## Environment
