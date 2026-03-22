@@ -331,6 +331,36 @@ export async function finalizeSchema(
         }
       }
 
+      // Auto-promote ungrouped PRIMARY entities to their own groups.
+      // Discovered primaries (from validation scan) and user-added primaries that weren't
+      // placed in any group should each become their own EntityGroup so they generate cases.
+      const groupedEntityNames = new Set<string>();
+      for (const group of groups) {
+        for (const name of [...group.whats, ...group.whos]) {
+          groupedEntityNames.add(name);
+        }
+      }
+      const ungroupedPrimaries = createdEntities.filter(
+        (e) => e.type === "PRIMARY" && !groupedEntityNames.has(e.name),
+      );
+      let autoGroupIndex = groups.length;
+      for (const primary of ungroupedPrimaries) {
+        // Check if already linked to a group (e.g., from drag-drop assignment handled above)
+        const existing = await tx.entity.findUnique({
+          where: { id: primary.id },
+          select: { groupId: true },
+        });
+        if (existing?.groupId) continue;
+
+        const entityGroup = await tx.entityGroup.create({
+          data: { schemaId: schema.id, index: autoGroupIndex++ },
+        });
+        await tx.entity.update({
+          where: { id: primary.id },
+          data: { groupId: entityGroup.id },
+        });
+      }
+
       // Process shared WHOs — SECONDARY entities with no group, empty associatedPrimaryIds.
       // These are discovery senders: their "from:" queries find emails, but content determines routing.
       const sharedWhos = confirmations.sharedWhos ?? [];

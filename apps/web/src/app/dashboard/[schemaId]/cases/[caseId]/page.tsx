@@ -38,6 +38,7 @@ export default async function CaseDetailPage({
 				orderBy: [{ status: "asc" }, { dueDate: "asc" }],
 			},
 			caseEmails: {
+				take: 25,
 				include: {
 					email: {
 						select: {
@@ -51,10 +52,7 @@ export default async function CaseDetailPage({
 							summary: true,
 							tags: true,
 							attachmentCount: true,
-							clusteringConfidence: true,
-							alternativeCaseId: true,
 							isExcluded: true,
-							routingDecision: true,
 						},
 					},
 				},
@@ -96,10 +94,7 @@ export default async function CaseDetailPage({
 		summary: ce.email.summary,
 		tags: ce.email.tags as string[],
 		attachmentCount: ce.email.attachmentCount,
-		clusteringConfidence: ce.email.clusteringConfidence,
-		alternativeCaseId: ce.email.alternativeCaseId,
 		isExcluded: ce.email.isExcluded,
-		routingDecision: ce.email.routingDecision as Record<string, unknown> | null,
 		assignedBy: ce.assignedBy,
 		clusteringScore: ce.clusteringScore,
 	}));

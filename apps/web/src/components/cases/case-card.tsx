@@ -51,17 +51,32 @@ const URGENCY_BADGE: Record<string, { label: string; bg: string; text: string } 
 };
 
 /**
- * Find the next future EVENT action to display prominently on the card.
+ * Find the most relevant EVENT action to display on the card.
+ * Prefers next future event; falls back to most recent past event.
  */
-function getNextEvent(actions: CaseCardData["actions"]): { title: string; date: Date } | null {
+function getEventDisplay(actions: CaseCardData["actions"]): { title: string; date: Date; isPast: boolean } | null {
 	const now = new Date();
+	let closestFuture: { title: string; date: Date } | null = null;
+	let closestPast: { title: string; date: Date } | null = null;
+
 	for (const action of actions) {
 		if (action.actionType !== "EVENT") continue;
 		const dateStr = action.eventStartTime ?? action.dueDate;
 		if (!dateStr) continue;
 		const date = new Date(dateStr);
-		if (date > now) return { title: action.title, date };
+		if (date > now) {
+			if (!closestFuture || date < closestFuture.date) {
+				closestFuture = { title: action.title, date };
+			}
+		} else {
+			if (!closestPast || date > closestPast.date) {
+				closestPast = { title: action.title, date };
+			}
+		}
 	}
+
+	if (closestFuture) return { ...closestFuture, isPast: false };
+	if (closestPast) return { ...closestPast, isPast: true };
 	return null;
 }
 
@@ -76,7 +91,7 @@ export function CaseCard({
 	const urgencyBadge = caseData.urgency ? URGENCY_BADGE[caseData.urgency] : undefined;
 	const isUnread = caseData.viewedAt === null;
 	const isMuted = caseData.urgency === "NO_ACTION" || caseData.urgency === "IRRELEVANT";
-	const nextEvent = getNextEvent(caseData.actions);
+	const eventDisplay = getEventDisplay(caseData.actions);
 
 	return (
 		<Link href={`/dashboard/${schemaId}/cases/${caseData.id}`}>
@@ -105,11 +120,15 @@ export function CaseCard({
 					)}
 				</div>
 
-				{/* Next event date (prominent) */}
-				{nextEvent && (
-					<div className="flex items-center gap-1.5 text-xs font-medium text-accent-text bg-accent/10 rounded px-2 py-1">
-						<span>Next: {nextEvent.title}</span>
-						<span className="ml-auto whitespace-nowrap">{formatEventDate(nextEvent.date)}</span>
+				{/* Event date (prominent for upcoming, dimmed for past) */}
+				{eventDisplay && (
+					<div className={`flex items-center gap-1.5 text-xs font-medium rounded px-2 py-1 ${
+						eventDisplay.isPast
+							? "text-muted bg-gray-100"
+							: "text-accent-text bg-accent/10"
+					}`}>
+						<span>{eventDisplay.isPast ? "Past" : "Next"}: {eventDisplay.title}</span>
+						<span className="ml-auto whitespace-nowrap">{formatEventDate(eventDisplay.date)}</span>
 					</div>
 				)}
 

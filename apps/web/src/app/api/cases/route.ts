@@ -5,6 +5,43 @@ import { CaseListQuerySchema } from "@/lib/validation/cases";
 import { NotFoundError, ValidationError } from "@denim/types";
 import { NextResponse } from "next/server";
 
+/** Urgency tier sort order: lower = higher priority */
+const URGENCY_ORDER: Record<string, number> = {
+	IMMINENT: 0,
+	THIS_WEEK: 1,
+	UPCOMING: 2,
+	NO_ACTION: 3,
+	IRRELEVANT: 4,
+};
+
+/** Status sort order: active first, resolved last */
+const STATUS_ORDER: Record<string, number> = {
+	OPEN: 0,
+	IN_PROGRESS: 0,
+	RESOLVED: 1,
+};
+
+function sortCases<T extends { status: string; urgency?: string | null; lastEmailDate?: string | null }>(
+	cases: T[],
+): T[] {
+	return [...cases].sort((a, b) => {
+		// Primary: active cases first, resolved last
+		const aStatus = STATUS_ORDER[a.status] ?? 0;
+		const bStatus = STATUS_ORDER[b.status] ?? 0;
+		if (aStatus !== bStatus) return aStatus - bStatus;
+
+		// Secondary: urgency tier
+		const aUrg = URGENCY_ORDER[a.urgency ?? "UPCOMING"] ?? 2;
+		const bUrg = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
+		if (aUrg !== bUrg) return aUrg - bUrg;
+
+		// Tertiary: most recent email first
+		const aDate = a.lastEmailDate ? new Date(a.lastEmailDate).getTime() : 0;
+		const bDate = b.lastEmailDate ? new Date(b.lastEmailDate).getTime() : 0;
+		return bDate - aDate;
+	});
+}
+
 export const GET = withAuth(async ({ userId, request }) => {
 	try {
 		const url = new URL(request.url);
@@ -28,10 +65,16 @@ export const GET = withAuth(async ({ userId, request }) => {
 		if (!schema) throw new NotFoundError("Schema not found");
 
 		// Build where clause
-		const where: Record<string, unknown> = { schemaId };
-		if (status) where.status = status;
+		const where: Record<string, unknown> = {
+			schemaId,
+			urgency: { not: "IRRELEVANT" },
+		};
+		if (status) {
+			where.status = status.length === 1 ? status[0] : { in: status };
+		}
 		if (entityId) where.entityId = entityId;
 
+		// Fetch more than needed to allow application-level sorting with cursor pagination
 		const cases = await prisma.case.findMany({
 			where,
 			orderBy: { lastEmailDate: "desc" },
@@ -109,7 +152,10 @@ export const GET = withAuth(async ({ userId, request }) => {
 			})),
 		}));
 
-		return NextResponse.json({ data: { cases: formatted, nextCursor } });
+		// Sort: active first, then by urgency tier, then by date
+		const sorted = sortCases(formatted);
+
+		return NextResponse.json({ data: { cases: sorted, nextCursor } });
 	} catch (error) {
 		return handleApiError(error, {
 			service: "cases",

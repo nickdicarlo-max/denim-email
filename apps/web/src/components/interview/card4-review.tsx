@@ -407,9 +407,12 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
 
   const { clusteringConfig } = hypothesis;
 
-  // Compute unassigned discovered entities
-  const unassignedDiscovered = validation.discoveredEntities.filter(
-    (e) => !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
+  // Compute unassigned discovered entities — split PRIMARY (auto-group) vs SECONDARY (ungrouped)
+  const unassignedDiscoveredPrimaries = validation.discoveredEntities.filter(
+    (e) => e.type === "PRIMARY" && !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
+  );
+  const unassignedDiscoveredSecondaries = validation.discoveredEntities.filter(
+    (e) => e.type !== "PRIMARY" && !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
   );
 
   const hasGroups = groups && groups.length > 0;
@@ -633,15 +636,39 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                 })
               )}
 
-              {/* Discovered entities from validation — only show unassigned */}
-              {unassignedDiscovered.length > 0 && (
+              {/* Discovered PRIMARY entities — shown as auto-group cards (will become their own groups) */}
+              {unassignedDiscoveredPrimaries.map((entity) => (
+                <div
+                  key={entity.name}
+                  className="p-3 rounded-lg border-2 border-dashed border-accent/40 bg-surface-alt/30"
+                >
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-accent">
+                      Discovered
+                    </div>
+                    {entity.emailCount != null && entity.emailCount > 0 && (
+                      <span className="text-[10px] text-muted">
+                        {entity.emailCount} email{entity.emailCount !== 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <DraggableEntityChip
+                    entity={entity}
+                    isRemoved={false}
+                    onRemove={() => handleRemoveEntity(entity.name)}
+                  />
+                </div>
+              ))}
+
+              {/* Discovered SECONDARY entities — ungrouped, draggable into groups */}
+              {unassignedDiscoveredSecondaries.length > 0 && (
                 <div className="mt-2">
                   <p className="text-xs text-muted mb-1.5 font-medium">
                     {hasGroups
                       ? "Drag into a group above, or remove what you don\u2019t need"
                       : "Discovered"}
                   </p>
-                  {unassignedDiscovered.map((entity) => (
+                  {unassignedDiscoveredSecondaries.map((entity) => (
                     <DraggableEntityChip
                       key={entity.name}
                       entity={entity}

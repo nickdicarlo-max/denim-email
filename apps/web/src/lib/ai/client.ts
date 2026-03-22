@@ -68,7 +68,13 @@ async function callAI(
       }
 
       // Gemini
-      const geminiModel = genAI.getGenerativeModel({ model: options.model });
+      const geminiModel = genAI.getGenerativeModel({
+        model: options.model,
+        generationConfig: {
+          // @ts-expect-error thinkingConfig not in SDK types yet, but API accepts it
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
       const response = await geminiModel.generateContent({
         systemInstruction: options.system,
         contents: [{ role: "user", parts: [{ text: options.user }] }],

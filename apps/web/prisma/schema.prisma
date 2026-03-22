@@ -555,6 +555,7 @@ model Case {
 
   @@index([schemaId, entityId])
   @@index([schemaId, status])
+  @@index([schemaId, status, urgency])
   @@index([schemaId, viewedAt])
   @@map("cases")
 }

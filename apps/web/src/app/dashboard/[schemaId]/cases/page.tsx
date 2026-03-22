@@ -99,7 +99,7 @@ export default async function CaseFeedPage({
 	const trimmed = hasMore ? cases.slice(0, 20) : cases;
 	const nextCursor = hasMore ? trimmed[trimmed.length - 1].id : null;
 
-	// Sort by urgency tier: IMMINENT > THIS_WEEK > UPCOMING > NO_ACTION
+	// Sort: active first, then by urgency tier, then by date
 	const URGENCY_ORDER: Record<string, number> = {
 		IMMINENT: 0,
 		THIS_WEEK: 1,
@@ -107,11 +107,21 @@ export default async function CaseFeedPage({
 		NO_ACTION: 3,
 		IRRELEVANT: 4,
 	};
+	const STATUS_ORDER: Record<string, number> = {
+		OPEN: 0,
+		IN_PROGRESS: 0,
+		RESOLVED: 1,
+	};
 	const items = [...trimmed].sort((a, b) => {
+		// Primary: active cases first, resolved last
+		const aStatus = STATUS_ORDER[a.status] ?? 0;
+		const bStatus = STATUS_ORDER[b.status] ?? 0;
+		if (aStatus !== bStatus) return aStatus - bStatus;
+		// Secondary: urgency tier
 		const aOrder = URGENCY_ORDER[a.urgency ?? "UPCOMING"] ?? 2;
 		const bOrder = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
 		if (aOrder !== bOrder) return aOrder - bOrder;
-		// Within same urgency, sort by lastEmailDate desc
+		// Tertiary: most recent email first
 		const aDate = a.lastEmailDate?.getTime() ?? 0;
 		const bDate = b.lastEmailDate?.getTime() ?? 0;
 		return bDate - aDate;

@@ -35,7 +35,8 @@ export function CaseFeed({
 			setLoading(true);
 			try {
 				const params = new URLSearchParams({ schemaId, limit: "20" });
-				if (statusFilter !== "ALL") params.set("status", statusFilter);
+				if (statusFilter === "OPEN") params.set("status", "OPEN,IN_PROGRESS");
+			else if (statusFilter !== "ALL") params.set("status", statusFilter);
 				if (entityFilter) params.set("entityId", entityFilter);
 				if (cursor) params.set("cursor", cursor);
 
@@ -76,7 +77,8 @@ export function CaseFeed({
 		// Trigger fetch after state update
 		setTimeout(() => {
 			const params = new URLSearchParams({ schemaId, limit: "20" });
-			if (status !== "ALL") params.set("status", status);
+			if (status === "OPEN") params.set("status", "OPEN,IN_PROGRESS");
+			else if (status !== "ALL") params.set("status", status);
 			if (entityFilter) params.set("entityId", entityFilter);
 
 			setLoading(true);
@@ -105,7 +107,8 @@ export function CaseFeed({
 		setCases([]);
 		setTimeout(() => {
 			const params = new URLSearchParams({ schemaId, limit: "20" });
-			if (statusFilter !== "ALL") params.set("status", statusFilter);
+			if (statusFilter === "OPEN") params.set("status", "OPEN,IN_PROGRESS");
+			else if (statusFilter !== "ALL") params.set("status", statusFilter);
 			if (entityId) params.set("entityId", entityId);
 
 			setLoading(true);
