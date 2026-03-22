@@ -28,6 +28,7 @@ interface InterviewInput {
   whats: string[];
   whos: string[];
   groups: EntityGroupInput[];
+  sharedWhos?: string[];
   goals: string[];
 }
 
@@ -266,6 +267,7 @@ export function useInterviewFlow() {
             confirmations: {
               ...confirmations,
               groups: (confirmations as Record<string, unknown>).groups ?? state.input?.groups,
+              sharedWhos: state.input?.sharedWhos,
             },
           }),
           signal: controller.signal,

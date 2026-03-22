@@ -238,53 +238,33 @@ export async function extractEmail(
     return { emailId: email.id, excluded: true, failed: false };
   }
 
-  // 4. Resolve sender to entity
-  const entityMatch = resolveEntity(
-    gmailMessage.senderDisplayName,
-    gmailMessage.senderEmail,
-    entities,
-  );
+  // 4. Content-first entity routing
+  // Order: relevanceEntity → content match → detectedEntities → sender (last resort)
+  // WHOs are discovery channels, not routing destinations. The WHAT in the email
+  // content determines routing. Sender-based routing is only used when no WHAT is
+  // found in content, and only when the sender has exactly 1 associated primary.
 
-  // Find entity IDs if matched
   let senderEntityId: string | null = null;
   let entityId: string | null = null;
   let routeMethod: string | null = null;
   let routeDetail: string | null = null;
 
+  // Resolve sender entity for senderEntityId (always, regardless of routing)
+  const entityMatch = resolveEntity(
+    gmailMessage.senderDisplayName,
+    gmailMessage.senderEmail,
+    entities,
+  );
   if (entityMatch) {
-    const entity = await prisma.entity.findFirst({
-      where: {
-        schemaId,
-        name: entityMatch.entityName,
-        type: entityMatch.entityType,
-        isActive: true,
-      },
-      select: { id: true, type: true, associatedPrimaryIds: true },
+    const senderEntity = await prisma.entity.findFirst({
+      where: { schemaId, name: entityMatch.entityName, type: entityMatch.entityType, isActive: true },
+      select: { id: true },
     });
-    senderEntityId = entity?.id ?? null;
-
-    if (entity) {
-      if (entity.type === "PRIMARY") {
-        // Sender IS the primary entity
-        entityId = entity.id;
-        routeMethod = "sender";
-        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${entityMatch.entityName}"`;
-      } else {
-        // Sender is secondary — resolve to associated primary
-        const primaryIds = Array.isArray(entity.associatedPrimaryIds)
-          ? (entity.associatedPrimaryIds as string[])
-          : [];
-        if (primaryIds[0]) {
-          entityId = primaryIds[0];
-          routeMethod = "sender";
-          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" → primary`;
-        }
-      }
-    }
+    senderEntityId = senderEntity?.id ?? null;
   }
 
-  // Try Gemini's relevanceEntity for routing (group-aware assignment)
-  if (!entityId && parsed.relevanceEntity) {
+  // Stage 1: Gemini's relevanceEntity — AI reads the email and names the WHAT
+  if (parsed.relevanceEntity) {
     const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.80);
     if (relevanceMatch) {
       const matchedEntity = await prisma.entity.findFirst({
@@ -299,35 +279,61 @@ export async function extractEmail(
         const primaryIds = Array.isArray(matchedEntity.associatedPrimaryIds)
           ? (matchedEntity.associatedPrimaryIds as string[])
           : [];
-        if (primaryIds[0]) {
+        if (primaryIds.length === 1) {
           entityId = primaryIds[0];
           routeMethod = "relevance";
-          routeDetail = `Gemini relevanceEntity "${parsed.relevanceEntity}" matched SECONDARY "${relevanceMatch.entityName}" → primary`;
+          routeDetail = `Gemini relevanceEntity "${parsed.relevanceEntity}" matched SECONDARY "${relevanceMatch.entityName}" → single primary`;
         }
+        // If multiple associated primaries, don't pick one — fall through to content match
       }
     }
   }
 
-  // Fallback: try matching Gemini's detectedEntities against known schema entities.
-  // Check ALL detected entities — PRIMARY ones match directly, SECONDARY ones
-  // resolve through their associatedPrimaryIds.
+  // Stage 2: Content-based primary match — scan subject + summary for known PRIMARY names
+  if (!entityId) {
+    const contentText = `${gmailMessage.subject} ${parsed.summary}`.toLowerCase();
+    const primaryEntities = entities.filter((e) => e.type === "PRIMARY");
+    for (const primary of primaryEntities) {
+      const nameLC = primary.name.toLowerCase();
+      if (contentText.includes(nameLC)) {
+        const matchedEntity = await prisma.entity.findFirst({
+          where: { schemaId, name: primary.name, type: "PRIMARY", isActive: true },
+          select: { id: true },
+        });
+        if (matchedEntity) {
+          entityId = matchedEntity.id;
+          routeMethod = "content";
+          routeDetail = `subject/summary contains PRIMARY name "${primary.name}"`;
+          break;
+        }
+      }
+      // Also check aliases
+      for (const alias of primary.aliases) {
+        if (contentText.includes(alias.toLowerCase())) {
+          const matchedEntity = await prisma.entity.findFirst({
+            where: { schemaId, name: primary.name, type: "PRIMARY", isActive: true },
+            select: { id: true },
+          });
+          if (matchedEntity) {
+            entityId = matchedEntity.id;
+            routeMethod = "content";
+            routeDetail = `subject/summary contains alias "${alias}" of PRIMARY "${primary.name}"`;
+            break;
+          }
+        }
+      }
+      if (entityId) break;
+    }
+  }
+
+  // Stage 3: Gemini's detectedEntities — fallback to detected entity list
   if (!entityId && parsed.detectedEntities.length > 0) {
     for (const detected of parsed.detectedEntities) {
-      const detectedMatch = resolveEntity(
-        detected.name,
-        "",
-        entities,
-        0.80, // slightly lower threshold for AI-detected names
-      );
+      const detectedMatch = resolveEntity(detected.name, "", entities, 0.80);
       if (!detectedMatch) continue;
 
       const matchedEntity = await prisma.entity.findFirst({
-        where: {
-          schemaId,
-          name: detectedMatch.entityName,
-          type: detectedMatch.entityType,
-          isActive: true,
-        },
+        where: { schemaId, name: detectedMatch.entityName, type: detectedMatch.entityType, isActive: true },
         select: { id: true, type: true, associatedPrimaryIds: true },
       });
       if (!matchedEntity) continue;
@@ -338,15 +344,46 @@ export async function extractEmail(
         routeDetail = `detectedEntity "${detected.name}" matched PRIMARY "${detectedMatch.entityName}"`;
         break;
       }
-      // Secondary detected entity — resolve to associated primary
+      // Secondary detected — only resolve if exactly 1 associated primary
       const primaryIds = Array.isArray(matchedEntity.associatedPrimaryIds)
         ? (matchedEntity.associatedPrimaryIds as string[])
         : [];
-      if (primaryIds[0]) {
+      if (primaryIds.length === 1) {
         entityId = primaryIds[0];
         routeMethod = "detected";
-        routeDetail = `detectedEntity "${detected.name}" matched SECONDARY "${detectedMatch.entityName}" → primary`;
+        routeDetail = `detectedEntity "${detected.name}" matched SECONDARY "${detectedMatch.entityName}" → single primary`;
         break;
+      }
+    }
+  }
+
+  // Stage 4: Sender match (last resort) — only when no WHAT found in content
+  if (!entityId && entityMatch) {
+    const senderEntity = await prisma.entity.findFirst({
+      where: { schemaId, name: entityMatch.entityName, type: entityMatch.entityType, isActive: true },
+      select: { id: true, type: true, associatedPrimaryIds: true },
+    });
+
+    if (senderEntity) {
+      if (senderEntity.type === "PRIMARY") {
+        entityId = senderEntity.id;
+        routeMethod = "sender";
+        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${entityMatch.entityName}"`;
+      } else {
+        const primaryIds = Array.isArray(senderEntity.associatedPrimaryIds)
+          ? (senderEntity.associatedPrimaryIds as string[])
+          : [];
+        if (primaryIds.length === 1) {
+          // 1:1 pairing (e.g., Ziad→Soccer) — safe to use
+          entityId = primaryIds[0];
+          routeMethod = "sender";
+          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" → single primary`;
+        } else if (primaryIds.length > 1) {
+          // Multiple associated primaries — ambiguous, leave null
+          routeMethod = null;
+          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" but has ${primaryIds.length} associated primaries — ambiguous, skipping`;
+        }
+        // primaryIds.length === 0 → shared WHO, leave entityId null
       }
     }
   }

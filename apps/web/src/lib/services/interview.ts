@@ -145,6 +145,7 @@ interface FinalizeConfirmations {
   addedTags?: string[];
   schemaName?: string;
   groups?: EntityGroupInput[];
+  sharedWhos?: string[];
 }
 
 /**
@@ -230,6 +231,7 @@ export async function finalizeSchema(
         status: "ONBOARDING",
         interviewResponses: {
           groups: (confirmations.groups ?? []) as unknown as Prisma.InputJsonValue,
+          sharedWhos: (confirmations.sharedWhos ?? []) as unknown as Prisma.InputJsonValue,
         } as Prisma.InputJsonValue,
         rawHypothesis: hypothesis as unknown as Prisma.InputJsonValue,
         primaryEntityConfig: {
@@ -327,6 +329,28 @@ export async function finalizeSchema(
             });
           }
         }
+      }
+
+      // Process shared WHOs — SECONDARY entities with no group, empty associatedPrimaryIds.
+      // These are discovery senders: their "from:" queries find emails, but content determines routing.
+      const sharedWhos = confirmations.sharedWhos ?? [];
+      for (const whoName of sharedWhos) {
+        // Skip if already created as part of a group
+        if (entityByName.has(whoName)) continue;
+
+        await tx.entity.create({
+          data: {
+            schemaId: schema.id,
+            name: whoName,
+            type: "SECONDARY",
+            secondaryTypeName: null,
+            aliases: [],
+            confidence: 1.0,
+            autoDetected: false,
+            associatedPrimaryIds: [],
+            // No groupId — intentionally ungrouped
+          },
+        });
       }
     }
 

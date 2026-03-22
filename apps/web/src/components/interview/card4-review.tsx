@@ -335,9 +335,9 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
     });
   }, []);
 
-  const handleDragStart = useCallback((event: { active: { data: { current?: { entityName: string; entityType: "PRIMARY" | "SECONDARY" } } } }) => {
-    const data = event.active.data.current;
-    if (data) {
+  const handleDragStart = useCallback((event: DragEndEvent) => {
+    const data = event.active.data.current as { entityName?: string; entityType?: "PRIMARY" | "SECONDARY" } | undefined;
+    if (data?.entityName && data?.entityType) {
       setActiveDragEntity({ name: data.entityName, type: data.entityType });
     }
   }, []);

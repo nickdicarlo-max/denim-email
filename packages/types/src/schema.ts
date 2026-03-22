@@ -14,6 +14,7 @@ export interface InterviewInput {
   whats: string[];             // Flattened from groups (backward compat)
   whos: string[];              // Flattened from groups (backward compat)
   groups: EntityGroupInput[];  // The paired structure — source of truth
+  sharedWhos?: string[];       // Ungrouped WHOs — discovery senders, not routing targets
   goals: string[];
 }
 

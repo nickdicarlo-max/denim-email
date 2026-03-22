@@ -19,6 +19,7 @@ interface Card1Props {
     whats: string[];
     whos: string[];
     groups: EntityGroup[];
+    sharedWhos?: string[];
     goals: string[];
   }) => void;
 }
@@ -31,8 +32,12 @@ export function Card1Input({ onNext }: Card1Props) {
   const [currentWhos, setCurrentWhos] = useState<Record<number, string>>({});
   const [showWho, setShowWho] = useState<Record<number, boolean>>({});
   const [goals, setGoals] = useState<string[]>([]);
+  const [sharedWhos, setSharedWhos] = useState<string[]>([]);
+  const [currentSharedWho, setCurrentSharedWho] = useState("");
+  const [showSharedWhos, setShowSharedWhos] = useState(false);
   const whatRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const whoRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const sharedWhoRef = useRef<HTMLInputElement | null>(null);
 
   const selectedRole = role ? ROLE_OPTIONS.find((r) => r.id === role) : null;
   const domain = selectedRole?.domain as DomainId | undefined;
@@ -98,6 +103,17 @@ export function Card1Input({ onNext }: Card1Props) {
       prev.includes(goalId) ? prev.filter((g) => g !== goalId) : [...prev, goalId],
     );
 
+  const handleAddSharedWho = () => {
+    const trimmed = currentSharedWho.trim();
+    if (!trimmed || sharedWhos.includes(trimmed)) return;
+    setSharedWhos((prev) => [...prev, trimmed]);
+    setCurrentSharedWho("");
+    setTimeout(() => sharedWhoRef.current?.focus(), 50);
+  };
+
+  const handleRemoveSharedWho = (index: number) =>
+    setSharedWhos((prev) => prev.filter((_, i) => i !== index));
+
   const handleBack = () => {
     setStep(1);
     setRole(null);
@@ -105,6 +121,9 @@ export function Card1Input({ onNext }: Card1Props) {
     setCurrentWhats({});
     setCurrentWhos({});
     setShowWho({});
+    setSharedWhos([]);
+    setCurrentSharedWho("");
+    setShowSharedWhos(false);
     setGoals([]);
   };
 
@@ -115,7 +134,7 @@ export function Card1Input({ onNext }: Card1Props) {
     // Derive flat lists for backward compat
     const whats = validGroups.flatMap((g) => g.whats);
     const whos = validGroups.flatMap((g) => g.whos);
-    onNext({ role, domain, whats, whos, groups: validGroups, goals });
+    onNext({ role, domain, whats, whos, groups: validGroups, sharedWhos: sharedWhos.length > 0 ? sharedWhos : undefined, goals });
   };
 
   const totalWhats = groups.reduce((sum, g) => sum + g.whats.length, 0);
@@ -395,6 +414,99 @@ export function Card1Input({ onNext }: Card1Props) {
                     </svg>
                     Add another group
                   </button>
+                )}
+
+                {/* People who email you (ungrouped WHOs) */}
+                {totalWhats >= 1 && (
+                  <div className="mb-3">
+                    {!showSharedWhos ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowSharedWhos(true);
+                          setTimeout(() => sharedWhoRef.current?.focus(), 100);
+                        }}
+                        className="flex items-center gap-1.5 w-full p-2.5 rounded-md border-[1.5px] border-dashed border-warning bg-transparent cursor-pointer text-sm font-medium text-warning-text hover:bg-warning-soft transition"
+                      >
+                        <svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                        Add people who email you about this
+                      </button>
+                    ) : (
+                      <div className="p-3 rounded-lg border-[1.5px] border-warning bg-white animate-fadeIn">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-warning-text mb-1.5">
+                          People who email you
+                        </div>
+                        <p className="text-xs text-muted mb-2">
+                          Names of people who email you about this topic. We&apos;ll search their emails to discover more.
+                        </p>
+
+                        {/* Shared WHO pills */}
+                        {sharedWhos.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {sharedWhos.map((name, i) => (
+                              <span
+                                key={name}
+                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-warning-soft text-warning-text text-sm font-medium"
+                              >
+                                {name}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveSharedWho(i)}
+                                  className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
+                                  aria-label={`Remove ${name}`}
+                                >
+                                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+                                  </svg>
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Shared WHO input */}
+                        <div className="flex gap-2">
+                          <Input
+                            ref={sharedWhoRef}
+                            value={currentSharedWho}
+                            onChange={(e) => setCurrentSharedWho(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleAddSharedWho();
+                              }
+                            }}
+                            placeholder="e.g. Vivek Gupta"
+                            className="flex-1"
+                          />
+                          <Button
+                            variant="primary"
+                            fullWidth={false}
+                            onClick={handleAddSharedWho}
+                            disabled={!currentSharedWho.trim()}
+                            className="whitespace-nowrap px-4"
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 )}
 
                 {/* Reassurance + Goals (show after at least one what) */}

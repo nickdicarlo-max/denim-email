@@ -728,6 +728,7 @@ async function applyCaseSplitResult(
     reasoning: string;
   },
 ): Promise<ClusterResult> {
+  const startTime = Date.now();
   // Build email → entity mapping
   const emailEntityMap = new Map<string, string>();
   for (const [entityId, cluster] of entityClusters) {

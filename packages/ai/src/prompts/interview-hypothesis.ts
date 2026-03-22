@@ -525,9 +525,10 @@ CRITICAL RULES:
 4. Generate at least 5 domain-specific tags. NEVER use generic tags like "Communication", "General", or "Other".
 5. Generate Gmail discovery queries from the entity groups provided. For each group:
    a. One FULL-TEXT query per WHAT name (e.g., "soccer", "Lanier", "St Agnes") — searches subject + body + sender.
-   b. One "from:" query per WHO name (e.g., "from:ziad", "from:ms.garza") — WHOs are trusted senders; all their emails are relevant.
+   b. One "from:" query per WHO name in a group (e.g., "from:ziad", "from:ms.garza") — paired WHOs are group-specific senders.
    c. One compound WHAT+WHO query per group that has both (e.g., "soccer Ziad Allan") — high-precision paired match.
-   Tag each query with its groupIndex. Do NOT generate broad domain-level queries that are not tied to a specific user-input entity. Do NOT use "subject:" prefix.
+   d. For shared people (listed separately, not in any group): generate one "from:" query per person. Do NOT generate compound queries for them — they email about multiple topics.
+   Tag each query with its groupIndex (null for shared people queries). Do NOT generate broad domain-level queries that are not tied to a specific user-input entity. Do NOT use "subject:" prefix.
 6. Use the domain-specific clustering constants shown above.
 7. Adjust showOnCard based on user goals (deadlines emphasis -> deadline showOnCard, cost emphasis -> cost showOnCard, schedule emphasis -> eventDate showOnCard).
 8. Generate exclusion patterns for common noise senders in this domain.
@@ -550,8 +551,17 @@ Required JSON shape:
 
 function buildGroupsSection(input: InterviewInput): string {
   if (input.groups && input.groups.length > 0) {
-    return `Entity groups (paired WHATs and WHOs that belong together):
+    let section = `Entity groups (paired WHATs and WHOs that belong together):
 ${input.groups.map((g, i) => `  Group ${i}: WHAT=${JSON.stringify(g.whats)}, WHO=${JSON.stringify(g.whos)}`).join("\n")}`;
+
+    // Shared WHOs: people who email about the domain but aren't paired to a specific group.
+    // Generate from: queries for them but do NOT generate compound WHAT+WHO queries.
+    if (input.sharedWhos && input.sharedWhos.length > 0) {
+      section += `\n\nShared people (email about multiple/all groups — use "from:" queries only, no compound queries):
+${input.sharedWhos.map((w) => `  - "${w}"`).join("\n")}`;
+    }
+
+    return section;
   }
   // Backward compat: flat whats/whos → single group
   return `Things they track (PRIMARY entities — each becomes a case boundary):
