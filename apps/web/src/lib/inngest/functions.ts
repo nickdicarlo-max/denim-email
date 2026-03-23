@@ -15,12 +15,12 @@ const BATCH_SIZE = 20;
 export const fanOutExtraction = inngest.createFunction(
   {
     id: "fan-out-extraction",
+    triggers: [{ event: "scan.emails.discovered" }],
     concurrency: {
       limit: 1,
       key: "event.data.schemaId",
     },
   },
-  { event: "scan.emails.discovered" },
   async ({ event, step }) => {
     const { schemaId, userId, scanJobId, emailIds } = event.data;
 
@@ -76,13 +76,13 @@ export const fanOutExtraction = inngest.createFunction(
 export const extractBatch = inngest.createFunction(
   {
     id: "extract-batch",
+    triggers: [{ event: "extraction.batch.process" }],
     concurrency: {
       limit: 3,
       key: "event.data.schemaId",
     },
     retries: 3,
   },
-  { event: "extraction.batch.process" },
   async ({ event, step }) => {
     const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } =
       event.data;
@@ -187,12 +187,12 @@ export const extractBatch = inngest.createFunction(
 export const checkExtractionComplete = inngest.createFunction(
   {
     id: "check-extraction-complete",
+    triggers: [{ event: "extraction.batch.completed" }],
     concurrency: {
       limit: 1,
       key: "event.data.schemaId",
     },
   },
-  { event: "extraction.batch.completed" },
   async ({ event, step }) => {
     const { schemaId, scanJobId, totalBatches } = event.data;
 
@@ -265,13 +265,13 @@ export const checkExtractionComplete = inngest.createFunction(
 export const runCoarseClustering = inngest.createFunction(
   {
     id: "run-coarse-clustering",
+    triggers: [{ event: "extraction.all.completed" }],
     concurrency: {
       limit: 1,
       key: "event.data.schemaId",
     },
     retries: 2,
   },
-  { event: "extraction.all.completed" },
   async ({ event, step }) => {
     const { schemaId, scanJobId } = event.data;
 
@@ -333,13 +333,13 @@ export const runCoarseClustering = inngest.createFunction(
 export const runCaseSplitting = inngest.createFunction(
   {
     id: "run-case-splitting",
+    triggers: [{ event: "coarse.clustering.completed" }],
     concurrency: {
       limit: 1,
       key: "event.data.schemaId",
     },
     retries: 2,
   },
-  { event: "coarse.clustering.completed" },
   async ({ event, step }) => {
     const { schemaId, scanJobId, coarseClusterIds } = event.data;
 
@@ -401,13 +401,13 @@ export const runCaseSplitting = inngest.createFunction(
 export const runClusteringCalibration = inngest.createFunction(
   {
     id: "run-clustering-calibration",
+    triggers: [{ event: "synthesis.case.completed" }],
     concurrency: {
       limit: 1,
       key: "event.data.schemaId",
     },
     retries: 1,
   },
-  { event: "synthesis.case.completed" },
   async ({ event, step }) => {
     const { schemaId } = event.data;
 
@@ -449,13 +449,13 @@ export const runClusteringCalibration = inngest.createFunction(
 export const resynthesizeOnFeedback = inngest.createFunction(
   {
     id: "resynthesize-on-feedback",
+    triggers: [{ event: "feedback.case.modified" }],
     concurrency: {
       limit: 2,
       key: "event.data.schemaId",
     },
     retries: 2,
   },
-  { event: "feedback.case.modified" },
   async ({ event, step }) => {
     const { schemaId, caseId } = event.data;
 
@@ -483,9 +483,9 @@ export const resynthesizeOnFeedback = inngest.createFunction(
 export const dailyQualitySnapshot = inngest.createFunction(
   {
     id: "daily-quality-snapshot",
+    triggers: [{ cron: "0 0 * * *" }], // midnight daily
     retries: 1,
   },
-  { cron: "0 0 * * *" }, // midnight daily
   async ({ step }) => {
     const schemas = await step.run("load-schemas", async () => {
       return prisma.caseSchema.findMany({
@@ -511,13 +511,13 @@ export const dailyQualitySnapshot = inngest.createFunction(
 export const runSynthesis = inngest.createFunction(
   {
     id: "run-synthesis",
+    triggers: [{ event: "clustering.completed" }],
     concurrency: {
       limit: 2,
       key: "event.data.schemaId",
     },
     retries: 2,
   },
-  { event: "clustering.completed" },
   async ({ event, step }) => {
     const { schemaId, clusterIds } = event.data;
 
@@ -639,4 +639,4 @@ export const runSynthesis = inngest.createFunction(
   },
 );
 
-export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration];
+export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration, resynthesizeOnFeedback, dailyQualitySnapshot];
