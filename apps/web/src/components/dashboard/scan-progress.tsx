@@ -137,7 +137,7 @@ export function ScanProgress({
 
       {/* Progress bar */}
       {isActive && (
-        <div className="bg-white rounded-lg shadow-sm px-4 py-3 space-y-2">
+        <div className="bg-white rounded-lg shadow-xs px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-primary">
               {PHASE_LABELS[phase] ?? phase}
@@ -222,7 +222,7 @@ function StatCard({
   highlight?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-lg shadow-sm px-4 py-3 text-center">
+    <div className="bg-white rounded-lg shadow-xs px-4 py-3 text-center">
       <div
         className={`text-2xl font-bold ${highlight ? "text-green-600" : "text-primary"}`}
       >

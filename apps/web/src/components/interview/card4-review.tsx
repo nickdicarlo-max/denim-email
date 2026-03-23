@@ -733,7 +733,7 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                       }
                     }}
                     placeholder="Entity name"
-                    className="flex-1 text-sm px-2 py-1 border-none outline-none bg-transparent text-primary placeholder:text-muted"
+                    className="flex-1 text-sm px-2 py-1 border-none outline-hidden bg-transparent text-primary placeholder:text-muted"
                   />
                   <button
                     type="button"
@@ -838,7 +838,7 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                     }
                   }}
                   placeholder="Tag name"
-                  className="w-28 text-xs px-2.5 py-1.5 rounded-full border border-accent outline-none text-primary"
+                  className="w-28 text-xs px-2.5 py-1.5 rounded-full border border-accent outline-hidden text-primary"
                 />
                 <button
                   type="button"
