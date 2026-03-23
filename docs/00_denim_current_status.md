@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-22 (auto-promote discovered entities, Gemini thinking fix, case feed UX fixes)
+Last updated: 2026-03-23 (major dependency migration in progress on branch upgrade/major-deps-2026)
 
 ## Completed
 
@@ -639,6 +639,22 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
+
+## In Progress: Major Dependency Migration (2026-03-23)
+
+**Branch:** `upgrade/major-deps-2026` — feature work paused during migration.
+**Plan:** `docs/major-deps-migration-plan.md`
+
+Phases 1–4 complete (Vitest 4, Biome 2, Prisma 7, Zod 4). Remaining:
+- **Phase 5:** React 18→19 + Next.js 14→16 (biggest — async params/cookies, middleware→proxy.ts)
+- **Phase 6:** Tailwind 3→4 (CSS-first config, design tokens migration)
+- **Phase 7:** Inngest 3→4 (pipeline function registration changes)
+
+Key changes already landed:
+- Prisma 7 requires `prisma.config.ts` + `@prisma/adapter-pg` driver adapter
+- Prisma client generated to `prisma/generated/prisma/client/` (tsconfig path alias)
+- Zod 4 requires `z.record(keyType, valueType)` (no single-arg)
+- Type errors reduced from 174 → 8 (all pre-existing)
 
 ## Next Steps
 
