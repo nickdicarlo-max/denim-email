@@ -5,15 +5,16 @@ import { getCurrentAccuracy } from "@/lib/services/quality";
 import { NotFoundError } from "@denim/types";
 import { NextResponse } from "next/server";
 
-export const GET = withAuth(async ({ userId }, { params }: { params: { schemaId: string } }) => {
+export const GET = withAuth(async ({ userId, request }) => {
 	try {
+		const schemaId = new URL(request.url).pathname.split("/").pop()!;
 		const schema = await prisma.caseSchema.findFirst({
-			where: { id: params.schemaId, userId },
+			where: { id: schemaId, userId },
 			select: { id: true },
 		});
 		if (!schema) throw new NotFoundError("Schema not found");
 
-		const result = await getCurrentAccuracy(params.schemaId);
+		const result = await getCurrentAccuracy(schemaId);
 		return NextResponse.json({ data: result });
 	} catch (error) {
 		return handleApiError(error, {

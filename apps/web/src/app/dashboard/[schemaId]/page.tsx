@@ -35,9 +35,10 @@ function formatDate(date: Date): string {
 export default async function SchemaDetailPage({
   params,
 }: {
-  params: { schemaId: string };
+  params: Promise<{ schemaId: string }>;
 }) {
-  const supabase = createServerSupabaseClient();
+  const { schemaId } = await params;
+  const supabase = await createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -47,7 +48,7 @@ export default async function SchemaDetailPage({
   }
 
   const schema = await prisma.caseSchema.findUnique({
-    where: { id: params.schemaId },
+    where: { id: schemaId },
     include: {
       tags: { where: { isActive: true }, orderBy: { emailCount: "desc" } },
       entities: { where: { isActive: true }, orderBy: { type: "asc" } },
@@ -190,7 +191,7 @@ export default async function SchemaDetailPage({
               {schema.extractedFields.map((field) => (
                 <div
                   key={field.id}
-                  className="flex items-center justify-between bg-white rounded-lg px-3 py-2 shadow-sm"
+                  className="flex items-center justify-between bg-white rounded-lg px-3 py-2 shadow-xs"
                 >
                   <div>
                     <span className="text-sm font-medium text-primary">{field.name}</span>
@@ -236,7 +237,7 @@ export default async function SchemaDetailPage({
               {schema.scanJobs.map((job) => (
                 <div
                   key={job.id}
-                  className="bg-white rounded-lg shadow-sm px-4 py-3 flex items-center gap-4"
+                  className="bg-white rounded-lg shadow-xs px-4 py-3 flex items-center gap-4"
                 >
                   <ScanStatusBadge status={job.status} />
                   <div className="flex-1 min-w-0">
