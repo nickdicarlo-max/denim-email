@@ -645,16 +645,20 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 **Branch:** `upgrade/major-deps-2026` — feature work paused during migration.
 **Plan:** `docs/major-deps-migration-plan.md`
 
-Phases 1–4 complete (Vitest 4, Biome 2, Prisma 7, Zod 4). Remaining:
-- **Phase 5:** React 18→19 + Next.js 14→16 (biggest — async params/cookies, middleware→proxy.ts)
-- **Phase 6:** Tailwind 3→4 (CSS-first config, design tokens migration)
-- **Phase 7:** Inngest 3→4 (pipeline function registration changes)
+**All 7 phases complete** (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19 + Next.js 16, Tailwind 4, Inngest 4). Ready for merge to main.
 
 Key changes already landed:
 - Prisma 7 requires `prisma.config.ts` + `@prisma/adapter-pg` driver adapter
 - Prisma client generated to `prisma/generated/prisma/client/` (tsconfig path alias)
 - Zod 4 requires `z.record(keyType, valueType)` (no single-arg)
-- Type errors reduced from 174 → 8 (all pre-existing)
+- React 19.2.4 + Next.js 16.2.1: async `cookies()`, async `params` in Server Components
+- `next.config.js` → `next.config.ts` (typed config)
+- Fixed 3 broken API routes (`actions/[id]`, `quality/[schemaId]`, `quality/[schemaId]/history`) — `withAuth` never forwarded params; converted to URL extraction
+- Tailwind 4.2.2: `@tailwindcss/postcss` plugin, `@import "tailwindcss"` + `@config`, class renames (shadow-sm→shadow-xs, outline-none→outline-hidden)
+- Inngest 4.0.4: `createFunction` 3-arg→2-arg (triggers merged into config), removed EventSchemas
+- Fixed: 2 missing Inngest function exports (resynthesizeOnFeedback, dailyQualitySnapshot)
+- Fixed: Biome 2 config keys (organizeImports→assist, files.ignore→files.includes)
+- Type errors reduced from 174 → 0
 
 ## Next Steps
 

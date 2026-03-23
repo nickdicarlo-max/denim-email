@@ -20,7 +20,7 @@ To run SQL or push schema changes, use the DATABASE_URL/DIRECT_URL from `apps/we
 
 ## Stack
 
-- **Framework:** Next.js 14 (App Router), TypeScript (strict mode)
+- **Framework:** Next.js 16 (App Router), React 19, TypeScript (strict mode)
 - **Database:** Supabase PostgreSQL via Prisma ORM
 - **Auth:** Supabase Auth with Google OAuth (gmail.readonly scope)
 - **Background Jobs:** Inngest
@@ -791,8 +791,8 @@ pnpm -r build                         # Build all packages
 pnpm -r test                          # Unit tests (all packages)
 pnpm --filter web test:integration    # Integration tests (needs test DB)
 pnpm --filter web test:e2e            # Playwright e2e (needs running server)
-pnpm biome check .                    # Lint and format check
-pnpm biome check . --apply            # Auto-fix lint/format
+pnpm biome check                       # Lint and format check
+pnpm biome check --apply               # Auto-fix lint/format
 pnpm -r tsc --noEmit                  # Type check everything
 npx inngest-cli@latest dev            # Inngest dev server
 ```
