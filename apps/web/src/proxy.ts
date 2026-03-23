@@ -20,7 +20,7 @@ function getAllowedOrigins(): string[] {
   return [];
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // --- Supabase session refresh ---
   // This ensures auth cookies stay fresh on every request.
   // Without this, Server Components can't read expired sessions.
