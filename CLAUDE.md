@@ -793,6 +793,6 @@ pnpm --filter web test:integration    # Integration tests (needs test DB)
 pnpm --filter web test:e2e            # Playwright e2e (needs running server)
 pnpm biome check                       # Lint and format check
 pnpm biome check --apply               # Auto-fix lint/format
-pnpm -r tsc --noEmit                  # Type check everything
+pnpm typecheck                         # Type check everything
 npx inngest-cli@latest dev            # Inngest dev server
 ```

@@ -11,8 +11,10 @@ export default defineConfig({
     pool: "forks",
   },
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: [
+      { find: "@", replacement: path.resolve(__dirname, "./src") },
+      // Exact match only — don't intercept @prisma/client/runtime/* sub-paths
+      { find: /^@prisma\/client$/, replacement: path.resolve(__dirname, "./prisma/generated/prisma/client/client.ts") },
+    ],
   },
 });

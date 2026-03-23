@@ -3,6 +3,8 @@
  * Attaches Bearer token and provides convenience methods.
  */
 
+// Default to port 3000 (Next.js default). Set TEST_BASE_URL in .env.local
+// if your dev server runs on a different port (e.g., 3001 when Inngest takes 3000).
 const BASE_URL = process.env.TEST_BASE_URL ?? "http://localhost:3000";
 
 export function createApiClient(accessToken: string) {

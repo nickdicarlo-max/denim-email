@@ -297,11 +297,12 @@ describe("Entity Groups: HTTP Finalize Route (requires running dev server)", () 
     expect(schemaId).toBeTruthy();
     createdSchemaIds.push(schemaId);
 
-    // No EntityGroup rows
+    // Auto-promote creates EntityGroup rows for ungrouped PRIMARY entities
+    // (Soccer, Lanier, St Agnes, Dance = 4 groups)
     const groups = await prisma.entityGroup.findMany({ where: { schemaId } });
-    expect(groups).toHaveLength(0);
+    expect(groups.length).toBeGreaterThanOrEqual(1);
 
-    // Ziad should be blanket-associated with all primaries
+    // Ziad should be blanket-associated with all primaries (SECONDARY, no group)
     const ziad = await prisma.entity.findFirst({
       where: { schemaId, name: "Ziad Allan" },
       select: { associatedPrimaryIds: true, groupId: true },
@@ -518,13 +519,13 @@ describe("Entity Groups: Direct Service Tests", () => {
     );
     serviceSchemaIds.push(schemaId);
 
-    // No EntityGroup rows should be created
+    // Auto-promote creates EntityGroup rows for ungrouped PRIMARY entities
     const groups = await prisma.entityGroup.findMany({
       where: { schemaId },
     });
-    expect(groups).toHaveLength(0);
+    expect(groups.length).toBeGreaterThanOrEqual(1);
 
-    // Ziad Allan should be associated with ALL primaries (blanket)
+    // Ziad Allan should be associated with ALL primaries (blanket, SECONDARY, no group)
     const ziad = await prisma.entity.findFirst({
       where: { schemaId, name: "Ziad Allan", type: "SECONDARY" },
       select: { associatedPrimaryIds: true, groupId: true },
