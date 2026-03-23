@@ -65,7 +65,10 @@
       "Bash(echo \"EXIT: $?\")",
       "Bash(echo \"EXIT=$?\")",
       "Bash(mkdir -p \"C:\\\\Users\\\\alkam\\\\Documents\\\\NDSoftware\\\\denim-email\\\\apps\\\\web\\\\src\\\\app\\\\api\\\\quality\\\\[schemaId]\")",
-      "Bash(mkdir -p \"C:\\\\Users\\\\alkam\\\\Documents\\\\NDSoftware\\\\denim-email\\\\apps\\\\web\\\\src\\\\app\\\\api\\\\quality\\\\[schemaId]\\\\history\")"
+      "Bash(mkdir -p \"C:\\\\Users\\\\alkam\\\\Documents\\\\NDSoftware\\\\denim-email\\\\apps\\\\web\\\\src\\\\app\\\\api\\\\quality\\\\[schemaId]\\\\history\")",
+      "Bash(git checkout:*)",
+      "Bash(xargs wc:*)",
+      "Bash(git push:*)"
     ]
   }
 }
