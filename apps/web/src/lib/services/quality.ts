@@ -84,8 +84,8 @@ export async function computeSnapshot(
     where: { id: schemaId },
     select: { qualityPhase: true },
   });
-  const currentPhase = schema?.qualityPhase ?? "CALIBRATING";
-  let newPhase = currentPhase;
+  const currentPhase = (schema?.qualityPhase ?? "CALIBRATING") as "CALIBRATING" | "TRACKING" | "STABLE";
+  let newPhase: "CALIBRATING" | "TRACKING" | "STABLE" = currentPhase;
 
   if (currentPhase === "CALIBRATING" && totalSignals >= CALIBRATION_THRESHOLD) {
     newPhase = "TRACKING";

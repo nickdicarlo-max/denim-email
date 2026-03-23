@@ -31,6 +31,7 @@ out/
 # === PRISMA ===
 # Generated client (regenerated on build)
 node_modules/.prisma/
+apps/web/prisma/generated/
 # Local SQLite (if used for local dev)
 prisma/*.db
 prisma/*.db-journal

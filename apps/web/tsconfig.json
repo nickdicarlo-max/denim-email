@@ -15,7 +15,8 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@prisma/client": ["./prisma/generated/prisma/client/client.ts"]
     },
     "forceConsistentCasingInFileNames": true
   },

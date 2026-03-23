@@ -25,13 +25,12 @@
 // =============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "./generated/prisma/client"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")   // Supabase requires direct connection for migrations
+  provider = "postgresql"
 }
 
 // =============================================================================
