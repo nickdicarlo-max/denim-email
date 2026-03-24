@@ -68,7 +68,13 @@
       "Bash(mkdir -p \"C:\\\\Users\\\\alkam\\\\Documents\\\\NDSoftware\\\\denim-email\\\\apps\\\\web\\\\src\\\\app\\\\api\\\\quality\\\\[schemaId]\\\\history\")",
       "Bash(git checkout:*)",
       "Bash(xargs wc:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(PGPASSWORD=\"j4vcoiu2yfjhbdfv78ywekhjbadvhjae\" psql \"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" -c \"\n-- 1. Schema overview\nSELECT id, name, domain, status, \\\\\"emailCount\\\\\", \\\\\"caseCount\\\\\", \\\\\"qualityPhase\\\\\", \\\\\"createdAt\\\\\" \nFROM \\\\\"CaseSchema\\\\\" WHERE id IN \\('cmn1x29e60001qey4d236irrn', 'cmn3zdt9800005oqemgi2otv5'\\);\n\" 2>&1)",
+      "Bash(where node:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:6543/postgres?pgbouncer=true\" DIRECT_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" npx prisma db execute --stdin --url \"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" <<'SQL':*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:6543/postgres?pgbouncer=true\" DIRECT_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" npx prisma db execute --stdin <<'SQL':*)",
+      "Bash(npx tsx:*)",
+      "Bash(1:*)"
     ]
   }
 }

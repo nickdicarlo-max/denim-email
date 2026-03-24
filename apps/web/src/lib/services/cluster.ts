@@ -514,6 +514,81 @@ export async function splitCoarseClusters(
 }
 
 /**
+ * Assign all emails not referenced in Claude's split result to cases using
+ * discriminator word matching. Claude only sees a sample of emails; this
+ * ensures every email in the cluster gets assigned to a case.
+ */
+function assignRemainingEmails(
+  splitResult: {
+    cases: Array<{ caseTitle: string; discriminators: string[]; emailIds: string[]; reasoning: string }>;
+    catchAllEmailIds: string[];
+    reasoning: string;
+  },
+  entityClusters: Map<string, {
+    entityId: string;
+    entityName: string;
+    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+    caseIds: string[];
+  }>,
+): typeof splitResult {
+  // Collect all email IDs Claude already assigned
+  const assignedIds = new Set<string>();
+  for (const c of splitResult.cases) {
+    for (const id of c.emailIds) assignedIds.add(id);
+  }
+  for (const id of splitResult.catchAllEmailIds) assignedIds.add(id);
+
+  // Collect all emails from all clusters
+  const allEmails: Array<{ id: string; subject: string; summary: string }> = [];
+  for (const cluster of entityClusters.values()) {
+    for (const email of cluster.emails) {
+      if (!assignedIds.has(email.id)) {
+        allEmails.push(email);
+      }
+    }
+  }
+
+  if (allEmails.length === 0) return splitResult;
+
+  // For each unassigned email, find the best-matching case by discriminator words
+  const updatedCases = splitResult.cases.map((c) => ({
+    ...c,
+    emailIds: [...c.emailIds],
+  }));
+  const updatedCatchAll = [...splitResult.catchAllEmailIds];
+
+  for (const email of allEmails) {
+    const text = `${email.subject} ${email.summary}`.toLowerCase();
+    let bestCaseIdx = -1;
+    let bestScore = 0;
+
+    for (let i = 0; i < updatedCases.length; i++) {
+      const caseDef = updatedCases[i];
+      let matchCount = 0;
+      for (const word of caseDef.discriminators) {
+        if (text.includes(word.toLowerCase())) matchCount++;
+      }
+      if (matchCount > bestScore) {
+        bestScore = matchCount;
+        bestCaseIdx = i;
+      }
+    }
+
+    if (bestCaseIdx >= 0) {
+      updatedCases[bestCaseIdx].emailIds.push(email.id);
+    } else {
+      updatedCatchAll.push(email.id);
+    }
+  }
+
+  return {
+    cases: updatedCases,
+    catchAllEmailIds: updatedCatchAll,
+    reasoning: splitResult.reasoning,
+  };
+}
+
+/**
  * AI-powered case splitting using Claude.
  */
 async function aiCaseSplit(
@@ -558,7 +633,7 @@ async function aiCaseSplit(
         frequency: w.frequency,
         weightedScore: w.weightedScore,
       })),
-      emailSamples: (cluster?.emails ?? []).slice(0, 10).map((e) => ({
+      emailSamples: (cluster?.emails ?? []).slice(0, 30).map((e) => ({
         id: e.id,
         subject: e.subject,
         summary: e.summary,
@@ -615,8 +690,12 @@ async function aiCaseSplit(
       },
     });
 
-    // Apply the AI's case definitions
-    return await applyCaseSplitResult(schemaId, scanJobId, entityClusters, parsed);
+    // Assign ALL remaining emails to cases using discriminator word matching.
+    // Claude only saw a sample — the rest must be deterministically assigned.
+    const enriched = assignRemainingEmails(parsed, entityClusters);
+
+    // Apply the AI's case definitions (now covering all emails)
+    return await applyCaseSplitResult(schemaId, scanJobId, entityClusters, enriched);
   } catch (error) {
     logger.error({
       service: "cluster",

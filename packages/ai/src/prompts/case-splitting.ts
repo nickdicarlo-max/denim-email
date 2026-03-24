@@ -77,7 +77,12 @@ RULES:
 3. Case titles should be user-friendly, under 50 characters.
 4. Each case must have at least one discriminator word from the frequency table.
 5. Emails that don't clearly match any discriminator set go in catchAllEmailIds.
-6. Don't over-split: if a cluster has no clear sub-topics, return it as a single case.
+6. DO NOT OVER-SPLIT. This is the most important rule. Aim for the FEWEST cases where
+   each case has a distinct answer to "what's next?". Typical: 2-5 cases per entity.
+   - Recurring events of the same type (weekly practices, monthly games) = ONE case.
+   - Do NOT create separate cases per individual date, reminder, or update for the
+     same recurring activity.
+   - "Soccer Practice – Mar 5" and "Soccer Practice – Mar 12" belong in the SAME case.
 7. Provide reasoning for each case explaining why those discriminators were chosen.
 
 Required JSON shape:
