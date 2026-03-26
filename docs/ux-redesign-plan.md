@@ -125,41 +125,272 @@ const cases = await prisma.case.findMany({
 6. **Actions** — "📋 Register by Mar 26" / "💳 Pay $150"
 7. **Status indicator** — visual only (color/icon, not text badge)
 
-### Deterministic status decay
-Cases must update status as time passes WITHOUT an AI call:
-```ts
-// Client-side or cron: check case actions
-function computeDisplayStatus(case: CaseForUI, now: Date): DisplayStatus {
-  const pendingActions = case.actions.filter(a => a.status === 'PENDING');
-  const allPastDue = pendingActions.every(a => a.dueDate && a.dueDate < now);
-  const hasUpcoming = pendingActions.some(a => a.dueDate && a.dueDate > now);
+### Deterministic Status Decay (CRITICAL — No AI Involvement)
 
-  if (case.status === 'RESOLVED') return 'resolved';
-  if (pendingActions.length === 0) return 'no-action';
-  if (allPastDue) return 'past-due'; // was urgent, now overdue
-  if (hasUpcoming) return 'active';
-  return 'open';
+**Problem:** Today, Case.status and CaseAction.status are set at synthesis time and never updated.
+If we scan Monday, find a Friday event, a week later the case still shows as OPEN/IMMINENT.
+The `EXPIRED` action status exists in the enum but is never set by any code path.
+
+**Solution: Three layers, all pure deterministic logic, zero AI calls.**
+
+#### Layer 1: Pure engine function (`@denim/engine`)
+
+```ts
+// packages/engine/src/actions/lifecycle.ts (NEW or extend existing)
+
+interface CaseDecayInput {
+  caseStatus: CaseStatus;       // OPEN, IN_PROGRESS, RESOLVED
+  caseUrgency: string;          // IMMINENT, THIS_WEEK, etc.
+  actions: Array<{
+    id: string;
+    status: ActionStatus;       // PENDING, DONE, EXPIRED, etc.
+    dueDate: Date | null;
+    eventStartTime: Date | null;
+    eventEndTime: Date | null;
+  }>;
+  lastEmailDate: Date;
+}
+
+interface CaseDecayResult {
+  updatedUrgency: string;
+  updatedStatus: CaseStatus;
+  expiredActionIds: string[];   // actions to mark EXPIRED
+  changed: boolean;             // whether anything changed
+}
+
+function computeCaseDecay(input: CaseDecayInput, now: Date): CaseDecayResult {
+  const expiredActionIds: string[] = [];
+
+  // Step 1: Find PENDING actions whose dates have passed
+  for (const action of input.actions) {
+    if (action.status !== 'PENDING') continue;
+    const actionDate = action.eventEndTime ?? action.eventStartTime ?? action.dueDate;
+    if (actionDate && actionDate < now) {
+      expiredActionIds.push(action.id);
+    }
+  }
+
+  // Step 2: After expiring, check remaining live actions
+  const remainingPending = input.actions.filter(
+    a => a.status === 'PENDING' && !expiredActionIds.includes(a.id)
+  );
+  const liveActions = remainingPending.filter(a => {
+    const d = a.eventEndTime ?? a.eventStartTime ?? a.dueDate;
+    return d && d >= now;
+  });
+
+  // Step 3: Derive urgency from nearest live action
+  let updatedUrgency = input.caseUrgency;
+  let updatedStatus = input.caseStatus;
+
+  if (input.caseStatus === 'RESOLVED') {
+    // Already resolved — don't change
+  } else if (liveActions.length === 0 && remainingPending.length === 0) {
+    // All actions expired or done — case is resolved
+    updatedUrgency = 'NO_ACTION';
+    updatedStatus = 'RESOLVED';
+  } else if (liveActions.length > 0) {
+    // Recalculate urgency from nearest upcoming action
+    const nearest = liveActions
+      .map(a => a.eventStartTime ?? a.dueDate)
+      .filter(Boolean)
+      .sort((a, b) => a!.getTime() - b!.getTime())[0];
+
+    if (nearest) {
+      const hoursUntil = (nearest.getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (hoursUntil <= 48) updatedUrgency = 'IMMINENT';
+      else if (hoursUntil <= 168) updatedUrgency = 'THIS_WEEK';
+      else updatedUrgency = 'UPCOMING';
+    }
+  }
+
+  const changed = updatedUrgency !== input.caseUrgency
+    || updatedStatus !== input.caseStatus
+    || expiredActionIds.length > 0;
+
+  return { updatedUrgency, updatedStatus, expiredActionIds, changed };
 }
 ```
+
+**Key properties:**
+- Pure function, no I/O, no Date.now() — takes `now` as parameter
+- Fully testable with unit tests and fixture data
+- Lives in `@denim/engine` (follows package boundary rule)
+- Uses `eventEndTime` preferentially (event is over after it ends, not when it starts)
+
+#### Layer 2: Daily Inngest cron job
+
+```ts
+// apps/web/src/lib/inngest/functions/daily-status-decay.ts
+
+export const dailyStatusDecay = inngest.createFunction(
+  { id: "daily-status-decay", concurrency: { limit: 1 } },
+  { cron: "TZ=America/New_York 0 6 * * *" },  // 6 AM daily
+  async ({ step }) => {
+    const now = new Date();
+
+    // Find all non-terminal cases with pending actions
+    const cases = await step.run("load-cases", async () => {
+      return prisma.case.findMany({
+        where: {
+          status: { not: 'RESOLVED' },
+          urgency: { notIn: ['IRRELEVANT'] },
+        },
+        include: {
+          actions: { where: { status: 'PENDING' } },
+        },
+      });
+    });
+
+    // Apply decay to each case
+    for (const case of cases) {
+      const result = computeCaseDecay({
+        caseStatus: case.status,
+        caseUrgency: case.urgency,
+        actions: case.actions,
+        lastEmailDate: case.lastEmailDate,
+      }, now);
+
+      if (result.changed) {
+        await step.run(`update-case-${case.id}`, async () => {
+          await prisma.$transaction([
+            // Expire actions
+            ...result.expiredActionIds.map(id =>
+              prisma.caseAction.update({
+                where: { id },
+                data: { status: 'EXPIRED' },
+              })
+            ),
+            // Update case status + urgency
+            prisma.case.update({
+              where: { id: case.id },
+              data: {
+                status: result.updatedStatus,
+                urgency: result.updatedUrgency,
+              },
+            }),
+          ]);
+        });
+      }
+    }
+  }
+);
+```
+
+**This ensures:** Every morning, all cases are evaluated against today's date. The Monday-scanned Friday-event case gets marked RESOLVED on Saturday morning's run.
+
+#### Layer 3: Read-time freshness check (API/feed)
+
+Even between cron runs, the feed should show correct status. When loading cases for the feed:
+
+```ts
+// In the feed API or server component
+const now = new Date();
+const casesWithFreshStatus = cases.map(c => {
+  const decay = computeCaseDecay(c, now);
+  return {
+    ...c,
+    displayUrgency: decay.updatedUrgency,  // computed, not stored
+    displayStatus: decay.updatedStatus,
+    isPastDue: decay.expiredActionIds.length > 0 && decay.updatedStatus !== 'RESOLVED',
+  };
+});
+```
+
+This means even if the cron job hasn't run yet today, the user sees correct status. The cron job's role is to persist the changes to the DB so queries/filters work correctly.
+
+#### Layer 4: Urgency recalculation on every view (not just daily)
+
+The `computeCaseDecay` function also recalculates urgency tiers:
+- Friday case shows IMMINENT on Thursday
+- Shows THIS_WEEK on Monday
+- Shows NO_ACTION / RESOLVED the following Monday
+
+This happens automatically because urgency is derived from `hoursUntil` the nearest live action.
 
 ### Past/resolved cases
 - Default: hidden from feed (or collapsed at bottom behind "Show past")
 - Still exist in data for clustering accuracy
 - Accessible via filter toggle
+- Deterministic decay moves them here automatically — no user action needed
 
 ---
 
-## 4. Case Card Design
+## 4. Case Mood Detection (Awards, Achievements, Milestones)
+
+### Problem
+Currently the pipeline has zero sentiment awareness. Urgency is action-focused only (IMMINENT, THIS_WEEK, etc.). A child's award ceremony and a plumbing emergency get the same visual treatment. Positive events deserve celebration, not just task management.
+
+### New field: `Case.mood`
+```prisma
+// Add to Case model
+mood  String  @default("NEUTRAL")  // CELEBRATORY, POSITIVE, NEUTRAL, URGENT, NEGATIVE
+```
+
+### Synthesis prompt addition
+In the synthesis system prompt (after urgency instructions), add:
+
+```
+MOOD ASSESSMENT:
+Assess the emotional tone of this case based on its emails:
+- "CELEBRATORY" — awards, honors, achievements, milestones, graduations, recognitions,
+  winning, accomplishments. These are moments to celebrate.
+- "POSITIVE" — good news, confirmations, successful completions, thank-you messages.
+  Pleasant but not milestone-level.
+- "NEUTRAL" — standard logistics, scheduling, routine updates. Most cases are this.
+- "URGENT" — problems requiring immediate attention, emergencies, escalations, complaints.
+- "NEGATIVE" — bad news, cancellations, denials, disputes, failures.
+
+Examples of CELEBRATORY detection:
+- "St Agnes Academic Awards Ceremony" → CELEBRATORY
+- "Congratulations! [child] selected for All-Star team" → CELEBRATORY
+- "End of season banquet and trophy presentation" → CELEBRATORY
+- "Your child has been nominated for Student of the Month" → CELEBRATORY
+```
+
+### Zod schema addition
+```ts
+// synthesis-parser.ts — add to synthesisResultSchema
+mood: z.enum(["CELEBRATORY", "POSITIVE", "NEUTRAL", "URGENT", "NEGATIVE"]).default("NEUTRAL"),
+```
+
+### UX treatment by mood
+
+| Mood | Card border | Emoji hint | Extra visual |
+|------|------------|------------|-------------|
+| CELEBRATORY | Gold/yellow left border | 🏆🎉🥇⭐ (AI picks) | Subtle sparkle/confetti accent, "Congrats!" badge |
+| POSITIVE | Green left border | AI picks | Checkmark accent |
+| NEUTRAL | Default gray | AI picks | None |
+| URGENT | Red left border | ⚠️ or AI picks | Pulse animation |
+| NEGATIVE | Orange left border | AI picks | Warning icon |
+
+### Where it flows
+1. **Synthesis** assigns `mood` (AI already has full email context — zero extra API calls)
+2. **Case model** stores `mood` as a string field
+3. **Feed API** returns `mood` with case data
+4. **Case card component** reads `mood` and applies visual treatment
+5. **Deterministic decay** doesn't change mood — it's set at synthesis and only updates on re-synthesis
+
+### Emoji interaction with mood
+The existing emoji field stays as topic-identifier (⚽, 🏠, 📋). Mood is orthogonal — a soccer case could be CELEBRATORY (trophy ceremony) or NEUTRAL (practice schedule). The card shows both: topic emoji + mood visual treatment.
+
+---
+
+## 5. Case Card Design
 
 ### Emoji assignment
-Add to synthesis prompt: "Assign a single emoji that represents this case's topic/activity."
+Already in plan (Fix 5): AI assigns topic emoji at synthesis time.
 Store as `Case.emoji: String?` (1-2 chars).
 
 ### Visual separation
 - Cards with clear borders/shadows, generous padding
-- Urgency indicated by left border color (red=imminent, amber=this-week, green=upcoming, gray=past)
+- Left border color driven by **mood first, urgency second**:
+  - CELEBRATORY → gold border (overrides urgency color)
+  - URGENT mood → red border
+  - Otherwise: urgency-based (red=imminent, amber=this-week, green=upcoming, gray=past)
 - Unread dot
 - Event time prominently displayed for time-sensitive cases
+- Celebratory cards get sparkle/confetti accent + "🏆" badge
 
 ### Blank space fill
 When feed has <5 cases, show encouraging/funny messages:
@@ -547,6 +778,15 @@ These fixes should be applied BEFORE the UX redesign because they directly affec
 **File:** `apps/web/prisma/schema.prisma`
 - Add `emoji String?` to Case model
 
+### Fix 6: Add mood detection to synthesis output (NEW — celebratory events)
+**File:** `packages/ai/src/prompts/synthesis.ts`
+- Add MOOD ASSESSMENT section to system prompt with 5 levels: CELEBRATORY, POSITIVE, NEUTRAL, URGENT, NEGATIVE
+- Include examples of celebratory detection (awards, honors, milestones, graduations)
+**File:** `packages/ai/src/parsers/synthesis-parser.ts`
+- Add `mood: z.enum(["CELEBRATORY","POSITIVE","NEUTRAL","URGENT","NEGATIVE"]).default("NEUTRAL")`
+**File:** `apps/web/prisma/schema.prisma`
+- Add `mood String @default("NEUTRAL")` to Case model
+
 ---
 
 ## 17. Revised Implementation Phases
@@ -557,7 +797,13 @@ These fixes should be applied BEFORE the UX redesign because they directly affec
 - Fix 3: Zod parser for discovery intelligence
 - Fix 4: Real frequency tables in calibration
 - Fix 5: Emoji in synthesis output
-- **Verify:** Re-run pipeline on test schema, confirm improved case quality
+- Fix 6: Mood detection in synthesis output (CELEBRATORY/POSITIVE/NEUTRAL/URGENT/NEGATIVE)
+- Fix A: Time-neutral language directive in synthesis prompt (absolute dates, no "this week")
+- Fix B: Time-neutral language in extraction summaries
+- Fix C: Action descriptions must use absolute dates
+- Fix E: Broaden post-synthesis expiry check to ALL action types (not just EVENT)
+- **Schema:** `prisma db push` for new `emoji` + `mood` fields on Case
+- **Verify:** Re-run pipeline, confirm: mood assigned, absolute dates in summaries, all action types expire
 
 ### Phase 1: Performance + Foundation (Week 1-2)
 - Parallel queries + loading.tsx skeletons (from perf plan)
@@ -565,7 +811,12 @@ These fixes should be applied BEFORE the UX redesign because they directly affec
 - New route structure (/feed, /welcome, /settings/*)
 - Unified case feed API (cross-schema query)
 - Bottom nav component
-- Deterministic status decay (pure function, no AI call)
+- **Deterministic status decay (3 layers):**
+  - `computeCaseDecay()` pure function in `@denim/engine/actions/lifecycle.ts`
+  - Unit tests with fixture data (Monday scan → Friday event → next Monday = RESOLVED)
+  - Daily Inngest cron job (`dailyStatusDecay`) persists changes at 6 AM
+  - Read-time freshness in feed API (compute on load, don't wait for cron)
+  - Urgency tiers recalculate automatically (IMMINENT → THIS_WEEK → UPCOMING → NO_ACTION)
 
 ### Phase 2: Case Feed UX (Week 2-3) — NEEDS STITCH DESIGNS
 - New case card design with visual hierarchy
@@ -591,6 +842,122 @@ These fixes should be applied BEFORE the UX redesign because they directly affec
 - PWA manifest + install prompt
 - First-run tooltips
 - Daily digest email (AI-generated)
+
+---
+
+## 18. Temporal Staleness Audit — Fixes
+
+### The Core Problem
+AI synthesis runs once and its output (titles, summaries, action descriptions, urgency) is displayed indefinitely. Text written on Day 1 with phrases like "this week", "waiting for approval", "upcoming Friday" becomes misleading by Day 8. Nine vectors identified.
+
+### Fix A: Time-Neutral Language Directive in Synthesis Prompt (HIGH)
+**File:** `packages/ai/src/prompts/synthesis.ts`
+
+Add to system prompt:
+```
+TIME-NEUTRAL LANGUAGE RULE:
+Your output will be displayed for days or weeks after generation. Do NOT use relative
+time references that will become stale. Use absolute dates instead.
+
+WRONG: "Meeting tomorrow", "due this Friday", "recently received", "coming up soon"
+RIGHT: "Meeting on Thu Mar 27", "due Fri Mar 28", "received on Mar 20", "scheduled for Apr 3"
+
+For summary.end (current status): Write in a way that ages well.
+WRONG: "Waiting for approval" (implies it's still pending — may be resolved by the time user reads)
+RIGHT: "Approval pending as of Mar 20" (reader knows when this was true)
+WRONG: "In final stages of review"
+RIGHT: "Under review since Mar 18; decision expected by Mar 25"
+```
+
+This is the highest-leverage fix — one prompt change affects all future synthesis output.
+
+### Fix B: Time-Neutral Language in Extraction Summaries (HIGH)
+**File:** `packages/ai/src/prompts/extraction.ts`
+
+Email summaries are stored permanently. Add similar directive:
+```
+Write summaries using absolute dates, not relative time references.
+WRONG: "Meeting scheduled for next Friday"
+RIGHT: "Meeting scheduled for Fri Mar 28"
+```
+
+### Fix C: Action Descriptions Must Use Absolute Dates (MEDIUM)
+**File:** `packages/ai/src/prompts/synthesis.ts` (action extraction section)
+
+Action titles and descriptions like "Register by Friday" age poorly. Add:
+```
+Action titles and descriptions must use absolute dates.
+WRONG: "Register by Friday"
+RIGHT: "Register by Fri Mar 28"
+WRONG: "Respond to email about tomorrow's meeting"
+RIGHT: "Respond to email about Mar 27 meeting"
+```
+
+### Fix D: Freshness Indicator in UI (MEDIUM)
+**Files:** `case-card.tsx`, `case-detail.tsx`, `case-summary.tsx`
+
+Show when content was last synthesized:
+- On case detail: "Last updated Mar 20" (from `case.synthesizedAt`)
+- If synthesizedAt > 7 days ago: "⚠️ Summary may be outdated" subtle indicator
+- Optional "Refresh" button that triggers re-synthesis of that single case
+
+### Fix E: DEADLINE Actions Must Also Expire (HIGH)
+**File:** `apps/web/src/lib/services/synthesis.ts` (lines 385-399)
+
+The existing post-synthesis check ONLY expires EVENT actions. DEADLINE and PAYMENT actions with past dates are missed.
+
+Fix: The `computeCaseDecay()` function from the deterministic decay plan already handles ALL action types by checking `dueDate` and `eventStartTime`. But the synthesis-time check should also be broadened:
+```ts
+// Currently: only checks actionType === 'EVENT'
+// Fix: check ALL actions with dates
+const actionsWithDates = caseData.actions.filter(a =>
+  a.status === 'PENDING' && (a.dueDate || a.eventStartTime)
+);
+```
+
+### Fix F: summary.end Should Include Synthesis Date Context (LOW)
+**File:** `packages/ai/src/prompts/synthesis.ts`
+
+Change the summary.end instruction from:
+"Current status, next steps, or resolution"
+To:
+"Status as of TODAY'S DATE. Include the date context so readers know when this assessment was made. Example: 'As of Mar 20: awaiting signed permission slip; game registration closes Mar 28.'"
+
+### Fix G: Staleness-Aware Feed Sorting (MEDIUM)
+
+Cases with very old `synthesizedAt` and still-OPEN status may need attention. In the feed:
+- Cases not re-synthesized in 14+ days with OPEN status → subtle "needs refresh" indicator
+- Don't auto-re-synthesize (costs money) — let user trigger it
+- Or: trigger re-synthesis if new email arrives in the case (already works via feedback events)
+
+### Fix H: Recurring Event Re-evaluation (LOW)
+**File:** synthesis prompt
+
+The prompt says "Identify the NEXT upcoming event date as the primary action item" for recurring events. But after that event passes, no one creates the NEXT next event.
+
+Options:
+- For recurring cases, the daily cron could detect "all events passed but case is recurring" and mark it for re-synthesis
+- Or: teach synthesis to create multiple future actions for recurring events (next 3 occurrences)
+- Defer to Phase 5 — this is a nice-to-have
+
+### Summary of Temporal Fixes
+
+| Fix | Priority | Where | What |
+|-----|----------|-------|------|
+| A | HIGH | Synthesis prompt | Time-neutral language directive (absolute dates, no "this week") |
+| B | HIGH | Extraction prompt | Same for email summaries |
+| C | MEDIUM | Synthesis prompt | Action titles/descriptions use absolute dates |
+| D | MEDIUM | UI components | Freshness indicator + "last updated" display |
+| E | HIGH | Synthesis service | DEADLINE/PAYMENT actions also expire (not just EVENT) |
+| F | LOW | Synthesis prompt | summary.end includes "as of [date]" context |
+| G | MEDIUM | Feed API/UI | Staleness-aware indicators for old un-refreshed cases |
+| H | LOW | Synthesis/cron | Recurring events need re-evaluation after all dates pass |
+
+### When to Implement
+- **Phase 0** (with AI audit fixes): Fixes A, B, C, E — prompt changes, zero UI work
+- **Phase 1** (with foundation): Fix D — freshness indicator is simple UI
+- **Phase 2** (with case feed UX): Fix G — staleness-aware sorting/indicators
+- **Phase 5** (polish): Fixes F, H — lower priority refinements
 
 ---
 
