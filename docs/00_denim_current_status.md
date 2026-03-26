@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-23 (major dependency migration in progress on branch upgrade/major-deps-2026)
+Last updated: 2026-03-25 (AI audit fixes complete, UX redesign planned — branch upgrade/major-deps-2026)
 
 ## Completed
 
@@ -735,7 +735,8 @@ runSynthesis (concurrency: 2/schema, retries: 2)
 runClusteringCalibration (concurrency: 1/schema, retries: 1)
   → Reads user corrections, adjusts params + vocabulary
   → Only runs in CALIBRATING or TRACKING phases
-  → Learning loop NOT YET IMPLEMENTED (stub only)
+  → Real frequency tables now computed from case emails (previously hardcoded empty)
+  → Learning loop active in CALIBRATING/TRACKING phases
 
 resynthesizeOnFeedback (concurrency: 2/schema, retries: 2)
   → Triggered by feedback.case.modified events
@@ -758,3 +759,41 @@ dailyQualitySnapshot (cron: midnight daily)
 - googleapis: installed in apps/web
 - @supabase/ssr: installed for cookie-based auth
 - @google/generative-ai: installed in apps/web
+
+## AI Pipeline Audit Fixes (2026-03-25)
+
+Commit `d844bd6` — 5 fixes to improve AI call quality before UX redesign:
+
+1. **Today's date → Extraction prompt** — Gemini can now assess temporal relevance (urgent vs stale emails)
+2. **Today's date → Case Splitting prompt** — Claude distinguishes past vs upcoming events when splitting
+3. **Zod parser → Discovery Intelligence** — Was raw `JSON.parse`; now validated with typed schema
+4. **Real frequency tables → Calibration** — Was hardcoded `{}`. Now computes word frequencies from case emails with case assignment info. Calibration AI can actually learn from word patterns.
+5. **Emoji → Synthesis output** — AI assigns a thematic emoji per case (e.g., ⚽, 🏠). New `emoji` field on Case model.
+
+### ⚠️ Required: Prisma schema push
+
+The `emoji String?` field was added to the Case model in `schema.prisma`. Before running the pipeline:
+
+```bash
+# From apps/web/ with DATABASE_URL set:
+npx prisma db push
+```
+
+Or use the supabase-db skill to run the migration via the pooler URL.
+
+## UX Redesign Plan (2026-03-25)
+
+Full plan documented in `docs/ux-redesign-plan.md`. Key decisions:
+
+- **Terminology**: "Topic" (not Schema/Channel)
+- **Routing**: `/` smart redirects returning users to `/feed` (zero clicks)
+- **Unified feed**: All topics in one view, sorted by urgency (Inner Circle → Imminent → This Week → Upcoming)
+- **Mobile-first**: Bottom nav (Feed / + Note / Settings), shared components with Chrome extension
+- **Deterministic status decay**: Cases auto-update as time passes without AI calls
+- **Design collaboration**: Stitch by Google → DESIGN.md + screenshots → Claude Code implements
+
+### Next steps
+- **Phase 0**: ✅ Complete (AI audit fixes)
+- **Phase 1**: Performance + routing foundation (parallel queries, loading.tsx, smart redirect, new route structure)
+- **Phase 2+**: Waiting on Stitch designs for case feed, landing page, onboarding
+- **Parallel**: User designing screens in Stitch; autoresearch perf agent (see `docs/autoresearch-perf-agent-plan.md`)
