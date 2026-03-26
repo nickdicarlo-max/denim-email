@@ -293,6 +293,7 @@ export type UrgencyLevel = "IMMINENT" | "THIS_WEEK" | "UPCOMING" | "NO_ACTION" |
 
 export interface SynthesisResult {
   title: string;
+  emoji?: string;
   summary: {
     beginning: string;
     middle: string;

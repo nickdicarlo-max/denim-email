@@ -307,6 +307,7 @@ export async function synthesizeCase(
       where: { id: caseId },
       data: {
         title: synthesisResult.title,
+        emoji: synthesisResult.emoji ?? null,
         summary: synthesisResult.summary,
         displayTags: synthesisResult.displayTags,
         primaryActor: synthesisResult.primaryActor ?? Prisma.JsonNull,

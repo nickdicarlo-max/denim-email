@@ -15,7 +15,7 @@
 
 import { GmailClient } from "@/lib/gmail/client";
 import { callClaude } from "@/lib/ai/client";
-import { buildDiscoveryIntelligencePrompt } from "@denim/ai";
+import { buildDiscoveryIntelligencePrompt, parseDiscoveryIntelligenceResponse } from "@denim/ai";
 import type { SenderPattern, SocialCluster, BodySample } from "@denim/ai";
 import type { EntityGroupInput } from "@denim/types";
 import { prisma } from "@/lib/prisma";
@@ -301,13 +301,8 @@ export async function generateSmartQueries(
       operation: "discovery-intelligence",
     });
 
-    // Parse AI response
-    const cleaned = stripCodeFences(aiResult.content);
-    const parsed = JSON.parse(cleaned) as {
-      relevantQueries: { query: string; reason: string; entityName: string | null }[];
-      excludeDomains: string[];
-      reasoning: string;
-    };
+    // Parse AI response with Zod validation
+    const parsed = parseDiscoveryIntelligenceResponse(aiResult.content);
 
     // Store in PipelineIntelligence
     await prisma.pipelineIntelligence.create({

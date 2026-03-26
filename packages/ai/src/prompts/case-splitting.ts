@@ -12,6 +12,7 @@ export interface CaseSplittingPromptResult {
 
 export interface CaseSplittingInput {
   domain: string;
+  today?: string;
   clusters: {
     clusterId: string;
     entityName: string;
@@ -49,7 +50,13 @@ ${input.correctionHistory.map((c) => `  - ${c.type}: ${c.details}`).join("\n")}
 Use these corrections to avoid repeating the same mistakes.\n`
     : "";
 
+  const todayStr = input.today ?? new Date().toISOString().slice(0, 10);
+
   return `You are a case-splitting engine for a "${input.domain}" case management system.
+
+TODAY'S DATE: ${todayStr}
+Use this to distinguish past events from upcoming ones when deciding how to split clusters.
+Past events of the same type should still be grouped together (not split into one-offs).
 
 CONTEXT: TWO-PASS CLUSTERING
 Emails have already been grouped into COARSE CLUSTERS by primary entity (e.g., all emails

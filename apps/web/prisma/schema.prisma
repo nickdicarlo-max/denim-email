@@ -505,6 +505,7 @@ model Case {
 
   // --- AI-GENERATED CONTENT ---
   title         String                  // "Kitchen Remodel Permits"
+  emoji         String?                 // AI-assigned emoji for visual identification (e.g., "⚽", "🏠")
   summary       Json                    // { beginning: "...", middle: "...", end: "..." }
   
   // Primary actor: the main counterparty in this case (AI-identified during synthesis)

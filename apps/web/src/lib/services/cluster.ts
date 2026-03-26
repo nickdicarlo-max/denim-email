@@ -641,8 +641,10 @@ async function aiCaseSplit(
     };
   });
 
+  const today = new Date().toISOString().slice(0, 10);
   const prompt = buildCaseSplittingPrompt({
     domain: domain ?? "general",
+    today,
     clusters,
     correctionHistory: correctionHistory.length > 0 ? correctionHistory : undefined,
     learnedVocabulary: learnedVocabulary as Record<string, { words: Record<string, number>; mergedAway: string[] }> | undefined,
@@ -1085,13 +1087,20 @@ export async function applyCalibration(
     select: { eventType: true, payload: true },
   });
 
-  // Load current cases for cluster summary
+  // Load current cases with email data for cluster summary + frequency analysis
   const cases = await prisma.case.findMany({
     where: { schemaId, status: "OPEN" },
     select: {
       id: true,
+      title: true,
       entityId: true,
       _count: { select: { caseEmails: true } },
+      caseEmails: {
+        take: 50,
+        select: {
+          email: { select: { subject: true, summary: true } },
+        },
+      },
     },
   });
 
@@ -1113,6 +1122,71 @@ export async function applyCalibration(
     casesSplit: data.casesSplit,
   }));
 
+  // Build real frequency tables from case emails (previously hardcoded as {})
+  const frequencyTables: Record<string, { word: string; pct: number; caseAssignment: string }[]> = {};
+  const stopWords = new Set(["the", "a", "an", "is", "are", "was", "were", "be", "to", "of", "in", "for", "on", "at", "by", "with", "from", "and", "but", "or", "if", "this", "that", "it", "not", "no", "re", "fw", "fwd", "am", "pm", "i", "me", "my", "you", "your", "we", "our", "they", "he", "she", "her", "his", "its", "so", "as", "up"]);
+
+  // Group cases by entity
+  const casesByEntity = new Map<string, typeof cases>();
+  for (const c of cases) {
+    const entityName = entityNameById.get(c.entityId) ?? c.entityId;
+    const list = casesByEntity.get(entityName) ?? [];
+    list.push(c);
+    casesByEntity.set(entityName, list);
+  }
+
+  for (const [entityName, entityCases] of casesByEntity) {
+    if (entityCases.length < 2) continue; // Need at least 2 cases to have meaningful frequency data
+
+    // Count word occurrences per case
+    const wordCaseCounts = new Map<string, Map<string, number>>(); // word → { caseTitle → count }
+    let totalEmails = 0;
+    const wordEmailCounts = new Map<string, number>(); // word → total emails containing it
+
+    for (const c of entityCases) {
+      for (const ce of c.caseEmails) {
+        totalEmails++;
+        const text = `${ce.email.subject ?? ""} ${typeof ce.email.summary === "string" ? ce.email.summary : ""}`.toLowerCase();
+        const words = text.match(/[a-z]{3,}/g) ?? [];
+        const uniqueWords = new Set(words.filter((w) => !stopWords.has(w)));
+
+        for (const word of uniqueWords) {
+          wordEmailCounts.set(word, (wordEmailCounts.get(word) ?? 0) + 1);
+
+          if (!wordCaseCounts.has(word)) wordCaseCounts.set(word, new Map());
+          const caseCounts = wordCaseCounts.get(word)!;
+          const caseTitle = c.title ?? c.id;
+          caseCounts.set(caseTitle, (caseCounts.get(caseTitle) ?? 0) + 1);
+        }
+      }
+    }
+
+    if (totalEmails === 0) continue;
+
+    // Build frequency entries: top 20 words that appear in a subset (not all) of cases
+    const entries: { word: string; pct: number; caseAssignment: string }[] = [];
+    for (const [word, emailCount] of wordEmailCounts) {
+      const pct = emailCount / totalEmails;
+      if (pct > 0.9) continue; // Skip words in nearly all emails (entity-level, not discriminators)
+      if (pct < 0.05) continue; // Skip very rare words
+
+      const caseCounts = wordCaseCounts.get(word)!;
+      // Find the case with the most occurrences of this word
+      let bestCase = "";
+      let bestCount = 0;
+      for (const [caseTitle, count] of caseCounts) {
+        if (count > bestCount) {
+          bestCase = caseTitle;
+          bestCount = count;
+        }
+      }
+      entries.push({ word, pct, caseAssignment: bestCase });
+    }
+
+    entries.sort((a, b) => b.pct - a.pct);
+    frequencyTables[entityName] = entries.slice(0, 20);
+  }
+
   const prompt = buildClusteringCalibrationPrompt({
     currentConfig: {
       mergeThreshold: config.mergeThreshold,
@@ -1121,7 +1195,7 @@ export async function applyCalibration(
       timeDecayFreshDays: config.timeDecayDays.fresh,
     },
     coarseClusters,
-    frequencyTables: {},
+    frequencyTables,
     corrections: corrections.map((c) => ({
       type: c.eventType,
       ...(c.payload as Record<string, unknown>),
