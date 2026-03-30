@@ -18,7 +18,7 @@ Last updated: 2026-03-25
 - [ ] Calendar sync for CaseActions
 - [ ] Email move / exclude corrections UI
 - [ ] Case merge UI
-- [ ] Learning loop (feedback corrections adjust clustering weights, tag scores, entity confidence)
+- [ ] Gravity Model Learning loop (feedback corrections adjust clustering weights, tag scores, entity confidence)
 - [ ] Multi-schema support (user manages multiple case schemas)
 
 ## Monetization
