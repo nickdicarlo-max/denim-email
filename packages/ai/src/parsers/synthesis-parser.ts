@@ -23,6 +23,7 @@ const synthesisActionSchema = z.object({
 
 const synthesisResultSchema = z.object({
   title: z.string().min(1).max(60),
+  emoji: z.string().max(4).optional().default("📋"),
   summary: z.object({
     beginning: z.string(),
     middle: z.string(),

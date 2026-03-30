@@ -514,6 +514,81 @@ export async function splitCoarseClusters(
 }
 
 /**
+ * Assign all emails not referenced in Claude's split result to cases using
+ * discriminator word matching. Claude only sees a sample of emails; this
+ * ensures every email in the cluster gets assigned to a case.
+ */
+function assignRemainingEmails(
+  splitResult: {
+    cases: Array<{ caseTitle: string; discriminators: string[]; emailIds: string[]; reasoning: string }>;
+    catchAllEmailIds: string[];
+    reasoning: string;
+  },
+  entityClusters: Map<string, {
+    entityId: string;
+    entityName: string;
+    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+    caseIds: string[];
+  }>,
+): typeof splitResult {
+  // Collect all email IDs Claude already assigned
+  const assignedIds = new Set<string>();
+  for (const c of splitResult.cases) {
+    for (const id of c.emailIds) assignedIds.add(id);
+  }
+  for (const id of splitResult.catchAllEmailIds) assignedIds.add(id);
+
+  // Collect all emails from all clusters
+  const allEmails: Array<{ id: string; subject: string; summary: string }> = [];
+  for (const cluster of entityClusters.values()) {
+    for (const email of cluster.emails) {
+      if (!assignedIds.has(email.id)) {
+        allEmails.push(email);
+      }
+    }
+  }
+
+  if (allEmails.length === 0) return splitResult;
+
+  // For each unassigned email, find the best-matching case by discriminator words
+  const updatedCases = splitResult.cases.map((c) => ({
+    ...c,
+    emailIds: [...c.emailIds],
+  }));
+  const updatedCatchAll = [...splitResult.catchAllEmailIds];
+
+  for (const email of allEmails) {
+    const text = `${email.subject} ${email.summary}`.toLowerCase();
+    let bestCaseIdx = -1;
+    let bestScore = 0;
+
+    for (let i = 0; i < updatedCases.length; i++) {
+      const caseDef = updatedCases[i];
+      let matchCount = 0;
+      for (const word of caseDef.discriminators) {
+        if (text.includes(word.toLowerCase())) matchCount++;
+      }
+      if (matchCount > bestScore) {
+        bestScore = matchCount;
+        bestCaseIdx = i;
+      }
+    }
+
+    if (bestCaseIdx >= 0) {
+      updatedCases[bestCaseIdx].emailIds.push(email.id);
+    } else {
+      updatedCatchAll.push(email.id);
+    }
+  }
+
+  return {
+    cases: updatedCases,
+    catchAllEmailIds: updatedCatchAll,
+    reasoning: splitResult.reasoning,
+  };
+}
+
+/**
  * AI-powered case splitting using Claude.
  */
 async function aiCaseSplit(
@@ -558,7 +633,7 @@ async function aiCaseSplit(
         frequency: w.frequency,
         weightedScore: w.weightedScore,
       })),
-      emailSamples: (cluster?.emails ?? []).slice(0, 10).map((e) => ({
+      emailSamples: (cluster?.emails ?? []).slice(0, 30).map((e) => ({
         id: e.id,
         subject: e.subject,
         summary: e.summary,
@@ -566,8 +641,10 @@ async function aiCaseSplit(
     };
   });
 
+  const today = new Date().toISOString().slice(0, 10);
   const prompt = buildCaseSplittingPrompt({
     domain: domain ?? "general",
+    today,
     clusters,
     correctionHistory: correctionHistory.length > 0 ? correctionHistory : undefined,
     learnedVocabulary: learnedVocabulary as Record<string, { words: Record<string, number>; mergedAway: string[] }> | undefined,
@@ -615,8 +692,12 @@ async function aiCaseSplit(
       },
     });
 
-    // Apply the AI's case definitions
-    return await applyCaseSplitResult(schemaId, scanJobId, entityClusters, parsed);
+    // Assign ALL remaining emails to cases using discriminator word matching.
+    // Claude only saw a sample — the rest must be deterministically assigned.
+    const enriched = assignRemainingEmails(parsed, entityClusters);
+
+    // Apply the AI's case definitions (now covering all emails)
+    return await applyCaseSplitResult(schemaId, scanJobId, entityClusters, enriched);
   } catch (error) {
     logger.error({
       service: "cluster",
@@ -1006,13 +1087,20 @@ export async function applyCalibration(
     select: { eventType: true, payload: true },
   });
 
-  // Load current cases for cluster summary
+  // Load current cases with email data for cluster summary + frequency analysis
   const cases = await prisma.case.findMany({
     where: { schemaId, status: "OPEN" },
     select: {
       id: true,
+      title: true,
       entityId: true,
       _count: { select: { caseEmails: true } },
+      caseEmails: {
+        take: 50,
+        select: {
+          email: { select: { subject: true, summary: true } },
+        },
+      },
     },
   });
 
@@ -1034,6 +1122,71 @@ export async function applyCalibration(
     casesSplit: data.casesSplit,
   }));
 
+  // Build real frequency tables from case emails (previously hardcoded as {})
+  const frequencyTables: Record<string, { word: string; pct: number; caseAssignment: string }[]> = {};
+  const stopWords = new Set(["the", "a", "an", "is", "are", "was", "were", "be", "to", "of", "in", "for", "on", "at", "by", "with", "from", "and", "but", "or", "if", "this", "that", "it", "not", "no", "re", "fw", "fwd", "am", "pm", "i", "me", "my", "you", "your", "we", "our", "they", "he", "she", "her", "his", "its", "so", "as", "up"]);
+
+  // Group cases by entity
+  const casesByEntity = new Map<string, typeof cases>();
+  for (const c of cases) {
+    const entityName = entityNameById.get(c.entityId) ?? c.entityId;
+    const list = casesByEntity.get(entityName) ?? [];
+    list.push(c);
+    casesByEntity.set(entityName, list);
+  }
+
+  for (const [entityName, entityCases] of casesByEntity) {
+    if (entityCases.length < 2) continue; // Need at least 2 cases to have meaningful frequency data
+
+    // Count word occurrences per case
+    const wordCaseCounts = new Map<string, Map<string, number>>(); // word → { caseTitle → count }
+    let totalEmails = 0;
+    const wordEmailCounts = new Map<string, number>(); // word → total emails containing it
+
+    for (const c of entityCases) {
+      for (const ce of c.caseEmails) {
+        totalEmails++;
+        const text = `${ce.email.subject ?? ""} ${typeof ce.email.summary === "string" ? ce.email.summary : ""}`.toLowerCase();
+        const words = text.match(/[a-z]{3,}/g) ?? [];
+        const uniqueWords = new Set(words.filter((w) => !stopWords.has(w)));
+
+        for (const word of uniqueWords) {
+          wordEmailCounts.set(word, (wordEmailCounts.get(word) ?? 0) + 1);
+
+          if (!wordCaseCounts.has(word)) wordCaseCounts.set(word, new Map());
+          const caseCounts = wordCaseCounts.get(word)!;
+          const caseTitle = c.title ?? c.id;
+          caseCounts.set(caseTitle, (caseCounts.get(caseTitle) ?? 0) + 1);
+        }
+      }
+    }
+
+    if (totalEmails === 0) continue;
+
+    // Build frequency entries: top 20 words that appear in a subset (not all) of cases
+    const entries: { word: string; pct: number; caseAssignment: string }[] = [];
+    for (const [word, emailCount] of wordEmailCounts) {
+      const pct = emailCount / totalEmails;
+      if (pct > 0.9) continue; // Skip words in nearly all emails (entity-level, not discriminators)
+      if (pct < 0.05) continue; // Skip very rare words
+
+      const caseCounts = wordCaseCounts.get(word)!;
+      // Find the case with the most occurrences of this word
+      let bestCase = "";
+      let bestCount = 0;
+      for (const [caseTitle, count] of caseCounts) {
+        if (count > bestCount) {
+          bestCase = caseTitle;
+          bestCount = count;
+        }
+      }
+      entries.push({ word, pct, caseAssignment: bestCase });
+    }
+
+    entries.sort((a, b) => b.pct - a.pct);
+    frequencyTables[entityName] = entries.slice(0, 20);
+  }
+
   const prompt = buildClusteringCalibrationPrompt({
     currentConfig: {
       mergeThreshold: config.mergeThreshold,
@@ -1042,7 +1195,7 @@ export async function applyCalibration(
       timeDecayFreshDays: config.timeDecayDays.fresh,
     },
     coarseClusters,
-    frequencyTables: {},
+    frequencyTables,
     corrections: corrections.map((c) => ({
       type: c.eventType,
       ...(c.payload as Record<string, unknown>),

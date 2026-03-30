@@ -73,8 +73,11 @@ function buildFieldDefinitions(schema: ExtractionSchemaContext): string {
     .join("\n");
 }
 
-function buildSystemPrompt(schema: ExtractionSchemaContext): string {
+function buildSystemPrompt(schema: ExtractionSchemaContext, today: string): string {
   return `You are an email data extraction engine for a "${schema.domain}" case management system. Your job is to analyze a single email and extract structured data from it.
+
+TODAY'S DATE: ${today}
+Use this to assess temporal relevance. An email about an event 3 months ago is less relevant than one about next week.
 
 For each email you must:
 1. Generate a concise 1-2 sentence summary capturing the key information and intent of the email.
@@ -148,9 +151,11 @@ Return ONLY the JSON object. No other text.`;
 export function buildExtractionPrompt(
   email: ExtractionInput,
   schema: ExtractionSchemaContext,
+  today?: string,
 ): ExtractionPromptResult {
+  const todayStr = today ?? new Date().toISOString().slice(0, 10);
   return {
-    system: buildSystemPrompt(schema),
+    system: buildSystemPrompt(schema, todayStr),
     user: buildUserPrompt(email),
   };
 }

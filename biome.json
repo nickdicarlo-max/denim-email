@@ -1,6 +1,6 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": {
+  "$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+  "assist": {
     "enabled": true
   },
   "linter": {
@@ -30,17 +30,21 @@
     }
   },
   "files": {
-    "ignore": [
-      "node_modules",
-      ".next",
-      "dist",
-      "coverage",
-      "playwright-report",
-      "*.prisma",
-      "apps/extension/service-worker.js",
-      "reference",
-      ".claude",
-      "next-env.d.ts"
+    "includes": [
+      "apps/**",
+      "packages/**",
+      "*.json",
+      "!**/node_modules",
+      "!**/.next",
+      "!**/dist",
+      "!**/coverage",
+      "!**/playwright-report",
+      "!**/*.prisma",
+      "!apps/extension/service-worker.js",
+      "!**/reference",
+      "!**/.claude",
+      "!**/next-env.d.ts",
+      "!**/generated"
     ]
   }
 }

@@ -7,7 +7,7 @@ export default async function Home() {
   let redirectTo: string | null = null;
 
   try {
-    const supabase = createServerSupabaseClient();
+    const supabase = await createServerSupabaseClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();

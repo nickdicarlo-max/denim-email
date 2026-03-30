@@ -6,14 +6,14 @@ import { cookies } from "next/headers";
  * Server-side Supabase client that reads/writes cookies.
  * Use in Route Handlers and Server Components for user-scoped operations.
  */
-export function createServerSupabaseClient() {
+export async function createServerSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     throw new Error("Missing Supabase configuration");
   }
 
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
 
   return createServerClient(url, key, {
     cookies: {

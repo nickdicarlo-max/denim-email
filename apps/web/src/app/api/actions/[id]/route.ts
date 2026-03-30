@@ -9,8 +9,9 @@ const UpdateActionSchema = z.object({
 	status: z.enum(["PENDING", "DONE"]),
 });
 
-export const PATCH = withAuth(async ({ userId, request }, { params }: { params: { id: string } }) => {
+export const PATCH = withAuth(async ({ userId, request }) => {
 	try {
+		const actionId = new URL(request.url).pathname.split("/").pop()!;
 		const body = await request.json();
 		const parsed = UpdateActionSchema.safeParse(body);
 		if (!parsed.success) {
@@ -19,7 +20,7 @@ export const PATCH = withAuth(async ({ userId, request }, { params }: { params: 
 
 		// Load action and verify ownership via case → schema → user chain
 		const action = await prisma.caseAction.findUnique({
-			where: { id: params.id },
+			where: { id: actionId },
 			select: {
 				id: true,
 				status: true,
@@ -43,11 +44,11 @@ export const PATCH = withAuth(async ({ userId, request }, { params }: { params: 
 		}
 
 		await prisma.caseAction.update({
-			where: { id: params.id },
+			where: { id: actionId },
 			data: { status: parsed.data.status },
 		});
 
-		return NextResponse.json({ data: { id: params.id, status: parsed.data.status } });
+		return NextResponse.json({ data: { id: actionId, status: parsed.data.status } });
 	} catch (error) {
 		return handleApiError(error, {
 			service: "actions",

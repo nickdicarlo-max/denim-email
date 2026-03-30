@@ -16,6 +16,8 @@ export { parseClusteringIntelligenceResponse } from "./parsers/clustering-intell
 export type { ClusteringIntelligenceResult, ClusterGroup } from "./parsers/clustering-intelligence-parser";
 export { buildDiscoveryIntelligencePrompt } from "./prompts/discovery-intelligence";
 export type { DiscoveryIntelligencePromptResult, DiscoveryIntelligenceInput, SenderPattern, SocialCluster, BodySample } from "./prompts/discovery-intelligence";
+export { parseDiscoveryIntelligenceResponse } from "./parsers/discovery-intelligence-parser";
+export type { DiscoveryIntelligenceResult } from "./parsers/discovery-intelligence-parser";
 export { buildCaseSplittingPrompt } from "./prompts/case-splitting";
 export type { CaseSplittingPromptResult, CaseSplittingInput } from "./prompts/case-splitting";
 export { parseCaseSplittingResponse } from "./parsers/case-splitting-parser";

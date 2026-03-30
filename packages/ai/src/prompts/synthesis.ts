@@ -62,7 +62,10 @@ Your job:
    - "OPEN" — active, needs attention
    - "IN_PROGRESS" — work is underway
    - "RESOLVED" — everything appears handled/completed
-7. Determine URGENCY based on time-sensitive content:
+7. Assign a single EMOJI (1-2 characters) that visually represents this case's topic or activity.
+   Examples: ⚽ for soccer, 🏠 for property, 📋 for admin, 💰 for payments, 🎓 for school, 🔧 for maintenance.
+   Choose intuitively based on what the case is about.
+8. Determine URGENCY based on time-sensitive content:
    - "IMMINENT" — action/event within 48 hours
    - "THIS_WEEK" — action/event within 7 days
    - "UPCOMING" — action/event more than 7 days out, or ongoing recurring activity
@@ -100,6 +103,7 @@ CRITICAL RULES:
 Required JSON shape:
 {
   "title": string,
+  "emoji": string,
   "summary": {
     "beginning": string,
     "middle": string,

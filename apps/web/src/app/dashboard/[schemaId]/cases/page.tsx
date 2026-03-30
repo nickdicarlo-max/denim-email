@@ -7,9 +7,10 @@ import { redirect } from "next/navigation";
 export default async function CaseFeedPage({
 	params,
 }: {
-	params: { schemaId: string };
+	params: Promise<{ schemaId: string }>;
 }) {
-	const supabase = createServerSupabaseClient();
+	const { schemaId } = await params;
+	const supabase = await createServerSupabaseClient();
 	const {
 		data: { user },
 	} = await supabase.auth.getUser();
@@ -19,7 +20,7 @@ export default async function CaseFeedPage({
 	}
 
 	const schema = await prisma.caseSchema.findUnique({
-		where: { id: params.schemaId },
+		where: { id: schemaId },
 		select: {
 			id: true,
 			name: true,
@@ -42,7 +43,7 @@ export default async function CaseFeedPage({
 	// Load initial cases — filter out IRRELEVANT, sort by urgency tier then date
 	const cases = await prisma.case.findMany({
 		where: {
-			schemaId: params.schemaId,
+			schemaId: schemaId,
 			urgency: { not: "IRRELEVANT" },
 		},
 		orderBy: { lastEmailDate: "desc" },
@@ -87,7 +88,7 @@ export default async function CaseFeedPage({
 	// Count by status
 	const statusCounts = await prisma.case.groupBy({
 		by: ["status"],
-		where: { schemaId: params.schemaId },
+		where: { schemaId: schemaId },
 		_count: { _all: true },
 	});
 
@@ -186,7 +187,7 @@ export default async function CaseFeedPage({
 			<header className="flex items-center justify-between px-6 py-4 max-w-4xl mx-auto">
 				<span className="text-xl font-bold text-primary tracking-tight">denim</span>
 				<Link
-					href={`/dashboard/${params.schemaId}`}
+					href={`/dashboard/${schemaId}`}
 					className="text-sm font-medium text-accent-text hover:underline"
 				>
 					&larr; Back to {schema.name}

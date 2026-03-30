@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-22 (auto-promote discovered entities, Gemini thinking fix, case feed UX fixes)
+Last updated: 2026-03-25 (AI audit fixes complete, UX redesign planned — branch upgrade/major-deps-2026)
 
 ## Completed
 
@@ -640,6 +640,26 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
 
+## In Progress: Major Dependency Migration (2026-03-23)
+
+**Branch:** `upgrade/major-deps-2026` — feature work paused during migration.
+**Plan:** `docs/major-deps-migration-plan.md`
+
+**All 7 phases complete** (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19 + Next.js 16, Tailwind 4, Inngest 4). Ready for merge to main.
+
+Key changes already landed:
+- Prisma 7 requires `prisma.config.ts` + `@prisma/adapter-pg` driver adapter
+- Prisma client generated to `prisma/generated/prisma/client/` (tsconfig path alias)
+- Zod 4 requires `z.record(keyType, valueType)` (no single-arg)
+- React 19.2.4 + Next.js 16.2.1: async `cookies()`, async `params` in Server Components
+- `next.config.js` → `next.config.ts` (typed config)
+- Fixed 3 broken API routes (`actions/[id]`, `quality/[schemaId]`, `quality/[schemaId]/history`) — `withAuth` never forwarded params; converted to URL extraction
+- Tailwind 4.2.2: `@tailwindcss/postcss` plugin, `@import "tailwindcss"` + `@config`, class renames (shadow-sm→shadow-xs, outline-none→outline-hidden)
+- Inngest 4.0.4: `createFunction` 3-arg→2-arg (triggers merged into config), removed EventSchemas
+- Fixed: 2 missing Inngest function exports (resynthesizeOnFeedback, dailyQualitySnapshot)
+- Fixed: Biome 2 config keys (organizeImports→assist, files.ignore→files.includes)
+- Type errors reduced from 174 → 0
+
 ## Next Steps
 
 ### Needs Scoping (design + plan before building)
@@ -715,7 +735,8 @@ runSynthesis (concurrency: 2/schema, retries: 2)
 runClusteringCalibration (concurrency: 1/schema, retries: 1)
   → Reads user corrections, adjusts params + vocabulary
   → Only runs in CALIBRATING or TRACKING phases
-  → Learning loop NOT YET IMPLEMENTED (stub only)
+  → Real frequency tables now computed from case emails (previously hardcoded empty)
+  → Learning loop active in CALIBRATING/TRACKING phases
 
 resynthesizeOnFeedback (concurrency: 2/schema, retries: 2)
   → Triggered by feedback.case.modified events
@@ -738,3 +759,41 @@ dailyQualitySnapshot (cron: midnight daily)
 - googleapis: installed in apps/web
 - @supabase/ssr: installed for cookie-based auth
 - @google/generative-ai: installed in apps/web
+
+## AI Pipeline Audit Fixes (2026-03-25)
+
+Commit `d844bd6` — 5 fixes to improve AI call quality before UX redesign:
+
+1. **Today's date → Extraction prompt** — Gemini can now assess temporal relevance (urgent vs stale emails)
+2. **Today's date → Case Splitting prompt** — Claude distinguishes past vs upcoming events when splitting
+3. **Zod parser → Discovery Intelligence** — Was raw `JSON.parse`; now validated with typed schema
+4. **Real frequency tables → Calibration** — Was hardcoded `{}`. Now computes word frequencies from case emails with case assignment info. Calibration AI can actually learn from word patterns.
+5. **Emoji → Synthesis output** — AI assigns a thematic emoji per case (e.g., ⚽, 🏠). New `emoji` field on Case model.
+
+### ⚠️ Required: Prisma schema push
+
+The `emoji String?` field was added to the Case model in `schema.prisma`. Before running the pipeline:
+
+```bash
+# From apps/web/ with DATABASE_URL set:
+npx prisma db push
+```
+
+Or use the supabase-db skill to run the migration via the pooler URL.
+
+## UX Redesign Plan (2026-03-25)
+
+Full plan documented in `docs/ux-redesign-plan.md`. Key decisions:
+
+- **Terminology**: "Topic" (not Schema/Channel)
+- **Routing**: `/` smart redirects returning users to `/feed` (zero clicks)
+- **Unified feed**: All topics in one view, sorted by urgency (Inner Circle → Imminent → This Week → Upcoming)
+- **Mobile-first**: Bottom nav (Feed / + Note / Settings), shared components with Chrome extension
+- **Deterministic status decay**: Cases auto-update as time passes without AI calls
+- **Design collaboration**: Stitch by Google → DESIGN.md + screenshots → Claude Code implements
+
+### Next steps
+- **Phase 0**: ✅ Complete (AI audit fixes)
+- **Phase 1**: Performance + routing foundation (parallel queries, loading.tsx, smart redirect, new route structure)
+- **Phase 2+**: Waiting on Stitch designs for case feed, landing page, onboarding
+- **Parallel**: User designing screens in Stitch; autoresearch perf agent (see `docs/autoresearch-perf-agent-plan.md`)

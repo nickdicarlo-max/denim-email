@@ -173,7 +173,8 @@ export async function extractEmail(
 
   // 2. Build prompt and call Gemini
   const extractionInput = toExtractionInput(gmailMessage);
-  const prompt = buildExtractionPrompt(extractionInput, schemaContext);
+  const today = new Date().toISOString().slice(0, 10);
+  const prompt = buildExtractionPrompt(extractionInput, schemaContext, today);
 
   const aiResult = await callGemini({
     model: GEMINI_MODEL,

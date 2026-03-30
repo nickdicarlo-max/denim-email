@@ -4,10 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError } from "@denim/types";
 import { NextResponse } from "next/server";
 
-export const GET = withAuth(async ({ userId, request }, { params }: { params: { schemaId: string } }) => {
+export const GET = withAuth(async ({ userId, request }) => {
 	try {
+		const segments = new URL(request.url).pathname.split("/");
+		const schemaId = segments[segments.length - 2]; // .../quality/[schemaId]/history
 		const schema = await prisma.caseSchema.findFirst({
-			where: { id: params.schemaId, userId },
+			where: { id: schemaId, userId },
 			select: { id: true },
 		});
 		if (!schema) throw new NotFoundError("Schema not found");
@@ -16,7 +18,7 @@ export const GET = withAuth(async ({ userId, request }, { params }: { params: { 
 		const limit = Math.min(Number(url.searchParams.get("limit") ?? "30"), 90);
 
 		const snapshots = await prisma.qualitySnapshot.findMany({
-			where: { schemaId: params.schemaId },
+			where: { schemaId: schemaId },
 			orderBy: { date: "desc" },
 			take: limit,
 			select: {

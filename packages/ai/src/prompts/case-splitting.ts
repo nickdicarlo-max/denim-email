@@ -12,6 +12,7 @@ export interface CaseSplittingPromptResult {
 
 export interface CaseSplittingInput {
   domain: string;
+  today?: string;
   clusters: {
     clusterId: string;
     entityName: string;
@@ -49,7 +50,13 @@ ${input.correctionHistory.map((c) => `  - ${c.type}: ${c.details}`).join("\n")}
 Use these corrections to avoid repeating the same mistakes.\n`
     : "";
 
+  const todayStr = input.today ?? new Date().toISOString().slice(0, 10);
+
   return `You are a case-splitting engine for a "${input.domain}" case management system.
+
+TODAY'S DATE: ${todayStr}
+Use this to distinguish past events from upcoming ones when deciding how to split clusters.
+Past events of the same type should still be grouped together (not split into one-offs).
 
 CONTEXT: TWO-PASS CLUSTERING
 Emails have already been grouped into COARSE CLUSTERS by primary entity (e.g., all emails
@@ -77,7 +84,12 @@ RULES:
 3. Case titles should be user-friendly, under 50 characters.
 4. Each case must have at least one discriminator word from the frequency table.
 5. Emails that don't clearly match any discriminator set go in catchAllEmailIds.
-6. Don't over-split: if a cluster has no clear sub-topics, return it as a single case.
+6. DO NOT OVER-SPLIT. This is the most important rule. Aim for the FEWEST cases where
+   each case has a distinct answer to "what's next?". Typical: 2-5 cases per entity.
+   - Recurring events of the same type (weekly practices, monthly games) = ONE case.
+   - Do NOT create separate cases per individual date, reminder, or update for the
+     same recurring activity.
+   - "Soccer Practice – Mar 5" and "Soccer Practice – Mar 12" belong in the SAME case.
 7. Provide reasoning for each case explaining why those discriminators were chosen.
 
 Required JSON shape:

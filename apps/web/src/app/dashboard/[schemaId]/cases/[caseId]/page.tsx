@@ -7,9 +7,10 @@ import { redirect } from "next/navigation";
 export default async function CaseDetailPage({
 	params,
 }: {
-	params: { schemaId: string; caseId: string };
+	params: Promise<{ schemaId: string; caseId: string }>;
 }) {
-	const supabase = createServerSupabaseClient();
+	const { schemaId, caseId } = await params;
+	const supabase = await createServerSupabaseClient();
 	const {
 		data: { user },
 	} = await supabase.auth.getUser();
@@ -19,7 +20,7 @@ export default async function CaseDetailPage({
 	}
 
 	const caseRow = await prisma.case.findUnique({
-		where: { id: params.caseId },
+		where: { id: caseId },
 		include: {
 			schema: {
 				select: {
@@ -62,18 +63,18 @@ export default async function CaseDetailPage({
 	});
 
 	if (!caseRow || caseRow.schema.userId !== user.id) {
-		redirect(`/dashboard/${params.schemaId}/cases`);
+		redirect(`/dashboard/${schemaId}/cases`);
 	}
 
 	// Update viewedAt
 	await prisma.case.update({
-		where: { id: params.caseId },
+		where: { id: caseId },
 		data: { viewedAt: new Date() },
 	});
 
 	// Load cluster records for this case (debug info)
 	const clusterRecords = await prisma.cluster.findMany({
-		where: { schemaId: params.schemaId, resultCaseId: params.caseId },
+		where: { schemaId: schemaId, resultCaseId: caseId },
 		select: {
 			action: true,
 			emailIds: true,
@@ -144,7 +145,7 @@ export default async function CaseDetailPage({
 			<header className="flex items-center justify-between px-6 py-4 max-w-4xl mx-auto">
 				<span className="text-xl font-bold text-primary tracking-tight">denim</span>
 				<Link
-					href={`/dashboard/${params.schemaId}/cases`}
+					href={`/dashboard/${schemaId}/cases`}
 					className="text-sm font-medium text-accent-text hover:underline"
 				>
 					&larr; Back to Cases
@@ -163,7 +164,7 @@ export default async function CaseDetailPage({
 						}
 					}
 					extractedFieldDefs={caseRow.schema.extractedFields}
-					schemaId={params.schemaId}
+					schemaId={schemaId}
 					clusterRecords={clusterRecords.map((c) => ({
 						action: c.action,
 						emailIds: c.emailIds as string[],

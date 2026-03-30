@@ -25,13 +25,12 @@
 // =============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "./generated/prisma/client"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")   // Supabase requires direct connection for migrations
+  provider = "postgresql"
 }
 
 // =============================================================================
@@ -506,6 +505,8 @@ model Case {
 
   // --- AI-GENERATED CONTENT ---
   title         String                  // "Kitchen Remodel Permits"
+  emoji         String?                 // AI-assigned emoji for visual identification (e.g., "⚽", "🏠")
+  mood          String   @default("NEUTRAL") // CELEBRATORY | POSITIVE | NEUTRAL | URGENT | NEGATIVE
   summary       Json                    // { beginning: "...", middle: "...", end: "..." }
   
   // Primary actor: the main counterparty in this case (AI-identified during synthesis)

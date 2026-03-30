@@ -16,7 +16,7 @@ const detectedEntitySchema = z.object({
 const extractionResultSchema = z.object({
   summary: z.string().min(10).max(500),
   tags: z.array(z.string()),
-  extractedData: z.record(z.unknown()),
+  extractedData: z.record(z.string(), z.unknown()),
   detectedEntities: z.array(detectedEntitySchema),
   isInternal: z.boolean(),
   language: z.string().nullable(),

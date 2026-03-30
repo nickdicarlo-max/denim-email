@@ -43,6 +43,7 @@ const VALID_FIXTURE: SynthesisResult = {
     },
   ],
   status: "IN_PROGRESS",
+  urgency: "UPCOMING",
 };
 
 describe("parseSynthesisResponse", () => {
