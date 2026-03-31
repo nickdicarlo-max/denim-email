@@ -4,65 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { CaseListQuerySchema } from "@/lib/validation/cases";
 import { NotFoundError, ValidationError } from "@denim/types";
 import { NextResponse } from "next/server";
-
-/** Urgency tier sort order: lower = higher priority */
-const URGENCY_ORDER: Record<string, number> = {
-	IMMINENT: 0,
-	THIS_WEEK: 1,
-	UPCOMING: 2,
-	NO_ACTION: 3,
-	IRRELEVANT: 4,
-};
-
-/** Status sort order: active first, resolved last */
-const STATUS_ORDER: Record<string, number> = {
-	OPEN: 0,
-	IN_PROGRESS: 0,
-	RESOLVED: 1,
-};
-
-/** Find the earliest future event date from a case's actions */
-function getNextEventTime(actions?: { eventStartTime?: string | null; dueDate?: string | null; actionType?: string }[]): number | null {
-	if (!actions) return null;
-	const now = Date.now();
-	let earliest: number | null = null;
-	for (const a of actions) {
-		if (a.actionType !== "EVENT") continue;
-		const dateStr = a.eventStartTime ?? a.dueDate;
-		if (!dateStr) continue;
-		const t = new Date(dateStr).getTime();
-		if (t > now && (earliest === null || t < earliest)) earliest = t;
-	}
-	return earliest;
-}
-
-function sortCases<T extends { status: string; urgency?: string | null; lastEmailDate?: string | null; actions?: { eventStartTime?: string | null; dueDate?: string | null; actionType?: string }[] }>(
-	cases: T[],
-): T[] {
-	return [...cases].sort((a, b) => {
-		// Primary: active cases first, resolved last
-		const aStatus = STATUS_ORDER[a.status] ?? 0;
-		const bStatus = STATUS_ORDER[b.status] ?? 0;
-		if (aStatus !== bStatus) return aStatus - bStatus;
-
-		// Secondary: urgency tier
-		const aUrg = URGENCY_ORDER[a.urgency ?? "UPCOMING"] ?? 2;
-		const bUrg = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
-		if (aUrg !== bUrg) return aUrg - bUrg;
-
-		// Tertiary: nearest upcoming event first (for cases with events)
-		const aEvent = getNextEventTime(a.actions);
-		const bEvent = getNextEventTime(b.actions);
-		if (aEvent !== null && bEvent !== null) return aEvent - bEvent;
-		if (aEvent !== null) return -1; // cases with events before those without
-		if (bEvent !== null) return 1;
-
-		// Quaternary: most recent email first (fallback)
-		const aDate = a.lastEmailDate ? new Date(a.lastEmailDate).getTime() : 0;
-		const bDate = b.lastEmailDate ? new Date(b.lastEmailDate).getTime() : 0;
-		return bDate - aDate;
-	});
-}
+import { computeCaseDecay } from "@denim/engine";
 
 export const GET = withAuth(async ({ userId, request }) => {
 	try {
@@ -99,7 +41,10 @@ export const GET = withAuth(async ({ userId, request }) => {
 		// Fetch more than needed to allow application-level sorting with cursor pagination
 		const cases = await prisma.case.findMany({
 			where,
-			orderBy: { lastEmailDate: "desc" },
+			orderBy: [
+				{ nextActionDate: { sort: "asc", nulls: "last" } },
+				{ lastEmailDate: "desc" },
+			],
 			take: limit + 1,
 			...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
 			select: {
@@ -125,7 +70,7 @@ export const GET = withAuth(async ({ userId, request }) => {
 				_count: { select: { caseEmails: true } },
 				actions: {
 					where: { status: "PENDING" },
-					take: 2,
+					take: 3,
 					orderBy: { dueDate: "asc" },
 					select: {
 						id: true,
@@ -133,6 +78,7 @@ export const GET = withAuth(async ({ userId, request }) => {
 						actionType: true,
 						dueDate: true,
 						eventStartTime: true,
+						eventEndTime: true,
 						status: true,
 					},
 				},
@@ -170,14 +116,37 @@ export const GET = withAuth(async ({ userId, request }) => {
 				actionType: a.actionType,
 				dueDate: a.dueDate?.toISOString() ?? null,
 				eventStartTime: a.eventStartTime?.toISOString() ?? null,
+				eventEndTime: a.eventEndTime?.toISOString() ?? null,
 				status: a.status,
 			})),
 		}));
 
-		// Sort: active first, then by urgency tier, then by date
-		const sorted = sortCases(formatted);
+		// Apply read-time freshness -- recalculate urgency without persisting
+		const now = new Date();
+		const fresh = formatted.map((c) => {
+			const decay = computeCaseDecay(
+				{
+					caseStatus: c.status as "OPEN" | "IN_PROGRESS" | "RESOLVED",
+					caseUrgency: c.urgency ?? "UPCOMING",
+					actions: c.actions.map((a) => ({
+						id: a.id,
+						status: a.status as "PENDING" | "DONE" | "EXPIRED" | "SUPERSEDED" | "DISMISSED",
+						dueDate: a.dueDate ? new Date(a.dueDate) : null,
+						eventStartTime: a.eventStartTime ? new Date(a.eventStartTime) : null,
+						eventEndTime: a.eventEndTime ? new Date(a.eventEndTime) : null,
+					})),
+					lastEmailDate: c.lastEmailDate ? new Date(c.lastEmailDate) : now,
+				},
+				now,
+			);
+			return {
+				...c,
+				urgency: decay.updatedUrgency,
+				status: decay.updatedStatus,
+			};
+		});
 
-		return NextResponse.json({ data: { cases: sorted, nextCursor } });
+		return NextResponse.json({ data: { cases: fresh, nextCursor } });
 	} catch (error) {
 		return handleApiError(error, {
 			service: "cases",
