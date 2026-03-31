@@ -5,6 +5,7 @@ import { synthesizeCase } from "@/lib/services/synthesis";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { inngest } from "./client";
+import { dailyStatusDecay } from "./daily-status-decay";
 
 const BATCH_SIZE = 20;
 
@@ -639,4 +640,4 @@ export const runSynthesis = inngest.createFunction(
   },
 );
 
-export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration, resynthesizeOnFeedback, dailyQualitySnapshot];
+export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration, resynthesizeOnFeedback, dailyQualitySnapshot, dailyStatusDecay];
