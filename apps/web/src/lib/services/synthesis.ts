@@ -21,7 +21,7 @@ function safeDate(value: string | null | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 import { buildSynthesisPrompt, parseSynthesisResponse } from "@denim/ai";
-import { generateFingerprint, matchAction } from "@denim/engine";
+import { generateFingerprint, matchAction, computeNextActionDate, computeCaseDecay } from "@denim/engine";
 import type {
   SynthesisEmailInput,
   SynthesisSchemaContext,
@@ -380,20 +380,65 @@ export async function synthesizeCase(
         });
       }
     }
+
+    // Compute nextActionDate from all PENDING actions for this case
+    const allPendingActions = await tx.caseAction.findMany({
+      where: { caseId, status: "PENDING" },
+      select: { dueDate: true, eventStartTime: true, status: true },
+    });
+    const nextActionDate = computeNextActionDate(
+      allPendingActions.map((a) => ({
+        status: a.status as "PENDING",
+        dueDate: a.dueDate,
+        eventStartTime: a.eventStartTime,
+      })),
+    );
+    await tx.case.update({
+      where: { id: caseId },
+      data: { nextActionDate },
+    });
   });
 
-  // 10. Deterministic urgency override: if all event actions are in the past, force NO_ACTION
-  const nowMs = Date.now();
-  const eventActions = synthesisResult.actions.filter((a) => a.actionType === "EVENT");
-  if (eventActions.length > 0) {
-    const allPast = eventActions.every((a) => {
-      const dateStr = a.eventStartTime ?? a.dueDate;
-      return dateStr ? new Date(dateStr).getTime() < nowMs : true;
+  // 10. Deterministic urgency + decay via computeCaseDecay
+  const nowForDecay = new Date();
+  const currentCase = await prisma.case.findUnique({
+    where: { id: caseId },
+    select: { status: true, urgency: true, lastEmailDate: true },
+  });
+  if (currentCase) {
+    const freshActions = await prisma.caseAction.findMany({
+      where: { caseId },
+      select: { id: true, status: true, dueDate: true, eventStartTime: true, eventEndTime: true },
     });
-    if (allPast && synthesisResult.urgency !== "NO_ACTION" && synthesisResult.urgency !== "IRRELEVANT") {
+    const decay = computeCaseDecay(
+      {
+        caseStatus: currentCase.status,
+        caseUrgency: currentCase.urgency ?? "UPCOMING",
+        actions: freshActions.map((a) => ({
+          id: a.id,
+          status: a.status as "PENDING" | "DONE" | "EXPIRED" | "SUPERSEDED" | "DISMISSED",
+          dueDate: a.dueDate,
+          eventStartTime: a.eventStartTime,
+          eventEndTime: a.eventEndTime,
+        })),
+        lastEmailDate: currentCase.lastEmailDate ?? nowForDecay,
+      },
+      nowForDecay,
+    );
+    if (decay.changed) {
+      if (decay.expiredActionIds.length > 0) {
+        await prisma.caseAction.updateMany({
+          where: { id: { in: decay.expiredActionIds } },
+          data: { status: "EXPIRED" },
+        });
+      }
       await prisma.case.update({
         where: { id: caseId },
-        data: { urgency: "NO_ACTION" },
+        data: {
+          urgency: decay.updatedUrgency,
+          status: decay.updatedStatus,
+          nextActionDate: decay.nextActionDate,
+        },
       });
     }
   }
