@@ -537,6 +537,7 @@ model Case {
   lastSenderName    String?             // Display name of most recent email sender
   lastSenderEntity  String?             // Enriched: "Mike Chen, City Planning"
   lastEmailDate     DateTime?           // Date of most recent email in case
+  nextActionDate    DateTime?           // MIN(dueDate, eventStartTime) across PENDING actions
 
   // --- SYNTHESIS TRACKING ---
   synthesizedAt DateTime?               // Set when synthesis completes; used to skip re-synthesis
@@ -556,7 +557,7 @@ model Case {
 
   @@index([schemaId, entityId])
   @@index([schemaId, status])
-  @@index([schemaId, status, urgency])
+  @@index([schemaId, status, nextActionDate])
   @@index([schemaId, viewedAt])
   @@map("cases")
 }
