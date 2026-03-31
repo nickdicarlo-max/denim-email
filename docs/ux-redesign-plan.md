@@ -103,7 +103,7 @@ const cases = await prisma.case.findMany({
     actions: { where: { status: 'PENDING' }, take: 2, orderBy: { dueDate: 'asc' } },
   },
   orderBy: [
-    // Urgency-first ordering (DB-level, not JS)
+    { nextActionDate: { sort: 'asc', nulls: 'last' } },
     { lastEmailDate: 'desc' },
   ],
   take: 30,
@@ -126,6 +126,13 @@ const cases = await prisma.case.findMany({
 7. **Status indicator** — visual only (color/icon, not text badge)
 
 ### Deterministic Status Decay (CRITICAL — No AI Involvement)
+
+**Status: IMPLEMENTED (2026-03-31)**
+- `computeNextActionDate` + `computeCaseDecay` in `packages/engine/src/actions/lifecycle.ts`
+- Daily cron: `apps/web/src/lib/inngest/daily-status-decay.ts` (6 AM ET)
+- Read-time freshness: applied in `/api/cases` route via `computeCaseDecay`
+- Feed sort: `nextActionDate ASC NULLS LAST, lastEmailDate DESC`
+- Post-synthesis urgency override now uses full `computeCaseDecay` (all action types)
 
 **Problem:** Today, Case.status and CaseAction.status are set at synthesis time and never updated.
 If we scan Monday, find a Friday event, a week later the case still shows as OPEN/IMMINENT.
@@ -426,19 +433,22 @@ When feed has <5 cases, show encouraging/funny messages:
 ### Landing page (`/welcome`)
 - Value proposition: "Your email, organized into action"
 - Visual: animated case cards being created from emails
-- Pricing: $5/month, 7-day free trial, cancel anytime
+- Pricing: $10/month, 7-day free trial, cancel anytime
 - CTA: "Start Free Trial" → `/onboarding`
 
 ### Onboarding (`/onboarding`)
 
 **Step 1: What are you tracking?**
-- "What kind of emails do you want organized?"
-- User types entity names (e.g., "Soccer", "1501 Sylvan")
+- "What topics from your email do you want to get organized?"
+ - Subheadline: "Pick one area of your life that generates too much email. You'll add more topics later."
+- Clickable interview categories  (e.g., "Kids Activities", "Work Projects", "Investments", "Something Else")
+
+**Step 2: Add the specific {Step 1 selected category} topics**
+- You wanted to organize Kids Activities, first enter the kids activities we will organize
+- text field input for Activities, like "Soccer", "Dance", "School Name", "Guitar Lessons"
+- text field, same some of the people who email you about these activities, like coaches and teacher names
 - Below their input: animated fake case cards appear using their words
 - Minimal UI — just a text input and animated preview
-
-**Step 2: Who sends you these emails?**
-- "Name a few people who email you about these"
 - User types names
 - Progressive disclosure: "You don't need everyone — just a few to help us find the rest"
 
@@ -462,7 +472,7 @@ When feed has <5 cases, show encouraging/funny messages:
 
 **Step 6: First feed (newly onboarded state)**
 - Explainer overlay/tooltips on first visit
-- "Here are your first cases. As more email arrives, we'll get smarter."
+- "Here are your first cases with actions. As more emails each day, we will organize those automatically."
 
 ---
 
@@ -644,7 +654,7 @@ model User {
 
 ## Design Decisions (Confirmed)
 
-1. **Inner Circle** = AI-detected priority tier ABOVE IMMINENT. The 2-3 most critical items right now. Feed shows these first with distinct visual treatment (e.g., glow, larger card, "Focus Now" badge).
+
 2. **Chrome extension + PWA** = Both, shared components. Same React component library at ~400px width. PWA for mobile/desktop standalone. Extension for Chrome sidebar while browsing. `components/` shared between `apps/web` and `apps/extension`.
 3. **Daily digest** = AI-generated smart summary email with deep links. "You have 3 items due today, 2 new cases since yesterday. Here's what needs attention..."
 4. **Notes** = Standalone by default, optionally linked to a topic. Appear in the unified feed alongside cases.
@@ -744,66 +754,41 @@ QUALITY TRACKING (daily snapshot)
 
 These fixes should be applied BEFORE the UX redesign because they directly affect case quality, which is what users see.
 
-### Fix 1: Add today's date to Extraction prompt (HIGH)
-**File:** `packages/ai/src/prompts/extraction.ts`
-- Add `today?: string` parameter to `buildExtractionPrompt()`
-- Include `TODAY'S DATE: ${today}` in system prompt near relevance assessment section
-**File:** `apps/web/src/lib/services/extraction.ts`
-- Pass `today: new Date().toISOString().slice(0, 10)` to prompt builder
+### Fix 1: Add today's date to Extraction prompt (HIGH) — ✅ COMPLETE
+**Commit:** d844bd6 (2026-03-24). `TODAY'S DATE: ${today}` in system prompt. Service passes today at extraction.ts line 176.
 
-### Fix 2: Add today's date to Case Splitting prompt (MEDIUM)
-**File:** `packages/ai/src/prompts/case-splitting.ts`
-- Add `today?: string` parameter to `buildCaseSplittingPrompt()`
-- Include in system prompt
-**File:** `apps/web/src/lib/services/cluster.ts`
-- Pass today to prompt builder in `aiCaseSplit()`
+### Fix 2: Add today's date to Case Splitting prompt (MEDIUM) — ✅ COMPLETE
+**Commit:** d844bd6 (2026-03-24). `today` param added to CaseSplittingInput. Service passes today at cluster.ts line 644.
 
-### Fix 3: Add Zod validation to Discovery Intelligence (MEDIUM)
-**File:** Create `packages/ai/src/parsers/discovery-intelligence-parser.ts`
-- Define Zod schema for `{ relevantQueries, excludeDomains, reasoning }`
-**File:** `apps/web/src/lib/services/discovery.ts` — use new parser
-**File:** `packages/ai/src/index.ts` — export new parser
+### Fix 3: Add Zod validation to Discovery Intelligence (MEDIUM) — ✅ COMPLETE
+**Commit:** d844bd6 (2026-03-24). Parser created at `packages/ai/src/parsers/discovery-intelligence-parser.ts`. Used at discovery.ts line 305.
 
-### Fix 4: Pass real frequency tables to Calibration (HIGH — learning loop)
-**File:** `apps/web/src/lib/services/cluster.ts` (line ~1124)
-- Currently: `frequencyTables: {}`
-- Fix: Thread `FrequencyTable[]` data from `splitCoarseClusters()` through to `applyCalibration()`
-- Or recompute frequency tables in `applyCalibration()` by reading case emails
+### Fix 4: Pass real frequency tables to Calibration (HIGH) — ✅ COMPLETE
+**Commit:** d844bd6 (2026-03-24). cluster.ts lines 1125-1188 compute real word frequency tables from case emails with case assignment info, top 20 per entity.
 
-### Fix 5: Add emoji to synthesis output (NEW — for UX redesign)
-**File:** `packages/ai/src/prompts/synthesis.ts`
-- Add to prompt: "Assign a single emoji (1-2 chars) that represents this case's topic/activity"
-**File:** `packages/ai/src/parsers/synthesis-parser.ts`
-- Add `emoji: z.string().optional()` to Zod schema
-**File:** `apps/web/prisma/schema.prisma`
-- Add `emoji String?` to Case model
+### Fix 5: Add emoji to synthesis output — ✅ COMPLETE
+**Commit:** d844bd6 (2026-03-24). `Case.emoji` field added to schema. Synthesis prompt requests emoji. Parser validates with Zod.
 
-### Fix 6: Add mood detection to synthesis output (NEW — celebratory events)
-**File:** `packages/ai/src/prompts/synthesis.ts`
-- Add MOOD ASSESSMENT section to system prompt with 5 levels: CELEBRATORY, POSITIVE, NEUTRAL, URGENT, NEGATIVE
-- Include examples of celebratory detection (awards, honors, milestones, graduations)
-**File:** `packages/ai/src/parsers/synthesis-parser.ts`
-- Add `mood: z.enum(["CELEBRATORY","POSITIVE","NEUTRAL","URGENT","NEGATIVE"]).default("NEUTRAL")`
-**File:** `apps/web/prisma/schema.prisma`
-- Add `mood String @default("NEUTRAL")` to Case model
+### Fix 6: Add mood detection to synthesis output — ✅ COMPLETE
+**Commit:** 5d7c720 (2026-03-30). `Case.mood` field added to schema with `@default("NEUTRAL")`. Synthesis prompt includes MOOD ASSESSMENT section with 5 levels.
 
 ---
 
 ## 17. Revised Implementation Phases
 
-### Phase 0: AI Pipeline Fixes (Before UX work)
-- Fix 1: Today's date in extraction prompt
-- Fix 2: Today's date in case-splitting prompt
-- Fix 3: Zod parser for discovery intelligence
-- Fix 4: Real frequency tables in calibration
-- Fix 5: Emoji in synthesis output
-- Fix 6: Mood detection in synthesis output (CELEBRATORY/POSITIVE/NEUTRAL/URGENT/NEGATIVE)
-- Fix A: Time-neutral language directive in synthesis prompt (absolute dates, no "this week")
-- Fix B: Time-neutral language in extraction summaries
-- Fix C: Action descriptions must use absolute dates
-- Fix E: Broaden post-synthesis expiry check to ALL action types (not just EVENT)
-- **Schema:** `prisma db push` for new `emoji` + `mood` fields on Case
-- **Verify:** Re-run pipeline, confirm: mood assigned, absolute dates in summaries, all action types expire
+### Phase 0: AI Pipeline Fixes (Before UX work) — ✅ COMPLETE
+- ✅ Fix 1: Today's date in extraction prompt
+- ✅ Fix 2: Today's date in case-splitting prompt
+- ✅ Fix 3: Zod parser for discovery intelligence
+- ✅ Fix 4: Real frequency tables in calibration
+- ✅ Fix 5: Emoji in synthesis output
+- ✅ Fix 6: Mood detection in synthesis output
+- ⚠️ Fix A: Time-neutral language directive in synthesis prompt — PARTIAL (today's date provided, but no explicit "don't use relative time" rule)
+- ⚠️ Fix B: Time-neutral language in extraction summaries — PARTIAL (same issue)
+- ✅ Fix C: Action descriptions must use absolute dates — ISO 8601 enforced in synthesis prompt
+- ⚠️ Fix E: Broaden post-synthesis expiry check — PARTIAL (only checks EVENT actions, misses DEADLINE/PAYMENT)
+- ✅ **Schema:** `emoji` + `mood` fields on Case pushed to DB
+- **Remaining work:** Fix A full directive, Fix B full directive, Fix E broadened filter
 
 ### Phase 1: Performance + Foundation (Week 1-2)
 - Parallel queries + loading.tsx skeletons (from perf plan)
@@ -942,20 +927,20 @@ Options:
 
 ### Summary of Temporal Fixes
 
-| Fix | Priority | Where | What |
-|-----|----------|-------|------|
-| A | HIGH | Synthesis prompt | Time-neutral language directive (absolute dates, no "this week") |
-| B | HIGH | Extraction prompt | Same for email summaries |
-| C | MEDIUM | Synthesis prompt | Action titles/descriptions use absolute dates |
-| D | MEDIUM | UI components | Freshness indicator + "last updated" display |
-| E | HIGH | Synthesis service | DEADLINE/PAYMENT actions also expire (not just EVENT) |
-| F | LOW | Synthesis prompt | summary.end includes "as of [date]" context |
-| G | MEDIUM | Feed API/UI | Staleness-aware indicators for old un-refreshed cases |
-| H | LOW | Synthesis/cron | Recurring events need re-evaluation after all dates pass |
+| Fix | Priority | Where | What | Status |
+|-----|----------|-------|------|--------|
+| A | HIGH | Synthesis prompt | Time-neutral language directive (absolute dates, no "this week") | ⚠️ PARTIAL — today's date provided but no explicit directive |
+| B | HIGH | Extraction prompt | Same for email summaries | ⚠️ PARTIAL — same issue |
+| C | MEDIUM | Synthesis prompt | Action titles/descriptions use absolute dates | ✅ COMPLETE — ISO 8601 enforced |
+| D | MEDIUM | UI components | Freshness indicator + "last updated" display | Not started |
+| E | HIGH | Synthesis service | DEADLINE/PAYMENT actions also expire (not just EVENT) | ⚠️ PARTIAL — only EVENT checked |
+| F | LOW | Synthesis prompt | summary.end includes "as of [date]" context | Not started |
+| G | MEDIUM | Feed API/UI | Staleness-aware indicators for old un-refreshed cases | Not started |
+| H | LOW | Synthesis/cron | Recurring events need re-evaluation after all dates pass | Not started |
 
 ### When to Implement
-- **Phase 0** (with AI audit fixes): Fixes A, B, C, E — prompt changes, zero UI work
-- **Phase 1** (with foundation): Fix D — freshness indicator is simple UI
+- **Phase 0** (with AI audit fixes): ✅ Fix C done. ⚠️ Fixes A, B, E still need completion.
+- **Phase 1** (with foundation): Fix D — freshness indicator is simple UI. **Also: deterministic status decay (computeCaseDecay + daily cron).**
 - **Phase 2** (with case feed UX): Fix G — staleness-aware sorting/indicators
 - **Phase 5** (polish): Fixes F, H — lower priority refinements
 

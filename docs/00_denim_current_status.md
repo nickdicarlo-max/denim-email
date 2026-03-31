@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-25 (AI audit fixes complete, UX redesign planned — branch upgrade/major-deps-2026)
+Last updated: 2026-03-30 (major dep migration merged to main, UX overhaul branch started)
 
 ## Completed
 
@@ -632,56 +632,92 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | 2: Gmail + Interview UI | **Complete** | OAuth, Gmail client, Cards 1-4, entity groups |
 | 3: Extraction Pipeline | **Complete** | Gemini extraction, relevance gating, entity routing |
 | 4: Clustering Engine | **Complete** | Two-pass gravity model, case splitting |
-| 5: Synthesis Service | **Complete** | Claude enrichment, urgency, action dedup |
-| 6A: Case Review UI | **Mostly complete** | Feed, detail, filters, actions, feedback. **Remaining:** Email Move UI, Case Merge/Split UI, full UI refactor (user designing) |
+| 5: Synthesis Service | **Complete** | Claude enrichment, urgency, action dedup, emoji, mood |
+| 6A: Case Review UI | **Mostly complete** | Feed, detail, filters, actions, feedback. **Remaining:** Full UX overhaul (user designing in Stitch) |
 | 6B: Chrome Extension | Deferred | After web quality validated |
-| 7: Feedback & Quality | **Mostly complete** | EMAIL_MOVE + ExclusionRule + QualityService + re-synthesis + API. **Remaining:** CASE_MERGE/SPLIT processing, Admin dashboard, learning loop |
+| 7: Feedback & Quality | **Mostly complete** | EMAIL_MOVE + ExclusionRule + QualityService + re-synthesis + API. **Remaining:** CASE_MERGE/SPLIT processing, learning loop |
+| AI Audit Fixes | **Complete** | Today's date, Zod validation, frequency tables, emoji, mood — all 6 fixes landed |
+| Major Dep Migration | **Complete** | Merged to main 2026-03-30 (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19, Next.js 16, Tailwind 4, Inngest 4) |
+| UX Overhaul | **In Progress** | Branch: feature/ux-overhaul. 29 screen briefs, schema flow analysis. Waiting on Stitch designs + pre-UX code fixes. |
 | 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
 
-## In Progress: Major Dependency Migration (2026-03-23)
+## Major Dependency Migration — MERGED (2026-03-30)
 
-**Branch:** `upgrade/major-deps-2026` — feature work paused during migration.
-**Plan:** `docs/major-deps-migration-plan.md`
+**Branch:** `upgrade/major-deps-2026` → merged to `main` on 2026-03-30.
 
-**All 7 phases complete** (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19 + Next.js 16, Tailwind 4, Inngest 4). Ready for merge to main.
+All 7 phases complete (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19 + Next.js 16, Tailwind 4, Inngest 4). Also included: AI pipeline audit fixes, Case.emoji, Case.mood fields, UX redesign docs.
 
-Key changes already landed:
+Key changes:
 - Prisma 7 requires `prisma.config.ts` + `@prisma/adapter-pg` driver adapter
 - Prisma client generated to `prisma/generated/prisma/client/` (tsconfig path alias)
 - Zod 4 requires `z.record(keyType, valueType)` (no single-arg)
 - React 19.2.4 + Next.js 16.2.1: async `cookies()`, async `params` in Server Components
-- `next.config.js` → `next.config.ts` (typed config)
-- Fixed 3 broken API routes (`actions/[id]`, `quality/[schemaId]`, `quality/[schemaId]/history`) — `withAuth` never forwarded params; converted to URL extraction
-- Tailwind 4.2.2: `@tailwindcss/postcss` plugin, `@import "tailwindcss"` + `@config`, class renames (shadow-sm→shadow-xs, outline-none→outline-hidden)
-- Inngest 4.0.4: `createFunction` 3-arg→2-arg (triggers merged into config), removed EventSchemas
-- Fixed: 2 missing Inngest function exports (resynthesizeOnFeedback, dailyQualitySnapshot)
-- Fixed: Biome 2 config keys (organizeImports→assist, files.ignore→files.includes)
+- `next.config.js` → `next.config.ts`, `middleware.ts` → `proxy.ts`
+- Tailwind 4.2.2: `@tailwindcss/postcss`, class renames (shadow-sm→shadow-xs, outline-none→outline-hidden)
+- Inngest 4.0.4: `createFunction` 3-arg→2-arg, removed EventSchemas
 - Type errors reduced from 174 → 0
+
+## In Progress: UX Overhaul (2026-03-30)
+
+**Branch:** `feature/ux-overhaul` (created from main)
+
+### Documentation created/updated:
+- `docs/stitch-screen-briefs.md` — 29 screens for Stitch design, with schema population mapping per screen
+- `docs/screen-schema-flow.md` — Mermaid diagrams + completeness audit confirming all 18 schema models are populated
+- `docs/ux-redesign-plan.md` — Phase 0 fixes marked complete, temporal staleness status updated
+- `docs/ai-call-audit.md` — 4 original issues marked FIXED, remaining issues documented
+
+### Case Urgency Sort & Decay (2026-03-31)
+
+**Problem:** Case feed sorted by `lastEmailDate DESC` -- recent emails first regardless of urgency. Urgency tiers frozen at synthesis time, never updated. Post-synthesis override only checked EVENT actions, missing TASK/PAYMENT/DEADLINE/RESPONSE.
+
+**Fix:**
+- New `Case.nextActionDate` field: `MIN(dueDate, eventStartTime)` across PENDING actions
+- `computeCaseDecay` pure function in `@denim/engine`: expires past actions, recalculates urgency tiers
+- `computeNextActionDate` pure function: computes denormalized sort key
+- Daily Inngest cron (6 AM ET): persists decay to DB
+- Read-time freshness: API applies `computeCaseDecay` at read time between cron runs
+- Feed sort: `nextActionDate ASC NULLS LAST, lastEmailDate DESC` (DB-level, no in-memory re-sort)
+- Post-synthesis urgency override replaced with full `computeCaseDecay` (covers all action types)
+- 18 unit tests for lifecycle functions
+
+### Remaining code gaps (pre-UX implementation):
+1. **Time-neutral language directives** — synthesis + extraction prompts have today's date but no explicit "don't use relative time" rule
+2. ~~**Post-synthesis expiry scope**~~ — FIXED: now uses `computeCaseDecay` which checks all action types
+3. ~~**Deterministic status decay**~~ — FIXED: `computeCaseDecay` + daily cron + read-time freshness
+4. **Schema additions needed** — UserNote, NotificationPreference models; User.stripeCustomerId/subscriptionStatus/trialEndDate fields
 
 ## Next Steps
 
-### Needs Scoping (design + plan before building)
-- **Learning loop** — gravity model weight adjustment from user corrections. Tag weight recalibration, entity confidence adjustment, ClusteringConfig param updates. The `runClusteringCalibration` Inngest function exists as a stub — needs real learning algorithm.
-- **Admin dashboard** — per-schema quality metrics, accuracy graph, correction breakdown, event log, email-level clustering debug. Decide: separate `/admin` page or integrated into schema detail?
+### Immediate: Pre-UX Code Fixes
+1. **Time-neutral language directives** — Add explicit "don't use relative time" rules to synthesis + extraction prompts
+2. ~~**Broaden post-synthesis expiry**~~ — DONE (2026-03-31): `computeCaseDecay` handles all action types
+3. ~~**computeCaseDecay pure function**~~ — DONE (2026-03-31): `packages/engine/src/actions/lifecycle.ts` + 18 unit tests
+4. ~~**Daily status decay cron**~~ — DONE (2026-03-31): `apps/web/src/lib/inngest/daily-status-decay.ts` (6 AM ET)
+5. **Schema additions** — UserNote, NotificationPreference models; User.stripe* fields for billing
 
-### Phase 6A Remaining
-- Email Move UI in case detail (case picker dropdown)
-- Case Merge / Case Split UI + backend processing
-- Full UI refactor (user will provide designs)
+### UX Overhaul Phases (waiting on Stitch designs for Phases 2-3)
+- **Phase 1**: Performance + routing foundation (parallel queries, loading.tsx, smart redirect, /feed route, bottom nav, status decay)
+- **Phase 2**: Case Feed UX — NEEDS STITCH DESIGNS (card component, feed layout, filters, empty states)
+- **Phase 3**: New User Flow — NEEDS STITCH DESIGNS (landing page, onboarding, Stripe, scanning animation)
+- **Phase 4**: Notes & Settings (UserNote CRUD, topic editor, dashboard, notifications)
+- **Phase 5**: Calendar & Polish (calendar integration, PWA, digest email, first-run tooltips)
+
+### Needs Scoping (design + plan before building)
+- **Learning loop** — gravity model weight adjustment from user corrections
+- **Admin dashboard** — per-schema quality metrics
 
 ### Minor Fixes (ongoing)
 - Context-aware Primary Entity Type description on Card 4
-- Production OAuth: remove `prompt: "consent"` (forces consent screen every sign-in)
+- Production OAuth: remove `prompt: "consent"`
 
 ### Future Phases
 - Phase 6B: Chrome Extension & Side Panel
-- Phase 7.5: Periodic scanning (automated daily scans at set times)
-- Phase 8: Calendar Integration (progressive OAuth, CalendarService)
+- Phase 7.5: Periodic scanning (automated daily scans)
+- Phase 8: Calendar Integration
 - Phase 9: Scan Automation & Delta Processing
-- Broader validation scan (WHO `from:` queries discovering more WHATs)
-- Dashboard entity management (add/remove/merge entities post-finalize)
 
 ## Pipeline Architecture (updated 2026-03-22)
 
@@ -760,40 +796,35 @@ dailyQualitySnapshot (cron: midnight daily)
 - @supabase/ssr: installed for cookie-based auth
 - @google/generative-ai: installed in apps/web
 
-## AI Pipeline Audit Fixes (2026-03-25)
+## AI Pipeline Audit Fixes (2026-03-24, commit d844bd6) — ALL RESOLVED
 
-Commit `d844bd6` — 5 fixes to improve AI call quality before UX redesign:
+All 4 original HIGH/MEDIUM audit issues from `docs/ai-call-audit.md` are fixed:
 
-1. **Today's date → Extraction prompt** — Gemini can now assess temporal relevance (urgent vs stale emails)
-2. **Today's date → Case Splitting prompt** — Claude distinguishes past vs upcoming events when splitting
-3. **Zod parser → Discovery Intelligence** — Was raw `JSON.parse`; now validated with typed schema
-4. **Real frequency tables → Calibration** — Was hardcoded `{}`. Now computes word frequencies from case emails with case assignment info. Calibration AI can actually learn from word patterns.
-5. **Emoji → Synthesis output** — AI assigns a thematic emoji per case (e.g., ⚽, 🏠). New `emoji` field on Case model.
+1. ✅ **Today's date → Extraction prompt** — Gemini can now assess temporal relevance
+2. ✅ **Today's date → Case Splitting prompt** — Claude distinguishes past vs upcoming events
+3. ✅ **Zod parser → Discovery Intelligence** — Full Zod validation, no more raw JSON.parse
+4. ✅ **Real frequency tables → Calibration** — Word frequencies computed from case emails with case assignment info
+5. ✅ **Emoji → Synthesis output** — `Case.emoji` field, AI assigns thematic emoji
+6. ✅ **Mood → Synthesis output** — `Case.mood` field (CELEBRATORY/POSITIVE/NEUTRAL/URGENT/NEGATIVE)
 
-### ⚠️ Required: Prisma schema push
+Remaining issues documented in updated `docs/ai-call-audit.md`: time-neutral language directives (partial), post-synthesis expiry scope (EVENT only), status decay (not implemented).
 
-The `emoji String?` field was added to the Case model in `schema.prisma`. Before running the pipeline:
+## UX Redesign Plan (2026-03-30)
 
-```bash
-# From apps/web/ with DATABASE_URL set:
-npx prisma db push
-```
+Full plan documented in `docs/ux-redesign-plan.md`. Screen briefs in `docs/stitch-screen-briefs.md` (29 screens). Data flow analysis in `docs/screen-schema-flow.md`.
 
-Or use the supabase-db skill to run the migration via the pooler URL.
-
-## UX Redesign Plan (2026-03-25)
-
-Full plan documented in `docs/ux-redesign-plan.md`. Key decisions:
-
+Key decisions:
 - **Terminology**: "Topic" (not Schema/Channel)
 - **Routing**: `/` smart redirects returning users to `/feed` (zero clicks)
 - **Unified feed**: All topics in one view, sorted by urgency (Inner Circle → Imminent → This Week → Upcoming)
 - **Mobile-first**: Bottom nav (Feed / + Note / Settings), shared components with Chrome extension
 - **Deterministic status decay**: Cases auto-update as time passes without AI calls
+- **Onboarding**: Category → Names+People → Goals → Subscribe+Connect → Scanning → Review (6 steps)
 - **Design collaboration**: Stitch by Google → DESIGN.md + screenshots → Claude Code implements
 
-### Next steps
-- **Phase 0**: ✅ Complete (AI audit fixes)
-- **Phase 1**: Performance + routing foundation (parallel queries, loading.tsx, smart redirect, new route structure)
+### Status
+- **Phase 0**: ✅ Complete (AI audit fixes, emoji, mood) — 3 partial items remain (time-neutral directives, expiry scope)
+- **Pre-Phase 1**: Code fixes needed (time-neutral prompts, expiry broadening, computeCaseDecay, daily cron, schema additions)
+- **Phase 1**: Performance + routing foundation
 - **Phase 2+**: Waiting on Stitch designs for case feed, landing page, onboarding
-- **Parallel**: User designing screens in Stitch; autoresearch perf agent (see `docs/autoresearch-perf-agent-plan.md`)
+- **Parallel**: User designing screens in Stitch
