@@ -1196,10 +1196,22 @@ export async function applyCalibration(
     },
     coarseClusters,
     frequencyTables,
-    corrections: corrections.map((c) => ({
-      type: c.eventType,
-      ...(c.payload as Record<string, unknown>),
-    })),
+    corrections: corrections.map((c) => {
+      const payload = c.payload as Record<string, unknown>;
+      const caseTitleById = new Map(cases.map((cs) => [cs.id, cs.title]));
+      const resolveCase = (id: unknown): string => {
+        if (typeof id !== "string") return String(id);
+        const title = caseTitleById.get(id);
+        return title ? `${title} (${id})` : id;
+      };
+      return {
+        type: c.eventType as string,
+        ...(typeof payload.fromCaseId === "string" ? { from: resolveCase(payload.fromCaseId) } : {}),
+        ...(typeof payload.toCaseId === "string" ? { to: resolveCase(payload.toCaseId) } : {}),
+        ...(typeof payload.caseId === "string" ? { caseId: resolveCase(payload.caseId) } : {}),
+        ...(Array.isArray(payload.cases) ? { cases: payload.cases.map(resolveCase) } : {}),
+      };
+    }),
   });
 
   try {
@@ -1213,6 +1225,13 @@ export async function applyCalibration(
     });
 
     const parsed = parseClusteringCalibrationResponse(aiResult.content);
+
+    // Defense in depth: clamp tuned parameters to safe bounds
+    const clamp = (val: number, min: number, max: number) => Math.min(max, Math.max(min, val));
+    parsed.tunedConfig.mergeThreshold = clamp(parsed.tunedConfig.mergeThreshold, 20, 80);
+    parsed.tunedConfig.subjectMatchScore = clamp(parsed.tunedConfig.subjectMatchScore, 10, 60);
+    parsed.tunedConfig.actorAffinityScore = clamp(parsed.tunedConfig.actorAffinityScore, 0, 40);
+    parsed.tunedConfig.timeDecayFreshDays = clamp(parsed.tunedConfig.timeDecayFreshDays, 14, 120);
 
     // Persist learned config + vocabulary
     const newRunCount = schema.calibrationRunCount + 1;
