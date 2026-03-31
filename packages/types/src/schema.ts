@@ -297,9 +297,12 @@ export interface SynthesisSchemaContext {
 
 export type UrgencyLevel = "IMMINENT" | "THIS_WEEK" | "UPCOMING" | "NO_ACTION" | "IRRELEVANT";
 
+export type MoodLevel = "CELEBRATORY" | "POSITIVE" | "NEUTRAL" | "URGENT" | "NEGATIVE";
+
 export interface SynthesisResult {
   title: string;
   emoji?: string;
+  mood?: MoodLevel;
   summary: {
     beginning: string;
     middle: string;

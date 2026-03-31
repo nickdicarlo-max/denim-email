@@ -308,6 +308,7 @@ export async function synthesizeCase(
       data: {
         title: synthesisResult.title,
         emoji: synthesisResult.emoji ?? null,
+        mood: synthesisResult.mood ?? "NEUTRAL",
         summary: synthesisResult.summary,
         displayTags: synthesisResult.displayTags,
         primaryActor: synthesisResult.primaryActor ?? Prisma.JsonNull,
