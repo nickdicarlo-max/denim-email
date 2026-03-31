@@ -774,10 +774,11 @@ Do not build in-memory caches in services.
 
 ## Current Status
 
-Phases 0–5 complete. Phase 6A (Case Review UI) complete. Pipeline quality fixes
-verified (2026-03-20). See docs/00_denim_current_status.md for full details.
+Phases 0–7 mostly complete. Major dep migration merged (2026-03-30). Pre-UX code
+fixes landed (2026-03-31): case urgency sort & decay, AI prompt quality (time-neutral
+summaries, mood, body/email caps, calibration bounds). See docs/00_denim_current_status.md.
 
-**Next:** Card 4 UX improvements, Phase 6 (Chrome Extension), schema ACTIVE transition.
+**Next:** UX overhaul (waiting on Stitch designs for Phases 2-3), schema additions (UserNote, billing fields).
 
 ## Commands
 

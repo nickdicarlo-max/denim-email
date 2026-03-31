@@ -636,9 +636,11 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | 6A: Case Review UI | **Mostly complete** | Feed, detail, filters, actions, feedback. **Remaining:** Full UX overhaul (user designing in Stitch) |
 | 6B: Chrome Extension | Deferred | After web quality validated |
 | 7: Feedback & Quality | **Mostly complete** | EMAIL_MOVE + ExclusionRule + QualityService + re-synthesis + API. **Remaining:** CASE_MERGE/SPLIT processing, learning loop |
-| AI Audit Fixes | **Complete** | Today's date, Zod validation, frequency tables, emoji, mood — all 6 fixes landed |
+| AI Audit Fixes | **Complete** | All original + remaining issues resolved 2026-03-31 |
+| AI Prompt Quality | **Complete** | Time-neutral language, body/email caps, mood, signature noise, calibration bounds (2026-03-31) |
+| Case Urgency & Decay | **Complete** | nextActionDate sort, computeCaseDecay, daily cron, read-time freshness (2026-03-31) |
 | Major Dep Migration | **Complete** | Merged to main 2026-03-30 (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19, Next.js 16, Tailwind 4, Inngest 4) |
-| UX Overhaul | **In Progress** | Branch: feature/ux-overhaul. 29 screen briefs, schema flow analysis. Waiting on Stitch designs + pre-UX code fixes. |
+| UX Overhaul | **In Progress** | Branch: feature/ux-overhaul. Pre-UX code fixes done. Waiting on Stitch designs for Phases 2-3. |
 | 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
@@ -683,16 +685,37 @@ Key changes:
 - Post-synthesis urgency override replaced with full `computeCaseDecay` (covers all action types)
 - 18 unit tests for lifecycle functions
 
+### AI Prompt Quality Fixes (2026-03-31)
+
+**Extraction prompt** (`packages/ai/src/prompts/extraction.ts`):
+- Time-neutral summaries: absolute dates enforced ("Tue Apr 1" not "next Tuesday")
+- Body capped at 8000 chars (prevents token waste on forwarded chains)
+- Attachment section placeholder (ready for OCR, `ExtractionInput.attachments` optional)
+- Signature noise rule: ignore signatures/footers for entity detection
+
+**Synthesis prompt** (`packages/ai/src/prompts/synthesis.ts`):
+- Mood assessment added (CELEBRATORY/POSITIVE/NEUTRAL/URGENT/NEGATIVE) — wired to parser, type, and `Case.mood` DB write
+- Time-neutral summaries: absolute dates enforced in all sections
+- `summary.end` now includes "As of [date]:" temporal anchor
+- Action titles must include day+date+time ("Practice Tue Apr 1 5:30 PM")
+- Event end time guidance for duration extraction
+- Email cap at 30 most recent (prevents quality degradation on large cases)
+
+**Calibration prompt** (`packages/ai/src/prompts/clustering-calibration.ts`):
+- Parameter bounds in prompt + defense-in-depth clamping in service (mergeThreshold 20-80, etc.)
+- Zero-correction first run: returns current params unchanged, builds initial discriminator vocabulary
+- Corrections enriched with case titles (not bare IDs)
+
 ### Remaining code gaps (pre-UX implementation):
-1. **Time-neutral language directives** — synthesis + extraction prompts have today's date but no explicit "don't use relative time" rule
-2. ~~**Post-synthesis expiry scope**~~ — FIXED: now uses `computeCaseDecay` which checks all action types
+1. ~~**Time-neutral language directives**~~ — FIXED (2026-03-31): extraction + synthesis prompts enforce absolute dates
+2. ~~**Post-synthesis expiry scope**~~ — FIXED: `computeCaseDecay` checks all action types
 3. ~~**Deterministic status decay**~~ — FIXED: `computeCaseDecay` + daily cron + read-time freshness
 4. **Schema additions needed** — UserNote, NotificationPreference models; User.stripeCustomerId/subscriptionStatus/trialEndDate fields
 
 ## Next Steps
 
-### Immediate: Pre-UX Code Fixes
-1. **Time-neutral language directives** — Add explicit "don't use relative time" rules to synthesis + extraction prompts
+### Immediate: Pre-UX Code Fixes — ALL DONE except schema additions
+1. ~~**Time-neutral language directives**~~ — DONE (2026-03-31): extraction + synthesis prompts enforce absolute dates
 2. ~~**Broaden post-synthesis expiry**~~ — DONE (2026-03-31): `computeCaseDecay` handles all action types
 3. ~~**computeCaseDecay pure function**~~ — DONE (2026-03-31): `packages/engine/src/actions/lifecycle.ts` + 18 unit tests
 4. ~~**Daily status decay cron**~~ — DONE (2026-03-31): `apps/web/src/lib/inngest/daily-status-decay.ts` (6 AM ET)
@@ -719,7 +742,7 @@ Key changes:
 - Phase 8: Calendar Integration
 - Phase 9: Scan Automation & Delta Processing
 
-## Pipeline Architecture (updated 2026-03-22)
+## Pipeline Architecture (updated 2026-03-31)
 
 ```
 Interview finalize / Dashboard "Scan Emails"
@@ -734,7 +757,9 @@ fanOutExtraction (concurrency: 1/schema)
   → emits extraction.batch.process per batch
 
 extractBatch (concurrency: 3/schema, retries: 3)
-  → Gemini extracts summary/tags/entities per email
+  → Gemini extracts summary/tags/entities per email (body capped 8000 chars)
+  → Time-neutral summaries enforced (absolute dates only)
+  → Signature noise filtered from entity detection
   → Holistic relevance scoring (threshold 0.4)
   → Content-first entity routing:
     1. Gemini relevanceEntity → match known PRIMARY
@@ -759,9 +784,13 @@ runCaseSplitting (concurrency: 1/schema, retries: 2)
 
 runSynthesis (concurrency: 2/schema, retries: 2)
   → Loads ALL OPEN cases for schema (not from cluster refs)
-  → Claude enriches each case: title, summary, tags, actor, actions, urgency
+  → Claude enriches each case: title, summary, tags, actor, actions, urgency, emoji, mood
+  → Capped at 30 most recent emails per case
+  → Time-neutral summaries + action titles with absolute dates
+  → Event end times extracted when duration specified
   → Passes explicit today to synthesis prompt for date-aware urgency
-  → Post-synthesis: deterministic urgency override (all-past-events → NO_ACTION)
+  → Post-synthesis: computeCaseDecay expires past actions, recalculates urgency (all action types)
+  → Writes nextActionDate (MIN of PENDING action dates) for feed sorting
   → IRRELEVANT cases auto-resolved
   → action dedup via fingerprinting
   → Schema ONBOARDING → ACTIVE transition
@@ -769,14 +798,22 @@ runSynthesis (concurrency: 2/schema, retries: 2)
   → emits synthesis.case.completed per case
 
 runClusteringCalibration (concurrency: 1/schema, retries: 1)
-  → Reads user corrections, adjusts params + vocabulary
+  → Reads user corrections (enriched with case titles), adjusts params + vocabulary
   → Only runs in CALIBRATING or TRACKING phases
-  → Real frequency tables now computed from case emails (previously hardcoded empty)
+  → Real frequency tables computed from case emails
+  → Parameter bounds enforced (prompt + service clamping)
+  → Zero-correction first run: builds vocabulary only, no parameter drift
   → Learning loop active in CALIBRATING/TRACKING phases
 
 resynthesizeOnFeedback (concurrency: 2/schema, retries: 2)
   → Triggered by feedback.case.modified events
   → Re-synthesizes affected case after email move or other corrections
+
+dailyStatusDecay (cron: 6 AM ET daily)
+  → Expires past PENDING actions, recalculates urgency tiers
+  → Resolves cases with no remaining PENDING actions
+  → Updates nextActionDate for feed sorting
+  → Zero AI calls — pure deterministic logic via computeCaseDecay
 
 dailyQualitySnapshot (cron: midnight daily)
   → Computes QualitySnapshot for all ACTIVE schemas
@@ -805,9 +842,9 @@ All 4 original HIGH/MEDIUM audit issues from `docs/ai-call-audit.md` are fixed:
 3. ✅ **Zod parser → Discovery Intelligence** — Full Zod validation, no more raw JSON.parse
 4. ✅ **Real frequency tables → Calibration** — Word frequencies computed from case emails with case assignment info
 5. ✅ **Emoji → Synthesis output** — `Case.emoji` field, AI assigns thematic emoji
-6. ✅ **Mood → Synthesis output** — `Case.mood` field (CELEBRATORY/POSITIVE/NEUTRAL/URGENT/NEGATIVE)
+6. ✅ **Mood → Synthesis output** — `Case.mood` field (CELEBRATORY/POSITIVE/NEUTRAL/URGENT/NEGATIVE) — prompt+parser+service wired 2026-03-31
 
-Remaining issues documented in updated `docs/ai-call-audit.md`: time-neutral language directives (partial), post-synthesis expiry scope (EVENT only), status decay (not implemented).
+All remaining issues from `docs/ai-call-audit.md` resolved on 2026-03-31: time-neutral language (extraction + synthesis), post-synthesis expiry (all action types via computeCaseDecay), status decay (daily cron + read-time freshness), body truncation (8000 chars), email cap (30 per synthesis), signature noise filtering, calibration parameter bounds.
 
 ## UX Redesign Plan (2026-03-30)
 
