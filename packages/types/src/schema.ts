@@ -98,6 +98,12 @@ export interface ExtractionInput {
   date: string; // ISO string
   body: string;
   isReply: boolean;
+  attachments?: Array<{
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    extractionSummary?: string; // filled when OCR is implemented
+  }>;
 }
 
 export interface ExtractionSchemaContext {
@@ -347,6 +353,10 @@ export interface HypothesisValidation {
     confidence: number;
     source: string;
     emailCount?: number;
+    emailIndices?: number[];
+    likelyAliasOf?: string | null;
+    aliasConfidence?: number | null;
+    aliasReason?: string | null;
   }[];
   confirmedTags: string[];
   suggestedTags: {

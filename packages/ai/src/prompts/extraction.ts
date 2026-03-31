@@ -81,6 +81,10 @@ Use this to assess temporal relevance. An email about an event 3 months ago is l
 
 For each email you must:
 1. Generate a concise 1-2 sentence summary capturing the key information and intent of the email.
+   IMPORTANT: Write summaries using absolute dates, not relative time references. These summaries are stored permanently and read days or weeks later.
+   WRONG: "Practice moved to next Tuesday", "Meeting scheduled for this Friday", "Payment due in 3 days"
+   RIGHT: "Practice moved to Tue Apr 1", "Meeting scheduled for Fri Apr 4", "Payment due by Thu Apr 3"
+   Use TODAY'S DATE above to convert any relative references found in the email body into absolute dates.
 2. Assign tags ONLY from the provided taxonomy below. Do not invent new tags. Assign an empty array if no tags apply.
 3. Detect entities from the provided entity list. Match by name or aliases. Include a confidence score (0-1) for each match.
 4. Extract fields matching the field definitions below. Only include fields where a value is clearly present in the email.
@@ -115,6 +119,7 @@ CRITICAL RULES:
 4. DetectedEntities must reference entities from the known entities list. Do not invent entities.
 5. ExtractedData keys must match field names from the field definitions. Only include fields with clear values.
 6. Confidence scores for entities should reflect how clearly the entity is referenced (1.0 = explicit mention, 0.5 = implied).
+7. Ignore email signatures, footers, and boilerplate when detecting entities and assessing relevance. Signature blocks typically appear after "-- ", "Sent from", or contain phone numbers, addresses, and job titles. An organization name in a signature does NOT count as the email being "about" that organization. Only detect entities from the subject line and main body content.
 
 Required JSON shape:
 {
@@ -130,6 +135,10 @@ Required JSON shape:
 }
 
 function buildUserPrompt(email: ExtractionInput): string {
+  const attachmentSection = email.attachments && email.attachments.length > 0
+    ? `\n--- ATTACHMENTS ---\n${email.attachments.map((a, i) => `${i + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}\n--- END ATTACHMENTS ---`
+    : "";
+
   return `Extract structured data from this email:
 
 Subject: ${email.subject}
@@ -138,9 +147,9 @@ Date: ${email.date}
 Is Reply: ${email.isReply}
 
 --- EMAIL BODY ---
-${email.body}
+${email.body.slice(0, 8000)}${email.body.length > 8000 ? "\n[...truncated, " + email.body.length + " chars total]" : ""}
 --- END EMAIL BODY ---
-
+${attachmentSection}
 Return ONLY the JSON object. No other text.`;
 }
 
