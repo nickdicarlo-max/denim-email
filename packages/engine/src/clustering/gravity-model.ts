@@ -15,6 +15,7 @@ import type {
 import {
   actorScore,
   subjectScore,
+  tagScore,
   threadScore,
   timeDecayMultiplier,
 } from "./scoring";
@@ -41,15 +42,17 @@ export function scoreEmailAgainstCase(
 
   const thread = threadScore(email.threadId, existingCase.threadIds, config);
   const subject = subjectScore(email.subject, existingCase.subject, config);
+  const tag = tagScore(email.tags, existingCase.tags, config);
   const actor = actorScore(email.senderEntityId, existingCase.senderEntityIds, config);
   const decay = timeDecayMultiplier(email.date, now, config);
 
-  const rawScore = thread + subject + actor;
+  const rawScore = thread + subject + tag + actor;
   const finalScore = rawScore * decay;
 
   const breakdown: ScoreBreakdown = {
     threadScore: thread,
     subjectScore: subject,
+    tagScore: tag,
     actorScore: actor,
     timeDecayMultiplier: decay,
     rawScore,
@@ -149,6 +152,7 @@ export function clusterEmails(
         caseToUpdate.senderEntityIds = [
           ...new Set([...caseToUpdate.senderEntityIds, ...collectSenderEntityIds(group)]),
         ];
+        caseToUpdate.tags = [...new Set([...caseToUpdate.tags, ...collectTags(group)])];
         const latestDate = group.reduce(
           (max, e) => (e.date > max ? e.date : max),
           caseToUpdate.lastEmailDate,
@@ -180,6 +184,7 @@ export function clusterEmails(
         entityId: groupEntityId ?? "",
         threadIds: groupThreadIds,
         senderEntityIds: collectSenderEntityIds(group),
+        tags: collectTags(group),
         subject: representative.subject,
         emailCount: group.length,
         lastEmailDate: group.reduce(
@@ -249,6 +254,17 @@ function collectSenderEntityIds(emails: ClusterEmailInput[]): string[] {
   return [...new Set(ids)];
 }
 
+/** Collect all unique tags from a group of emails. */
+function collectTags(emails: ClusterEmailInput[]): string[] {
+  const tags = new Set<string>();
+  for (const email of emails) {
+    for (const tag of email.tags) {
+      tags.add(tag);
+    }
+  }
+  return [...tags];
+}
+
 /** Resolve entity for a thread group: first email with an entityId, or null. */
 function resolveGroupEntityId(emails: ClusterEmailInput[]): string | null {
   for (const email of emails) {
@@ -261,6 +277,7 @@ function zeroBreakdown(): ScoreBreakdown {
   return {
     threadScore: 0,
     subjectScore: 0,
+    tagScore: 0,
     actorScore: 0,
     timeDecayMultiplier: 0,
     rawScore: 0,

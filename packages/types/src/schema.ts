@@ -83,6 +83,7 @@ export interface ClusteringConfig {
   threadMatchScore: number;
   subjectMatchScore: number;
   actorAffinityScore: number;
+  tagMatchScore: number;
   timeDecayDays: { fresh: number };
   reminderCollapseEnabled: boolean;
   reminderSubjectSimilarity: number;
@@ -154,6 +155,7 @@ export interface ClusterCaseInput {
   entityId: string;
   threadIds: string[];
   senderEntityIds: string[];
+  tags: string[];
   subject: string;
   emailCount: number;
   lastEmailDate: Date;
@@ -163,6 +165,7 @@ export interface ClusterCaseInput {
 export interface ScoreBreakdown {
   threadScore: number;
   subjectScore: number;
+  tagScore: number;
   actorScore: number;
   timeDecayMultiplier: number;
   rawScore: number;
@@ -260,6 +263,7 @@ export interface CalibrationResult {
     mergeThreshold: number;
     subjectMatchScore: number;
     actorAffinityScore: number;
+    tagMatchScore: number;
     timeDecayFreshDays: number;
   };
   discriminatorVocabulary: Record<string, {

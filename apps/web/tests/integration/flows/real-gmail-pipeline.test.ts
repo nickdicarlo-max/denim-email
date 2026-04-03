@@ -95,6 +95,7 @@ async function createGenericTestSchema(userId: string) {
         threadMatchScore: 100,
         subjectMatchScore: 20,
         actorAffinityScore: 10,
+        tagMatchScore: 15,
         timeDecayDays: { fresh: 45 },
         reminderCollapseEnabled: true,
         reminderSubjectSimilarity: 0.85,

@@ -204,6 +204,11 @@ export default function InterviewPage() {
           <Card3Scan
             hypothesis={flow.hypothesis}
             authToken={authToken}
+            entityGroups={flow.input?.groups?.map((g, i) => ({
+              index: i,
+              primaryNames: g.whats,
+              secondaryNames: g.whos,
+            }))}
             onNext={flow.onScanComplete}
             onBack={flow.goBack}
           />

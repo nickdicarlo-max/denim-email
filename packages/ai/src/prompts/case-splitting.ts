@@ -81,7 +81,7 @@ ${learnedSection}${correctionSection}
 RULES:
 1. Return ONLY valid JSON matching the required schema exactly.
 2. Every email ID from the samples must appear in exactly one case OR in catchAllEmailIds.
-3. Case titles should be user-friendly, under 50 characters.
+3. Case titles should be user-friendly, under 60 characters.
 4. Each case must have at least one discriminator word from the frequency table.
 5. Emails that don't clearly match any discriminator set go in catchAllEmailIds.
 6. DO NOT OVER-SPLIT. This is the most important rule. Aim for the FEWEST cases where

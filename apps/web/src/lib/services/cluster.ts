@@ -97,9 +97,12 @@ export async function coarseCluster(
   });
 
   // Use tuned config if available (TRACKING/STABLE phases), otherwise interview config
-  const baseConfig = schema.clusteringConfig as unknown as ClusteringConfig;
-  const tunedConfig = schema.tunedClusteringConfig as unknown as ClusteringConfig | null;
-  const config: ClusteringConfig = tunedConfig ?? baseConfig;
+  // Existing schemas may not have tagMatchScore in stored JSON — default to 15
+  const raw = (schema.tunedClusteringConfig ?? schema.clusteringConfig) as Record<string, unknown>;
+  const config: ClusteringConfig = {
+    ...(raw as unknown as ClusteringConfig),
+    tagMatchScore: (raw.tagMatchScore as number) ?? 15,
+  };
 
   const entityByName = new Map(schema.entities.map((e) => [e.name.toLowerCase(), e]));
 
@@ -194,7 +197,7 @@ export async function coarseCluster(
       caseEmails: {
         select: {
           email: {
-            select: { threadId: true, senderEntityId: true },
+            select: { threadId: true, senderEntityId: true, tags: true },
           },
         },
       },
@@ -210,6 +213,13 @@ export async function coarseCluster(
         c.caseEmails
           .map((ce) => ce.email.senderEntityId)
           .filter((id): id is string => id !== null),
+      ),
+    ],
+    tags: [
+      ...new Set(
+        c.caseEmails.flatMap((ce) =>
+          Array.isArray(ce.email.tags) ? (ce.email.tags as string[]) : [],
+        ),
       ),
     ],
     subject: c.title,
@@ -1074,7 +1084,11 @@ export async function applyCalibration(
   const phase = schema.qualityPhase as QualityPhaseType;
   if (phase === "STABLE") return; // No calibration in STABLE phase
 
-  const config = (schema.tunedClusteringConfig ?? schema.clusteringConfig) as unknown as ClusteringConfig;
+  const rawCfg = (schema.tunedClusteringConfig ?? schema.clusteringConfig) as Record<string, unknown>;
+  const config: ClusteringConfig = {
+    ...(rawCfg as unknown as ClusteringConfig),
+    tagMatchScore: (rawCfg.tagMatchScore as number) ?? 15,
+  };
 
   // Load recent corrections
   const corrections = await prisma.feedbackEvent.findMany({
@@ -1192,6 +1206,7 @@ export async function applyCalibration(
       mergeThreshold: config.mergeThreshold,
       subjectMatchScore: config.subjectMatchScore,
       actorAffinityScore: config.actorAffinityScore,
+      tagMatchScore: config.tagMatchScore ?? 15,
       timeDecayFreshDays: config.timeDecayDays.fresh,
     },
     coarseClusters,
@@ -1231,6 +1246,7 @@ export async function applyCalibration(
     parsed.tunedConfig.mergeThreshold = clamp(parsed.tunedConfig.mergeThreshold, 20, 80);
     parsed.tunedConfig.subjectMatchScore = clamp(parsed.tunedConfig.subjectMatchScore, 10, 60);
     parsed.tunedConfig.actorAffinityScore = clamp(parsed.tunedConfig.actorAffinityScore, 0, 40);
+    parsed.tunedConfig.tagMatchScore = clamp(parsed.tunedConfig.tagMatchScore ?? 15, 0, 50);
     parsed.tunedConfig.timeDecayFreshDays = clamp(parsed.tunedConfig.timeDecayFreshDays, 14, 120);
 
     // Persist learned config + vocabulary
@@ -1251,6 +1267,7 @@ export async function applyCalibration(
           mergeThreshold: parsed.tunedConfig.mergeThreshold,
           subjectMatchScore: parsed.tunedConfig.subjectMatchScore,
           actorAffinityScore: parsed.tunedConfig.actorAffinityScore,
+          tagMatchScore: parsed.tunedConfig.tagMatchScore,
           timeDecayDays: { fresh: parsed.tunedConfig.timeDecayFreshDays },
         } as any,
         discriminatorVocabulary: parsed.discriminatorVocabulary as any,

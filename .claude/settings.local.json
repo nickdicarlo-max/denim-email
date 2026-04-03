@@ -74,7 +74,16 @@
       "Bash(DATABASE_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:6543/postgres?pgbouncer=true\" DIRECT_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" npx prisma db execute --stdin --url \"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" <<'SQL':*)",
       "Bash(DATABASE_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:6543/postgres?pgbouncer=true\" DIRECT_URL=\"postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres\" npx prisma db execute --stdin <<'SQL':*)",
       "Bash(npx tsx:*)",
-      "Bash(1:*)"
+      "Bash(1:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)",
+      "Bash(dotenv -e .env.local -- npx prisma db push)",
+      "Bash(TSX_TSCONFIG_PATH=\"\" npx tsx scripts/test-clustering-intelligence.ts cmn3zdt9800005oqemgi2otv5)",
+      "Bash(gh --version)",
+      "Bash(git remote:*)",
+      "Bash(gh issue:*)",
+      "Bash(python eval-viewer/generate_review.py __TRACKED_VAR__/.claude/skills/capture-issue-workspace/iteration-1 --skill-name capture-issue --benchmark __TRACKED_VAR__/.claude/skills/capture-issue-workspace/iteration-1/benchmark.json --static /tmp/capture-issue-review.html)",
+      "Bash(start \"\" \"C:\\\\\\\\Users\\\\\\\\alkam\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\capture-issue-review.html\")"
     ]
   }
 }

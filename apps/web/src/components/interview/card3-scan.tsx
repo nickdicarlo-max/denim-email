@@ -2,6 +2,7 @@
 
 import { useInterviewScan } from "@/hooks/use-interview-scan";
 import type { ScanDiscovery } from "@/lib/gmail/types";
+import type { EntityGroupContext } from "@denim/ai";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useEffect } from "react";
 import { Button } from "../ui/button";
@@ -11,6 +12,7 @@ import { ProgressDots } from "../ui/progress-dots";
 interface Card3Props {
   hypothesis: SchemaHypothesis;
   authToken: string;
+  entityGroups?: EntityGroupContext[];
   onNext: (validation: HypothesisValidation, discoveries: ScanDiscovery[]) => void;
   onBack: () => void;
 }
@@ -71,14 +73,14 @@ function BackArrowIcon() {
   );
 }
 
-export function Card3Scan({ hypothesis, authToken, onNext, onBack }: Card3Props) {
+export function Card3Scan({ hypothesis, authToken, entityGroups, onNext, onBack }: Card3Props) {
   const { status, discoveries, validation, error, startScan, abort } = useInterviewScan();
   // Auto-start scan once we have a valid auth token, abort on unmount
   useEffect(() => {
     if (!authToken) return;
-    startScan(hypothesis, authToken);
+    startScan(hypothesis, authToken, entityGroups);
     return () => abort();
-  }, [hypothesis, authToken, startScan, abort]);
+  }, [hypothesis, authToken, entityGroups, startScan, abort]);
 
   // Auto-advance when complete
   useEffect(() => {
@@ -196,7 +198,7 @@ export function Card3Scan({ hypothesis, authToken, onNext, onBack }: Card3Props)
       {/* Error actions */}
       {status === "error" && (
         <div className="mt-auto pt-4 flex flex-col gap-3">
-          <Button variant="primary" onClick={() => startScan(hypothesis, authToken)}>
+          <Button variant="primary" onClick={() => startScan(hypothesis, authToken, entityGroups)}>
             Try Again
           </Button>
         </div>

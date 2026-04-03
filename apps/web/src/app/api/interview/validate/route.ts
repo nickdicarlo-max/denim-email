@@ -51,7 +51,7 @@ function resolveWhoEmails(
 export const POST = withAuth(async ({ userId, request }) => {
   try {
     const body = await request.json();
-    const { hypothesis } = body;
+    const { hypothesis, entityGroups } = body;
 
     if (!hypothesis) {
       return NextResponse.json({ error: "Missing hypothesis" }, { status: 400 });
@@ -73,6 +73,7 @@ export const POST = withAuth(async ({ userId, request }) => {
 
     const validation = await validateHypothesis(hypothesis, emailSamples, {
       userId,
+      entityGroups,
     });
 
     return NextResponse.json({ data: { validation, discoveries } });

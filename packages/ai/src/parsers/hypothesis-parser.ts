@@ -45,6 +45,7 @@ const clusteringConfigSchema = z.object({
   threadMatchScore: z.number(),
   subjectMatchScore: z.number(),
   actorAffinityScore: z.number(),
+  tagMatchScore: z.number().default(15),
   timeDecayDays: z.object({
     fresh: z.number(),
   }),

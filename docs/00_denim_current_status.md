@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-03-30 (major dep migration merged to main, UX overhaul branch started)
+Last updated: 2026-04-01 (tag scoring added to gravity model, clustering intelligence experiment completed)
 
 ## Completed
 
@@ -631,7 +631,7 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | 1: Interview Service | **Complete** | Hypothesis generation, validation, finalization |
 | 2: Gmail + Interview UI | **Complete** | OAuth, Gmail client, Cards 1-4, entity groups |
 | 3: Extraction Pipeline | **Complete** | Gemini extraction, relevance gating, entity routing |
-| 4: Clustering Engine | **Complete** | Two-pass gravity model, case splitting |
+| 4: Clustering Engine | **Complete** | Two-pass gravity model, case splitting, tag scoring |
 | 5: Synthesis Service | **Complete** | Claude enrichment, urgency, action dedup, emoji, mood |
 | 6A: Case Review UI | **Mostly complete** | Feed, detail, filters, actions, feedback. **Remaining:** Full UX overhaul (user designing in Stitch) |
 | 6B: Chrome Extension | Deferred | After web quality validated |
@@ -773,7 +773,8 @@ checkExtractionComplete (concurrency: 1/schema)
   → emits extraction.all.completed
 
 runCoarseClustering (concurrency: 1/schema, retries: 2)
-  → Pass 1: Simplified gravity model groups by entity
+  → Pass 1: Gravity model groups by entity + tag + subject + sender affinity
+  → Tag scoring: Jaccard similarity of extracted tag sets (tagMatchScore=15)
   → Writes alternativeCaseId (second-best match) to Email records
   → emits coarse.clustering.completed
 
@@ -859,9 +860,178 @@ Key decisions:
 - **Onboarding**: Category → Names+People → Goals → Subscribe+Connect → Scanning → Review (6 steps)
 - **Design collaboration**: Stitch by Google → DESIGN.md + screenshots → Claude Code implements
 
-### Status
-- **Phase 0**: ✅ Complete (AI audit fixes, emoji, mood) — 3 partial items remain (time-neutral directives, expiry scope)
-- **Pre-Phase 1**: Code fixes needed (time-neutral prompts, expiry broadening, computeCaseDecay, daily cron, schema additions)
-- **Phase 1**: Performance + routing foundation
-- **Phase 2+**: Waiting on Stitch designs for case feed, landing page, onboarding
-- **Parallel**: User designing screens in Stitch
+### Status (updated 2026-04-01)
+- **Phase 0**: ✅ Complete (AI audit fixes, emoji, mood, time-neutral directives, expiry scope, computeCaseDecay, daily cron)
+- **Pre-Phase 1**: ✅ Complete — all code fixes done except schema additions (UserNote, billing fields)
+- **Phase 1**: Ready to start — no designs needed (routing, performance, loading states)
+- **Phase 2**: Case Feed UX — **BLOCKED: needs Stitch designs**
+- **Phase 3**: New User Flow — **BLOCKED: needs Stitch designs**
+- **Phases 4-5**: After 2-3 (Notes, Settings, Calendar, Polish)
+
+## Clustering Intelligence Experiment & Tag Scoring (2026-04-01)
+
+### Problem
+The gravity model produced zero MERGE decisions for non-threaded emails (e.g., TeamSnap notifications where each practice creates a new Gmail thread). A schema with 50 soccer emails produced 39 separate cases instead of ~3. The model relied only on threadId, subject Jaro-Winkler similarity, and sender entity — none of which could merge non-threaded emails with different subjects.
+
+### Experiment
+Built test scripts to compare three approaches against Claude's ideal groupings:
+- **Set A**: Gravity model with default params (baseline)
+- **Set B**: Claude reads all emails, suggests ideal groups (gold standard)
+- **Set C**: Gravity model with Claude-suggested parameter overrides
+- **Set D**: Gravity model with new tag scoring (Jaccard similarity of extracted tag sets)
+
+Tested across 7 schemas (5 school_parent, 2 property), 50-170 emails each.
+
+### Results
+- **AI parameter tuning (Set C) adds marginal value** — improved 1 of 7 schemas, hurt 2, no effect on 4. Claude can't meaningfully reason about Jaro-Winkler thresholds.
+- **Tag scoring (Set D) helps when gravity model was completely failing** — three schemas went from 39/45/41 cases to 18/21/16 cases (+12.9pp, +4.7pp, +4.1pp agreement with AI)
+- **Tag scoring slightly over-merges when model was already working** — two schemas got -8.7pp and -3.3pp from shared generic tags like "Schedule"
+- **Property schemas unaffected** — tags too generic ("Financial", "Maintenance") across all properties
+- **tagMatchScore=15** (not 25) prevents over-merging while still enabling merges in zero-merge cases
+
+Full analysis: `docs/findings-case-merging.md`
+
+### Changes Made
+
+**Engine — new scoring signal:**
+- `tagScore()` in `packages/engine/src/clustering/scoring.ts` — Jaccard similarity of tag sets × `tagMatchScore`
+- `tagMatchScore: 15` added to `ClusteringConfig` type
+- `tags: string[]` added to `ClusterCaseInput` (cases track their tag set)
+- `tagScore` added to `ScoreBreakdown` for audit trail
+- Gravity model updated: scoring formula includes tag, cases accumulate tags on merge/create
+
+**Prompt fixes (independent of experiment):**
+- `packages/ai/src/prompts/clustering-intelligence.ts` — rewritten with actual gravity model formula, `today` param, correct field names, dropped nonexistent `tagMatchScore` output param
+- `packages/ai/src/parsers/clustering-intelligence-parser.ts` — fixed `senderAffinityWeight` → `actorAffinityScore`, added `subjectMatchScore` and `timeDecayFreshDays`
+- Calibration prompt/parser updated to include `tagMatchScore` as tunable parameter
+
+**Backward compatibility:**
+- Existing schemas in DB without `tagMatchScore` in stored JSON config default to 15
+- Hypothesis parser default: 15
+- Calibration parser default: 15
+
+**Test scripts (diagnostic tools, not pipeline steps):**
+- `scripts/test-clustering-intelligence.ts` — runs A/B/C/D comparison, saves to PipelineIntelligence
+- `scripts/analyze-ai-groups.ts` — analyzes what features Claude uses to form groups
+
+**Tests:** 92 engine + 32 AI tests passing, web typecheck clean.
+
+### Decision: NOT wiring clustering intelligence into pipeline
+The clustering intelligence prompt is useful as a diagnostic tool but not worth the cost/latency as a pipeline step. AI parameter tuning adds marginal value. The real improvement came from discovering that tag scoring was the missing signal — found by analyzing AI grouping features, not by using AI config overrides.
+
+### Gravity Model Scoring Formula (updated)
+```
+finalScore = (threadScore + subjectScore + tagScore + actorScore) × timeDecay
+
+threadScore:  100 if shares Gmail threadId, else 0
+subjectScore: Jaro-Winkler similarity × 20 (0 if < 0.7)
+tagScore:     Jaccard tag similarity × 15 (new)
+actorScore:   10 if same sender entity, else 0
+timeDecay:    1.0 within 60 days, linear decay to 0.2 at 365 days
+mergeThreshold: 35 (school_parent) / 45 (property)
+```
+
+## Core Pipeline Quality Assessment (2026-04-01)
+
+### What's working well
+- **Entity routing**: 100% in recent tests — every email gets assigned to the correct entity
+- **Threaded email merging**: threadMatchScore=100 always exceeds threshold, same-thread emails always merge
+- **Tag scoring**: New tagMatchScore=15 enables merges for non-threaded emails (TeamSnap, school notifications)
+- **Two-pass clustering**: Gravity model (coarse) + AI case splitting (refinement) produces coherent cases
+- **Urgency & decay**: Cases auto-update urgency tiers, past actions expire, feed sorts by next action date
+- **Synthesis quality**: Good titles, 3-part summaries, action extraction with dedup, mood/emoji
+- **Feedback system**: EMAIL_MOVE, THUMBS_UP/DOWN, EMAIL_EXCLUDE all working, re-synthesis on corrections
+- **Calibration loop**: Infrastructure exists — discriminator vocabulary, parameter tuning, phase transitions
+
+### Known limitations (acceptable for user testing)
+- Gravity model produces more coarse clusters than ideal (15-21 vs Claude's 3-9 ideal). Case splitting bridges most of this gap but we haven't measured final post-split counts.
+- Property domain: tags too generic to help clustering. Relies on threading + subject similarity + case splitting.
+- Tag scoring slightly over-merges when tags are broadly shared (e.g., "Schedule" on 80% of emails). tagMatchScore=15 mitigates but doesn't eliminate.
+- Clustering intelligence (AI parameter tuning) proven to be low-value — not worth the cost/latency.
+
+### Assessment
+**The core stack is good enough for real user testing.** The remaining clustering gaps are the kind that can only be discovered and fixed with real user feedback — which is exactly what the calibration loop is designed for. Spending more time tuning the gravity model in isolation has diminishing returns (proven by the clustering intelligence experiment). The next quality signal needs to come from users correcting cases.
+
+## What's Next (2026-04-01)
+
+### Immediate: Stitch Designs (user working on these)
+Design screens in Stitch for:
+- Case Feed (cards, layout, filters, empty states, urgency tiers)
+- New User Flow (landing page, onboarding steps, scanning animation)
+- Case Detail (summary sections, actions, email list, corrections)
+
+Reference: `docs/stitch-screen-briefs.md` (29 screens), `docs/screen-schema-flow.md` (data flow)
+
+### Ready to build now (UX Phase 1 — no designs needed):
+1. **Smart root redirect** — `/` → `/feed` (returning user) or `/onboarding` (new user) or `/welcome` (unauthenticated)
+2. **New route structure** — `/feed`, `/feed/[caseId]`, `/settings/topics/*`, `/onboarding`
+3. **`loading.tsx` skeletons** — instant perceived load for feed and case detail
+4. **Bottom nav component** — Feed / + Note / Settings (mobile-first, 44px touch targets)
+5. **Parallel data queries** — feed loads schema + cases + quality in parallel, not waterfall
+6. **Schema additions** — UserNote model, NotificationPreference model, User.stripe* billing fields
+
+### After Stitch designs arrive (UX Phases 2-3):
+- Implement case feed cards, layout, and filters from designs
+- Build new user onboarding flow from designs
+- Landing/marketing page
+- Subscription/Stripe integration
+
+### After user testing begins:
+- Measure final post-split case counts (gravity model + case splitting combined)
+- Observe user corrections → calibration loop tunes clustering automatically
+- Learning loop: gravity model weight adjustment from feedback (not yet built)
+- Playwright e2e tests for interview flow + case feed
+
+See `docs/roadmap.md` for the full feature roadmap beyond UX.
+
+## Developer Workflow Skills (2026-04-02)
+
+Built two user-level Claude Code skills for issue-driven development workflow. These are installed at `~/.claude/skills/` (user-level, not project-specific) and work across any repo with `gh` CLI.
+
+### capture-issue skill (`~/.claude/skills/capture-issue/`)
+
+Rapidly captures ideas, bugs, design decisions, and planned work as GitHub Issues from conversation context. Three modes:
+
+1. **Single Issue** -- "log this", "file an issue", "we should track this"
+   - Structured body: Context, Problem/Opportunity, Proposed Approach, Affected Areas, Verification, Related Issues
+   - Auto-links to existing open issues via `Related to #N` / `Depends on #N`
+   - Extracts context from ongoing conversation -- no re-explaining needed
+
+2. **ADR (Architecture Decision Record)** -- "make an ADR", "document this decision"
+   - Creates `docs/adr/NNNN-short-title.md` with Context, Decision, Consequences, Alternatives Considered
+   - Creates companion GitHub issue linking to the ADR
+   - Reminds to add reference from CLAUDE.md
+
+3. **Plan-to-Issues** -- "turn this plan into issues"
+   - Creates 3-5 child issues + 1 parent with checklist
+   - Cross-links parent/child relationships
+   - Groups plan steps sensibly (doesn't create 30 issues from a long plan)
+
+**Design constraints:** Token-efficient (uses conversation context, doesn't explore codebase), ASCII-only in issue bodies (Windows `gh` CLI mangles Unicode), asks when scope is unclear rather than guessing.
+
+### recall-issues skill (`~/.claude/skills/recall-issues/`)
+
+Pulls open GitHub Issues into conversation for sprint planning and progress tracking. Two-step workflow:
+
+1. **Overview** -- `/issues` or "what's open" shows compact table of open issues
+2. **Deep-load** -- "pull up #7" loads full body, comments, linked issues, ADR summaries, parent checklist progress
+
+Also supports adding progress comments to issues during implementation (always drafts for user approval before posting).
+
+Triggered manually -- never auto-loads at session start.
+
+### Eval Results (capture-issue)
+
+Tested with 3 realistic prompts (mid-conversation bug capture, ADR creation, plan-to-issues) comparing with-skill vs no-skill baseline:
+
+| Metric | With Skill | No Skill |
+|--------|-----------|----------|
+| Assertion pass rate | 100% (19/19) | 63.5% (12/19) |
+| Avg tokens | 28,944 | 35,460 |
+| Avg time | 77.6s | 89.0s |
+
+Key improvements: consistent issue linking (baseline never linked), ADR Alternatives Considered section (baseline skipped it), CLAUDE.md reminder, structured verification criteria.
+
+### Project-level skills (unchanged, in `.claude/skills/`)
+- `run-integration-tests.md` -- runs pipeline integration test suite
+- `supabase-db.md` -- DB queries, wipes, and schema operations via pooler URL

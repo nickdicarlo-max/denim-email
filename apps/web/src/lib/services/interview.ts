@@ -7,6 +7,7 @@ import {
   buildValidationPrompt,
   parseHypothesisResponse,
   parseValidationResponse,
+  type EntityGroupContext,
 } from "@denim/ai";
 import type { EntityGroupInput, HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
 import { ExternalAPIError } from "@denim/types";
@@ -84,7 +85,7 @@ interface EmailSampleForValidation {
 export async function validateHypothesis(
   hypothesis: SchemaHypothesis,
   emailSamples: EmailSampleForValidation[],
-  options?: { userId?: string },
+  options?: { userId?: string; entityGroups?: EntityGroupContext[] },
 ): Promise<HypothesisValidation> {
   const start = Date.now();
   const operation = "validateHypothesis";
@@ -94,9 +95,10 @@ export async function validateHypothesis(
     operation,
     userId: options?.userId,
     sampleCount: emailSamples.length,
+    entityGroupCount: options?.entityGroups?.length ?? 0,
   });
 
-  const prompt = buildValidationPrompt(hypothesis, emailSamples);
+  const prompt = buildValidationPrompt(hypothesis, emailSamples, options?.entityGroups);
 
   const result = await callClaude({
     model: DEFAULT_MODEL,
@@ -117,7 +119,39 @@ export async function validateHypothesis(
     );
   }
 
+  // Post-parse grounding filter: remove entities with no email evidence
+  const totalSamples = emailSamples.length;
+  const preFilterCount = validation.discoveredEntities.length;
+  validation.discoveredEntities = validation.discoveredEntities.filter((entity) => {
+    if (entity.emailIndices.length === 0) {
+      logger.warn({
+        service: "interview",
+        operation: `${operation}.groundingFilter`,
+        entityName: entity.name,
+        claimedEmailCount: entity.emailCount,
+        reason: "no_email_indices",
+      });
+      return false;
+    }
+    const validIndices = entity.emailIndices.filter((idx) => idx >= 1 && idx <= totalSamples);
+    if (validIndices.length === 0) {
+      logger.warn({
+        service: "interview",
+        operation: `${operation}.groundingFilter`,
+        entityName: entity.name,
+        indices: entity.emailIndices,
+        maxValid: totalSamples,
+        reason: "all_indices_invalid",
+      });
+      return false;
+    }
+    entity.emailIndices = validIndices;
+    entity.emailCount = validIndices.length;
+    return true;
+  });
+
   const scanDurationMs = Date.now() - start;
+  const filteredCount = preFilterCount - validation.discoveredEntities.length;
 
   logger.info({
     service: "interview",
@@ -126,6 +160,7 @@ export async function validateHypothesis(
     durationMs: scanDurationMs,
     confirmedEntities: validation.confirmedEntities.length,
     discoveredEntities: validation.discoveredEntities.length,
+    filteredHallucinations: filteredCount,
     confidenceScore: validation.confidenceScore,
   });
 

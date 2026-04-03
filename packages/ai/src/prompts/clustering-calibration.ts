@@ -15,6 +15,7 @@ export interface CalibrationPromptInput {
     mergeThreshold: number;
     subjectMatchScore: number;
     actorAffinityScore: number;
+    tagMatchScore: number;
     timeDecayFreshDays: number;
   };
   coarseClusters: {
@@ -82,6 +83,9 @@ CURRENT GRAVITY MODEL PARAMETERS:
   matters more for grouping.
 - actorAffinityScore: ${input.currentConfig.actorAffinityScore}
   Points awarded when emails share the same sender. Higher = sender identity matters more.
+- tagMatchScore: ${input.currentConfig.tagMatchScore}
+  Points awarded when emails share extracted tags (Jaccard similarity × score). Higher = tag
+  overlap matters more for grouping.
 - timeDecayFreshDays: ${input.currentConfig.timeDecayFreshDays}
   Number of days an email is considered "fresh" before time decay reduces its clustering score.
 
@@ -91,6 +95,7 @@ PARAMETER ADJUSTMENT RULES:
   - mergeThreshold: 20 to 80 (current: ${input.currentConfig.mergeThreshold})
   - subjectMatchScore: 10 to 60 (current: ${input.currentConfig.subjectMatchScore})
   - actorAffinityScore: 0 to 40 (current: ${input.currentConfig.actorAffinityScore})
+  - tagMatchScore: 0 to 50 (current: ${input.currentConfig.tagMatchScore})
   - timeDecayFreshDays: 14 to 120 (current: ${input.currentConfig.timeDecayFreshDays})
 - When in doubt, leave parameters unchanged. Bad parameter changes are worse than no changes.
 
@@ -131,6 +136,7 @@ Required JSON shape:
     "mergeThreshold": number,
     "subjectMatchScore": number,
     "actorAffinityScore": number,
+    "tagMatchScore": number,
     "timeDecayFreshDays": number
   },
   "discriminatorVocabulary": {

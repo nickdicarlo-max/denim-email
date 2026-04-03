@@ -62,6 +62,7 @@ const FIXTURE_HYPOTHESIS: SchemaHypothesis = {
     threadMatchScore: 100,
     subjectMatchScore: 20,
     actorAffinityScore: 10,
+    tagMatchScore: 15,
     timeDecayDays: { fresh: 60 },
     reminderCollapseEnabled: true,
     reminderSubjectSimilarity: 0.85,

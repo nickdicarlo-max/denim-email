@@ -13,6 +13,7 @@ const defaultConfig: ClusteringConfig = {
   threadMatchScore: 100,
   subjectMatchScore: 50,
   actorAffinityScore: 30,
+  tagMatchScore: 15,
   timeDecayDays: { fresh: 45 },
   reminderCollapseEnabled: true,
   reminderSubjectSimilarity: 0.9,

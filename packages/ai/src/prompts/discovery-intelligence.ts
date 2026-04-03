@@ -67,8 +67,9 @@ QUERY GENERATION PRINCIPLES:
 - Platform domains (e.g., teamsnap.com, parentmail.com) may send relevant notifications
   that don't mention entity names in the sender — body samples help identify these
 - Co-recipients of known important senders may also send relevant emails independently
-- Exclude obvious noise domains (google.com, github.com, linkedin.com, etc.)
+- Exclude common platform domains that send email like (google.com, github.com, linkedin.com, etc.)
 - Each query should have a clear reason linking it to an entity group
+- Generate at most 10 queries to avoi overwhelming rate limits
 
 CRITICAL RULES:
 1. Return ONLY valid JSON matching the required schema exactly.

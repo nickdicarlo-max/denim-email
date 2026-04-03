@@ -2,6 +2,7 @@
 
 import { checkAndIncrementCallCount } from "@/lib/api-call-guard";
 import type { ScanDiscovery } from "@/lib/gmail/types";
+import type { EntityGroupContext } from "@denim/ai";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useState } from "react";
 
@@ -18,7 +19,7 @@ interface UseScanResult {
   discoveries: ScanDiscovery[];
   validation: HypothesisValidation | null;
   error: string | null;
-  startScan: (hypothesis: SchemaHypothesis, authToken: string) => Promise<void>;
+  startScan: (hypothesis: SchemaHypothesis, authToken: string, entityGroups?: EntityGroupContext[]) => Promise<void>;
   abort: () => void;
 }
 
@@ -33,7 +34,7 @@ export function useInterviewScan(): UseScanResult {
     scanInFlight = false;
   }, []);
 
-  const startScan = useCallback(async (hypothesis: SchemaHypothesis, authToken: string) => {
+  const startScan = useCallback(async (hypothesis: SchemaHypothesis, authToken: string, entityGroups?: EntityGroupContext[]) => {
     // Module-level guard: if a scan is already in flight (even from a
     // prior mount), skip. The server-side Claude call can't be cancelled
     // so firing a second request just wastes tokens.
@@ -65,7 +66,7 @@ export function useInterviewScan(): UseScanResult {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({ hypothesis }),
+        body: JSON.stringify({ hypothesis, entityGroups }),
         signal: controller.signal,
       });
 

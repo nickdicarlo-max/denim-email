@@ -443,6 +443,7 @@ function buildClusteringConfigBlock(config: DomainConfig): string {
     "threadMatchScore": 100,
     "subjectMatchScore": ${config.subjectMatchScore},
     "actorAffinityScore": ${config.actorAffinityScore},
+    "tagMatchScore": 15,
     "timeDecayDays": { "fresh": ${config.timeDecayFresh} },
     "reminderCollapseEnabled": ${config.reminderCollapseEnabled},
     "reminderSubjectSimilarity": 0.85,
