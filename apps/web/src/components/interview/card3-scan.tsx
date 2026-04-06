@@ -1,10 +1,10 @@
 "use client";
 
-import { useInterviewScan } from "@/hooks/use-interview-scan";
-import type { ScanDiscovery } from "@/lib/gmail/types";
 import type { EntityGroupContext } from "@denim/ai";
 import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useEffect } from "react";
+import { useInterviewScan } from "@/hooks/use-interview-scan";
+import type { ScanDiscovery } from "@/lib/gmail/types";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
 import { ProgressDots } from "../ui/progress-dots";

@@ -1,103 +1,117 @@
 /**
- * Design Tokens
+ * Design Tokens — "The Digital Curator"
  *
- * Single source of truth for all visual values.
+ * Single source of truth for all visual values, derived from DESIGN.md.
  * Import these tokens in Tailwind config, components, and the Chrome extension.
  *
- * Usage:
- *   import { colors, typography, spacing, radii, shadows } from "@denim/types/tokens";
- *
- * Tailwind usage:
- *   These tokens are mapped into tailwind.config.ts via the extend key.
- *   Use Tailwind classes (e.g., `bg-surface`, `text-primary`) rather than
- *   referencing tokens directly in components.
+ * Philosophy: editorial, tactile, warm. No pure black. No hard borders.
+ * Fonts: Noto Serif (display/headlines) + Plus Jakarta Sans (body/utility).
+ * Palette: organic earth tones and muted minerals.
  */
 
 // ---------------------------------------------------------------------------
-// Colors
+// Colors — DESIGN.md "The Palette"
 // ---------------------------------------------------------------------------
 
 export const colors = {
-  // --- Surfaces ---
-  surface: "#F7F6F3", // Warm off-white. Primary background. Signature element.
-  card: "#FFFFFF", // Cards, elevated surfaces, inputs
-  cardHover: "#FAFAF8", // Card hover state
-  overlay: "rgba(0, 0, 0, 0.4)", // Bottom sheet / modal backdrop
-  subtle: "#F0EFEB", // Secondary backgrounds, disabled states, chips
+  // --- Surfaces (warm cream canvas, "Espresso & Cloth") ---
+  surface: "#fbf9f6", // Primary background / canvas
+  card: "#ffffff", // Cards, elevated surfaces (surface_container_lowest)
+  cardHover: "#f5f3f0", // Card hover state (surface_container_low)
+  overlay: "rgba(74, 63, 53, 0.4)", // Bottom sheet / modal backdrop (warm-tinted)
+  subtle: "#efeeeb", // Secondary backgrounds, chips (surface_container)
 
-  // --- Text ---
-  primary: "#1A1A1A", // Headings, body text, high-emphasis content
-  secondary: "#6B6B6B", // Supporting text, descriptions, labels
-  muted: "#9B9B9B", // Timestamps, hints, placeholders
-  inverse: "#FFFFFF", // Text on dark or colored backgrounds
+  // Surface hierarchy — stacking importance like a physical desk
+  surfaceLow: "#f5f3f0", // surface_container_low
+  surfaceMid: "#efeeeb", // surface_container
+  surfaceHigh: "#eae8e5", // surface_container_high (recessed: search bars, footers)
+  surfaceHighest: "#e4e2df", // surface_container_highest (most recessed)
 
-  // --- Borders ---
-  border: "#E8E6E1", // Card borders, dividers, input borders
-  borderLight: "#F0EFEB", // Subtle separators within cards
+  // --- Text (espresso-toned ink, never pure black) ---
+  primary: "#4a3f35", // Headings, body text, high-emphasis content
+  secondary: "#82756a", // Supporting text, descriptions, labels (outline)
+  muted: "#a89888", // Timestamps, hints, placeholders
+  inverse: "#ffffff", // Text on dark or colored backgrounds
 
-  // --- Interactive ---
-  accent: "#2563EB", // Primary buttons, links, focus rings, active elements
-  accentSoft: "#EFF4FF", // Accent background tint (selected states, hover fills)
-  accentText: "#1D4ED8", // High-contrast accent for text on light backgrounds
+  // --- Borders (ghost borders only, 10-20% opacity preferred) ---
+  border: "#d4c4b7", // Ghost borders (outline_variant)
+  borderLight: "#efeeeb", // Subtle separators within cards
+
+  // --- Interactive (deep caramel brand) ---
+  accent: "#7d562d", // Primary buttons, links, focus rings, active elements
+  accentSoft: "#ffdcbd", // Accent background tint (primary_fixed)
+  accentText: "#5b3912", // High-contrast accent for text (on_primary_container)
+  accentContainer: "#d4a373", // Accent container (primary_container)
+
+  // --- Semantic: Imminent / Urgent (sun-baked coral) ---
+  imminent: "#e27d60", // Urgent status, active actions, needs attention
+  imminentSoft: "#ffdbd1", // Imminent background tint (tertiary_fixed)
+  imminentText: "#7b2e17", // Imminent text (on_tertiary_fixed_variant)
+
+  // --- Semantic: Upcoming / Secondary (serene teal) ---
+  upcoming: "#186967", // Future-dated, secondary interest (secondary)
+  upcomingSoft: "#a7f0ec", // Upcoming background tint (secondary_container)
+  upcomingText: "#00504e", // Upcoming text (on_secondary_fixed_variant)
 
   // --- Semantic: Success ---
-  success: "#16A34A", // Resolved status, positive actions, checkmarks
-  successSoft: "#ECFDF5", // Success background tint
-  successText: "#15803D", // Success text on light backgrounds
+  success: "#16A34A",
+  successSoft: "#ECFDF5",
+  successText: "#15803D",
 
   // --- Semantic: Warning ---
-  warning: "#D97706", // Active status, attention needed, pending actions
-  warningSoft: "#FFFBEB", // Warning background tint
-  warningText: "#B45309", // Warning text on light backgrounds
+  warning: "#D97706",
+  warningSoft: "#FFFBEB",
+  warningText: "#B45309",
 
   // --- Semantic: Error ---
-  error: "#DC2626", // Errors, destructive actions, thumbs down
-  errorSoft: "#FEF2F2", // Error background tint
-  errorText: "#B91C1C", // Error text on light backgrounds
+  error: "#ba1a1a",
+  errorSoft: "#ffdad6",
+  errorText: "#93000a",
 
-  // --- Semantic: Improving ---
-  improving: "#6366F1", // Accuracy metrics, calibration progress, "getting smarter"
-  improvingSoft: "#EEF2FF", // Improving background tint
-  improvingText: "#4F46E5", // Improving text on light backgrounds
+  // --- Semantic: Improving (calibration progress) ---
+  improving: "#6366F1",
+  improvingSoft: "#EEF2FF",
+  improvingText: "#4F46E5",
 
   // --- Entity chips ---
-  entityPrimary: "#2563EB", // "What" chips (blue) - schools, properties, projects
-  entityPrimaryBg: "#EFF4FF",
-  entitySecondary: "#D97706", // "Who" chips (amber) - teachers, vendors, contacts
-  entitySecondaryBg: "#FFFBEB",
+  entityPrimary: "#7d562d", // "What" chips (caramel) - schools, properties, projects
+  entityPrimaryBg: "#ffdcbd",
+  entitySecondary: "#186967", // "Who" chips (teal) - teachers, vendors, contacts
+  entitySecondaryBg: "#a7f0ec",
 } as const;
 
 // ---------------------------------------------------------------------------
-// Typography
+// Typography — "Editorial" feel
 // ---------------------------------------------------------------------------
 
 export const typography = {
-  // Font families
   fontFamily: {
-    sans: "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+    serif: "'Noto Serif', 'Georgia', 'Times New Roman', serif",
+    sans: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     mono: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
   },
 
-  // Font sizes with line heights
-  // Named for usage context, not abstract scale
+  // Display & Headlines use Noto Serif with wide tracking and generous leading.
+  // Body & Titles use Plus Jakarta Sans for legibility.
   fontSize: {
     xs: ["11px", { lineHeight: "16px" }], // Timestamps, badges, micro labels
     sm: ["12px", { lineHeight: "16px" }], // Tags, secondary info, card metadata
-    base: ["14px", { lineHeight: "20px" }], // Body text, card titles, input text
-    md: ["15px", { lineHeight: "22px" }], // Section headers, button text
-    lg: ["17px", { lineHeight: "24px" }], // Screen titles, primary headings
-    xl: ["20px", { lineHeight: "28px" }], // Hero headings (rare in side panel)
+    base: ["14px", { lineHeight: "22px" }], // Body text, card titles, input text
+    md: ["15px", { lineHeight: "24px" }], // Section headers, button text
+    lg: ["18px", { lineHeight: "26px" }], // Screen titles, primary headings
+    xl: ["22px", { lineHeight: "30px" }], // Hero headings (display-md)
+    "2xl": ["28px", { lineHeight: "36px" }], // Display-lg hero moments
   },
 
-  // Font weights
   fontWeight: {
-    normal: "400", // Body text
-    medium: "500", // Tags, labels, secondary emphasis
-    semibold: "600", // Card titles, buttons, headings
-    bold: "700", // Hero headings only (use sparingly)
+    normal: "400",
+    medium: "500",
+    semibold: "600",
+    bold: "700",
   },
 
-  // Label styles (uppercase small caps for status labels)
+  // Label styles — uppercase small caps for status labels
+  // "Large Serif headlines paired with much smaller, all-caps Sans-Serif labels"
   label: {
     fontSize: "10px",
     fontWeight: "600",
@@ -112,7 +126,6 @@ export const typography = {
 // ---------------------------------------------------------------------------
 
 export const spacing = {
-  // Base unit: 4px
   0: "0px",
   0.5: "2px",
   1: "4px",
@@ -129,36 +142,36 @@ export const spacing = {
   12: "48px",
   16: "64px",
 
-  // Semantic spacing
-  cardPadding: "14px 16px", // Standard card internal padding
-  sectionGap: "16px", // Gap between sections in a screen
-  cardGap: "8px", // Gap between cards in a list
-  chipGap: "6px", // Gap between tag/entity chips
-  inlineGap: "4px", // Gap between inline elements (icon + text)
+  // Semantic spacing — "if you think there is enough space, add 16px more"
+  cardPadding: "24px 32px", // Generous: "2rem (32px) of internal padding"
+  sectionGap: "24px",
+  cardGap: "12px",
+  chipGap: "6px",
+  inlineGap: "4px",
 } as const;
 
 // ---------------------------------------------------------------------------
-// Border Radius
+// Border Radius — "minimum radius for any visible container is 8px"
 // ---------------------------------------------------------------------------
 
 export const radii = {
   xs: "4px", // Inline code, tiny elements
-  sm: "6px", // Tags, chips, small buttons
-  md: "8px", // Buttons, inputs, small cards
-  lg: "12px", // Cards, modals, bottom sheets
-  xl: "16px", // Large cards, hero elements
+  sm: "8px", // Tags, chips, small buttons (min visible radius)
+  md: "12px", // Inputs, search (custom scale from DESIGN.md)
+  lg: "24px", // Cards, modals, bottom sheets (DESIGN.md: 24px)
+  xl: "32px", // Large cards, hero elements
   full: "9999px", // Pills, avatars, circular buttons
 } as const;
 
 // ---------------------------------------------------------------------------
-// Shadows
+// Shadows — "Warm Glow" (tinted, not gray)
 // ---------------------------------------------------------------------------
 
 export const shadows = {
-  sm: "0 1px 2px rgba(0, 0, 0, 0.04)",
-  md: "0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04)",
-  lg: "0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)",
-  xl: "0 8px 24px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.06)",
+  sm: "0 1px 3px rgba(74, 63, 53, 0.04)",
+  md: "0 2px 8px rgba(74, 63, 53, 0.06), 0 1px 3px rgba(74, 63, 53, 0.04)",
+  lg: "0 8px 24px rgba(125, 86, 45, 0.06), 0 2px 6px rgba(74, 63, 53, 0.04)",
+  xl: "0 20px 40px rgba(74, 63, 53, 0.06)", // "editorial-shadow" from Stitch
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -166,17 +179,14 @@ export const shadows = {
 // ---------------------------------------------------------------------------
 
 export const animation = {
-  // Duration
-  fast: "150ms", // Hover states, focus rings, color changes
-  normal: "200ms", // Fade in/out, small movements
-  slow: "300ms", // Slide up (bottom sheets), larger movements
+  fast: "150ms",
+  normal: "200ms",
+  slow: "300ms",
 
-  // Easing
-  ease: "cubic-bezier(0.4, 0, 0.2, 1)", // General purpose
-  easeIn: "cubic-bezier(0.4, 0, 1, 1)", // Elements entering
-  easeOut: "cubic-bezier(0, 0, 0.2, 1)", // Elements leaving
+  ease: "cubic-bezier(0.4, 0, 0.2, 1)",
+  easeIn: "cubic-bezier(0.4, 0, 1, 1)",
+  easeOut: "cubic-bezier(0, 0, 0.2, 1)",
 
-  // Presets (for Tailwind arbitrary values or inline styles)
   fadeIn: "opacity 200ms cubic-bezier(0.4, 0, 0.2, 1)",
   slideUp: "transform 300ms cubic-bezier(0, 0, 0.2, 1)",
 } as const;
@@ -186,19 +196,22 @@ export const animation = {
 // ---------------------------------------------------------------------------
 
 export const layout = {
-  // Side panel widths
   sidePanel: {
-    min: "375px", // Minimum supported (phone-sized)
-    default: "420px", // Default Chrome side panel
-    max: "500px", // Maximum useful width
+    min: "375px",
+    default: "420px",
+    max: "500px",
   },
 
-  // Touch targets
+  // Desktop container
+  container: {
+    max: "1200px",
+    padding: "2rem",
+  },
+
   touchTarget: {
-    min: "44px", // Minimum tappable area (Apple HIG)
+    min: "44px",
   },
 
-  // Z-index scale
   zIndex: {
     base: 0,
     card: 1,
@@ -212,21 +225,16 @@ export const layout = {
 // ---------------------------------------------------------------------------
 // Component Tokens
 // ---------------------------------------------------------------------------
-// Semantic tokens that reference the primitives above.
-// Use these in component styles for consistency.
 
 export const components = {
-  // Case card
   caseCard: {
     background: colors.card,
-    border: `1px solid ${colors.border}`,
     borderRadius: radii.lg,
     padding: spacing.cardPadding,
     shadow: shadows.md,
     shadowHover: shadows.lg,
   },
 
-  // Tags / pills
   tag: {
     borderRadius: radii.full,
     paddingX: spacing[2],
@@ -235,7 +243,6 @@ export const components = {
     fontWeight: typography.fontWeight.medium,
   },
 
-  // Entity chips (interview)
   entityChip: {
     borderRadius: radii.full,
     paddingX: spacing[3],
@@ -244,22 +251,20 @@ export const components = {
     fontWeight: typography.fontWeight.medium,
   },
 
-  // Buttons
   button: {
     primary: {
       background: colors.accent,
       color: colors.inverse,
-      borderRadius: radii.md,
+      borderRadius: radii.sm,
       fontWeight: typography.fontWeight.semibold,
       fontSize: typography.fontSize.md[0],
-      paddingX: spacing[4],
+      paddingX: spacing[6],
       paddingY: spacing[3],
     },
     secondary: {
-      background: colors.card,
+      background: colors.surfaceHighest,
       color: colors.primary,
-      border: `1px solid ${colors.border}`,
-      borderRadius: radii.md,
+      borderRadius: radii.sm,
       fontWeight: typography.fontWeight.medium,
       fontSize: typography.fontSize.base[0],
       paddingX: spacing[4],
@@ -267,20 +272,17 @@ export const components = {
     },
     ghost: {
       background: "transparent",
-      color: colors.accentText,
-      borderRadius: radii.md,
-      fontWeight: typography.fontWeight.medium,
+      color: colors.accent,
+      borderRadius: radii.sm,
+      fontWeight: typography.fontWeight.semibold,
       fontSize: typography.fontSize.base[0],
       paddingX: spacing[3],
       paddingY: spacing[2],
     },
   },
 
-  // Inputs
   input: {
-    background: colors.card,
-    border: `1.5px solid ${colors.border}`,
-    borderFocus: `1.5px solid ${colors.accent}`,
+    background: colors.surfaceHigh,
     borderRadius: radii.md,
     fontSize: typography.fontSize.base[0],
     padding: `${spacing[3]} ${spacing[3.5]}`,
@@ -288,7 +290,6 @@ export const components = {
     placeholderColor: colors.muted,
   },
 
-  // Bottom sheet
   bottomSheet: {
     background: colors.card,
     borderRadius: `${radii.xl} ${radii.xl} 0 0`,
@@ -298,7 +299,6 @@ export const components = {
     handleHeight: "4px",
   },
 
-  // Toast notification
   toast: {
     background: colors.primary,
     color: colors.inverse,
@@ -308,14 +308,12 @@ export const components = {
     shadow: shadows.lg,
   },
 
-  // Status label (uppercase, colored)
   statusLabel: {
-    active: { color: colors.warningText, ...typography.label },
+    active: { color: colors.imminentText, ...typography.label },
     resolved: { color: colors.successText, ...typography.label },
     calibrating: { color: colors.improvingText, ...typography.label },
   },
 
-  // Metric bar
   metricBar: {
     background: colors.subtle,
     progressColor: colors.improving,
@@ -323,21 +321,18 @@ export const components = {
     height: "6px",
   },
 
-  // Summary section dots
   summaryDot: {
     beginning: colors.accent,
-    middle: colors.warning,
+    middle: colors.imminent,
     end: colors.success,
     size: "8px",
   },
 
-  // Swipe action buttons
   swipeAction: {
     move: { background: colors.accent, color: colors.inverse },
     exclude: { background: colors.muted, color: colors.inverse },
   },
 
-  // Thumbs feedback
   thumbs: {
     up: { color: colors.success, activeBackground: colors.successSoft },
     down: { color: colors.error, activeBackground: colors.errorSoft },
@@ -347,22 +342,40 @@ export const components = {
 // ---------------------------------------------------------------------------
 // Tailwind Config Extension
 // ---------------------------------------------------------------------------
-// Copy this into tailwind.config.ts under `theme.extend`
 
 export const tailwindExtend = {
   colors: {
-    surface: colors.surface,
+    surface: {
+      DEFAULT: colors.surface,
+      low: colors.surfaceLow,
+      mid: colors.surfaceMid,
+      high: colors.surfaceHigh,
+      highest: colors.surfaceHighest,
+    },
     subtle: colors.subtle,
     primary: colors.primary,
     secondary: colors.secondary,
     muted: colors.muted,
     inverse: colors.inverse,
-    border: colors.border,
-    "border-light": colors.borderLight,
+    border: {
+      DEFAULT: colors.border,
+      light: colors.borderLight,
+    },
     accent: {
       DEFAULT: colors.accent,
       soft: colors.accentSoft,
       text: colors.accentText,
+      container: colors.accentContainer,
+    },
+    imminent: {
+      DEFAULT: colors.imminent,
+      soft: colors.imminentSoft,
+      text: colors.imminentText,
+    },
+    upcoming: {
+      DEFAULT: colors.upcoming,
+      soft: colors.upcomingSoft,
+      text: colors.upcomingText,
     },
     success: {
       DEFAULT: colors.success,
@@ -392,6 +405,7 @@ export const tailwindExtend = {
     },
   },
   fontFamily: {
+    serif: [typography.fontFamily.serif],
     sans: [typography.fontFamily.sans],
     mono: [typography.fontFamily.mono],
   },

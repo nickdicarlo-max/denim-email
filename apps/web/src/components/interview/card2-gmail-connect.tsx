@@ -1,7 +1,7 @@
 "use client";
 
-import { createBrowserClient } from "@/lib/supabase/client";
 import { useEffect, useRef, useState } from "react";
+import { createBrowserClient } from "@/lib/supabase/client";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
 import { ProgressDots } from "../ui/progress-dots";

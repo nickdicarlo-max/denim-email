@@ -1,18 +1,18 @@
 "use client";
 
 import type { EntityGroupInput, HypothesisValidation, SchemaHypothesis } from "@denim/types";
-import { useCallback, useState } from "react";
 import {
   DndContext,
+  type DragEndEvent,
   DragOverlay,
   MouseSensor,
   TouchSensor,
-  useSensor,
-  useSensors,
   useDraggable,
   useDroppable,
-  type DragEndEvent,
+  useSensor,
+  useSensors,
 } from "@dnd-kit/core";
+import { useCallback, useState } from "react";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
 import { EntityChip } from "../ui/entity-chip";
@@ -173,13 +173,13 @@ function DraggableEntityChip({
         {...listeners}
         {...attributes}
       >
-        <EntityChip
-          name={entity.name}
-          entityType={entity.type}
-          onRemove={onRemove}
-        />
-        <span className={`text-xs truncate ${entity.emailCount != null && entity.emailCount <= 1 ? "text-orange-500" : "text-muted"}`}>
-          {entity.emailCount != null ? `${entity.emailCount} email${entity.emailCount !== 1 ? "s" : ""}` : "Discovered in email"}
+        <EntityChip name={entity.name} entityType={entity.type} onRemove={onRemove} />
+        <span
+          className={`text-xs truncate ${entity.emailCount != null && entity.emailCount <= 1 ? "text-orange-500" : "text-muted"}`}
+        >
+          {entity.emailCount != null
+            ? `${entity.emailCount} email${entity.emailCount !== 1 ? "s" : ""}`
+            : "Discovered in email"}
         </span>
       </div>
     </div>
@@ -201,9 +201,7 @@ function DroppableGroupCard({
     <div
       ref={setNodeRef}
       className={`p-3 rounded-lg border-[1.5px] transition-colors ${
-        isOver
-          ? "border-accent bg-accent-soft/30"
-          : "border-border bg-white"
+        isOver ? "border-accent bg-accent-soft/30" : "border-border bg-white"
       }`}
     >
       {children}
@@ -218,7 +216,14 @@ function DroppableGroupCard({
 
 // --- Main component ---
 
-export function Card4Review({ hypothesis, validation, groups, isLoading, onFinalize, onBack }: Card4Props) {
+export function Card4Review({
+  hypothesis,
+  validation,
+  groups,
+  isLoading,
+  onFinalize,
+  onBack,
+}: Card4Props) {
   const [schemaName, setSchemaName] = useState(hypothesis.schemaName);
   const [removedEntities, setRemovedEntities] = useState<Set<string>>(() => new Set());
   const [addedEntities, setAddedEntities] = useState<string[]>([]);
@@ -227,7 +232,9 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
     () => new Set(),
   );
   const [addedTags, setAddedTags] = useState<string[]>([]);
-  const [entityGroupAssignments, setEntityGroupAssignments] = useState<Map<string, number>>(() => new Map());
+  const [entityGroupAssignments, setEntityGroupAssignments] = useState<Map<string, number>>(
+    () => new Map(),
+  );
 
   // Drag-and-drop active item for overlay
   const [activeDragEntity, setActiveDragEntity] = useState<{
@@ -336,26 +343,31 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
   }, []);
 
   const handleDragStart = useCallback((event: DragEndEvent) => {
-    const data = event.active.data.current as { entityName?: string; entityType?: "PRIMARY" | "SECONDARY" } | undefined;
+    const data = event.active.data.current as
+      | { entityName?: string; entityType?: "PRIMARY" | "SECONDARY" }
+      | undefined;
     if (data?.entityName && data?.entityType) {
       setActiveDragEntity({ name: data.entityName, type: data.entityType });
     }
   }, []);
 
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    setActiveDragEntity(null);
-    const { active, over } = event;
-    if (!over) return;
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveDragEntity(null);
+      const { active, over } = event;
+      if (!over) return;
 
-    const entityName = active.data.current?.entityName as string | undefined;
-    const dropId = over.id as string;
-    if (!entityName || !dropId.startsWith("group-")) return;
+      const entityName = active.data.current?.entityName as string | undefined;
+      const dropId = over.id as string;
+      if (!entityName || !dropId.startsWith("group-")) return;
 
-    const groupIndex = Number.parseInt(dropId.replace("group-", ""), 10);
-    if (!Number.isNaN(groupIndex)) {
-      handleAssignToGroup(entityName, groupIndex);
-    }
-  }, [handleAssignToGroup]);
+      const groupIndex = Number.parseInt(dropId.replace("group-", ""), 10);
+      if (!Number.isNaN(groupIndex)) {
+        handleAssignToGroup(entityName, groupIndex);
+      }
+    },
+    [handleAssignToGroup],
+  );
 
   const handleFinalize = useCallback(() => {
     // Build updated groups with assigned discovered entities merged in
@@ -409,10 +421,12 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
 
   // Compute unassigned discovered entities — split PRIMARY (auto-group) vs SECONDARY (ungrouped)
   const unassignedDiscoveredPrimaries = validation.discoveredEntities.filter(
-    (e) => e.type === "PRIMARY" && !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
+    (e) =>
+      e.type === "PRIMARY" && !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
   );
   const unassignedDiscoveredSecondaries = validation.discoveredEntities.filter(
-    (e) => e.type !== "PRIMARY" && !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
+    (e) =>
+      e.type !== "PRIMARY" && !entityGroupAssignments.has(e.name) && !removedEntities.has(e.name),
   );
 
   const hasGroups = groups && groups.length > 0;
@@ -471,11 +485,7 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
         {/* Entities */}
         <div>
           <SectionLabel>Entities</SectionLabel>
-          <DndContext
-            sensors={sensors}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
+          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
             <div className="space-y-2">
               {hasGroups ? (
                 <>
@@ -489,9 +499,15 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                     );
                     // Discovered entities assigned to this group
                     const assignedDiscovered = validation.discoveredEntities.filter(
-                      (e) => entityGroupAssignments.get(e.name) === gi && !removedEntities.has(e.name),
+                      (e) =>
+                        entityGroupAssignments.get(e.name) === gi && !removedEntities.has(e.name),
                     );
-                    if (groupWhats.length === 0 && groupWhos.length === 0 && assignedDiscovered.length === 0) return null;
+                    if (
+                      groupWhats.length === 0 &&
+                      groupWhos.length === 0 &&
+                      assignedDiscovered.length === 0
+                    )
+                      return null;
                     return (
                       <DroppableGroupCard key={gi} groupIndex={gi}>
                         {groups.length > 1 && (
@@ -520,7 +536,9 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                         {/* WHOs linked to this group */}
                         {groupWhos.length > 0 && (
                           <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-border-light">
-                            <span className="text-muted"><LinkIcon /></span>
+                            <span className="text-muted">
+                              <LinkIcon />
+                            </span>
                             <div className="flex flex-wrap gap-1.5">
                               {groupWhos.map((entity) => {
                                 const isRemoved = removedEntities.has(entity.name);
@@ -543,7 +561,9 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
                         {/* Assigned discovered entities */}
                         {assignedDiscovered.length > 0 && (
                           <div className="mt-2 pt-2 border-t border-dashed border-border-light">
-                            <div className="text-[10px] font-medium text-muted mb-1.5">discovered</div>
+                            <div className="text-[10px] font-medium text-muted mb-1.5">
+                              discovered
+                            </div>
                             <div className="flex flex-wrap gap-1.5">
                               {assignedDiscovered.map((entity) => (
                                 <span key={entity.name} className="inline-flex items-center gap-1">
@@ -573,12 +593,8 @@ export function Card4Review({ hypothesis, validation, groups, isLoading, onFinal
 
                   {/* Ungrouped entities (not in any group — AI-inferred or standalone) */}
                   {(() => {
-                    const groupedNames = new Set(
-                      groups.flatMap((g) => [...g.whats, ...g.whos]),
-                    );
-                    const ungrouped = hypothesis.entities.filter(
-                      (e) => !groupedNames.has(e.name),
-                    );
+                    const groupedNames = new Set(groups.flatMap((g) => [...g.whats, ...g.whos]));
+                    const ungrouped = hypothesis.entities.filter((e) => !groupedNames.has(e.name));
                     if (ungrouped.length === 0) return null;
                     return ungrouped.map((entity) => {
                       const isRemoved = removedEntities.has(entity.name);

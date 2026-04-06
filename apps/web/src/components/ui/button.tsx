@@ -9,13 +9,22 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
 }
 
+/**
+ * Button — "Digital Curator" style.
+ *
+ * DESIGN.md rules:
+ * - Primary: caramel gradient, on_primary text, "tactile pebble" feel
+ * - Secondary: surface_container_highest bg, feels like a tactile pebble
+ * - Ghost: text only, Plus Jakarta Sans bold, primary color
+ * - Min radius: 8px (sm)
+ */
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    "bg-accent text-inverse rounded-md font-semibold text-md px-4 py-3 hover:opacity-90 transition",
+    "bg-accent text-inverse rounded-sm font-semibold text-md px-6 py-3 hover:brightness-110 transition-all",
   secondary:
-    "bg-white border border-border text-primary rounded-md font-medium text-base px-4 py-3 hover:bg-gray-50 transition",
+    "bg-surface-highest text-primary rounded-sm font-medium text-base px-4 py-3 hover:bg-surface-high transition-all",
   ghost:
-    "bg-transparent text-accent-text rounded-md font-medium text-base px-3 py-2 hover:bg-accent-soft transition",
+    "bg-transparent text-accent rounded-sm font-semibold text-base px-3 py-2 hover:bg-accent-soft transition-all",
 };
 
 export function Button({
@@ -26,7 +35,7 @@ export function Button({
   ...props
 }: ButtonProps & { fullWidth?: boolean }) {
   const classes = [
-    "min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed",
+    "min-h-[44px] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
     fullWidth ? "w-full" : "w-auto",
     variantClasses[variant],
     className,
