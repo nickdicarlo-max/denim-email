@@ -1,6 +1,6 @@
-import { prisma } from "@/lib/prisma";
-import { withAuth } from "@/lib/middleware/auth";
 import { NextResponse } from "next/server";
+import { withAuth } from "@/lib/middleware/auth";
+import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/schemas/:schemaId/status
@@ -36,10 +36,7 @@ export const GET = withAuth(async ({ userId, request }) => {
   }
 
   if (schema.userId !== userId) {
-    return NextResponse.json(
-      { error: "Forbidden", code: 403, type: "FORBIDDEN" },
-      { status: 403 },
-    );
+    return NextResponse.json({ error: "Forbidden", code: 403, type: "FORBIDDEN" }, { status: 403 });
   }
 
   // Get the latest scan job
@@ -59,6 +56,8 @@ export const GET = withAuth(async ({ userId, request }) => {
       casesMerged: true,
       clustersCreated: true,
       completedAt: true,
+      startedAt: true,
+      createdAt: true,
     },
   });
 
@@ -67,11 +66,29 @@ export const GET = withAuth(async ({ userId, request }) => {
     where: { schemaId },
   });
 
+  // Fetch recently discovered entities during the current scan
+  const recentDiscoveries = latestJob
+    ? {
+        entities: await prisma.entity.findMany({
+          where: {
+            schemaId,
+            autoDetected: true,
+            createdAt: { gte: latestJob.startedAt ?? latestJob.createdAt },
+          },
+          select: { name: true, emailCount: true },
+          orderBy: { createdAt: "desc" },
+          take: 10,
+        }),
+        subjectPatterns: [],
+      }
+    : undefined;
+
   return NextResponse.json({
     schemaStatus: schema.status,
     emailCount: schema.emailCount,
     caseCount: schema.caseCount,
     actionCount,
     scanJob: latestJob,
+    recentDiscoveries,
   });
 });
