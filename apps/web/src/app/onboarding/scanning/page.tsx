@@ -20,8 +20,9 @@ export default function ScanningPage() {
   }, [router]);
 
   const onComplete = useCallback(() => {
-    router.push("/onboarding/review");
-  }, [router]);
+    if (!schemaId) return;
+    router.push(`/onboarding/review?schemaId=${schemaId}`);
+  }, [router, schemaId]);
 
   if (!schemaId) return null;
 

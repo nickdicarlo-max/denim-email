@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CaseCard, type CaseCardData } from "@/components/cases/case-card";
 import { createBrowserClient } from "@/lib/supabase/client";
@@ -29,10 +30,13 @@ const URGENCY_TIERS = [
 ] as const;
 
 export function FeedClient({ avatarUrl }: { avatarUrl?: string | null }) {
+  const searchParams = useSearchParams();
   const [cases, setCases] = useState<FeedCaseData[]>([]);
   const [schemas, setSchemas] = useState<FeedSchema[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSchemaId, setActiveSchemaId] = useState<string | null>(null);
+  const [activeSchemaId, setActiveSchemaId] = useState<string | null>(
+    () => searchParams.get("schema"),
+  );
   const [activeEntityId, setActiveEntityId] = useState<string | null>(null);
 
   const loadFeed = useCallback(async () => {

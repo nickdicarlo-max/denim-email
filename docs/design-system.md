@@ -341,3 +341,40 @@ Things this design system explicitly avoids:
 - **Custom scrollbars.** Use native browser scrollbars.
 - **Notification badges / red dots.** The product is a calm presence, not another
   source of notification anxiety. New cases just appear in the feed.
+
+---
+
+## Stitch MCP (Google Design Tool)
+
+Stitch by Google is connected via MCP for AI-driven UI design generation. It uses Gemini to generate UI designs and HTML/CSS from natural language prompts.
+
+### Available Tools
+
+**Design Generation:**
+- `generate_screen_from_text` -- Create UI designs from natural language. Params: `project_id`, `prompt`, `model_id` (GEMINI_3_PRO or GEMINI_3_FLASH)
+
+**Code & Image Extraction:**
+- `get_screen_code` / `fetch_screen_code` -- Get raw HTML/CSS for a screen
+- `get_screen_image` / `fetch_screen_image` -- Get high-res screenshot (base64)
+- `extract_design_context` -- Extract "Design DNA" (fonts, colors, layouts) for consistency
+
+**Project & Screen Management:**
+- `create_project`, `list_projects`, `get_project` -- Manage design projects
+- `list_screens`, `get_screen` -- Browse screens within a project
+
+**Site Building:**
+- `build_site` -- Map screens to routes, returns deployable HTML
+
+### Design-to-Code Workflow
+
+1. Generate screens in Stitch via natural language prompts
+2. Extract Design DNA with `extract_design_context` to capture fonts, colors, layout rules
+3. Fetch screen code with `get_screen_code` for implementation reference
+4. Build components in React + Tailwind using the extracted design tokens
+5. Compare browser output against Stitch screenshots for visual fidelity
+
+### Usage Notes
+- Configured via HTTP transport with API key (local MCP config, not committed)
+- Rate limit: 350 generations/month (standard tier)
+- Use `extract_design_context` before coding to keep styles consistent across screens
+- Stitch designs drive the UX overhaul (Phases 2-3)

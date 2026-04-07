@@ -1,0 +1,22 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: denim
+      - button "Get Started" [ref=e5] [cursor=pointer]
+    - generic [ref=e6]:
+      - heading "Your email, organized into cases" [level=1] [ref=e7]
+      - paragraph [ref=e8]: Connect your Gmail and let AI turn scattered threads into clear, actionable cases — no folders, no labels, no rules to maintain.
+      - button "Get Started" [ref=e10] [cursor=pointer]
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - heading "Smart interview" [level=3] [ref=e14]
+        - paragraph [ref=e15]: Tell us about your work in plain language. We build a custom schema tailored to your domain.
+      - generic [ref=e16]:
+        - heading "Automatic clustering" [level=3] [ref=e17]
+        - paragraph [ref=e18]: Emails are grouped into cases using metadata — sender patterns, subjects, timestamps, and entities.
+      - generic [ref=e19]:
+        - heading "AI-powered actions" [level=3] [ref=e20]
+        - paragraph [ref=e21]: Each case gets a summary, status, and action items extracted from your conversations.
+  - button "Open Next.js Dev Tools" [ref=e27] [cursor=pointer]:
+    - img [ref=e28]
+  - alert [ref=e31]

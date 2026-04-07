@@ -7,14 +7,21 @@ import { Button } from "@/components/ui/button";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import { createBrowserClient } from "@/lib/supabase/client";
 
-type Status = "idle" | "connecting" | "connected" | "generating" | "error";
+type Status = "idle" | "connecting" | "connected" | "generating" | "slow" | "error";
+
+// Hypothesis call usually completes in ~30s (Claude ~28s + finalize/discovery).
+// At 90s we surface a "taking longer than usual" recovery state instead of
+// leaving the user staring at an indefinite spinner (#15). Server-side
+// idempotency (#14) makes the manual retry safe — it resolves to the same
+// schemaId if the original POST already created one.
+const HYPOTHESIS_TIMEOUT_MS = 90 * 1000;
 
 export default function ConnectPage() {
   const router = useRouter();
   const [status, setStatus] = useState<Status>("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const hypothesisCalledRef = useRef(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const slowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // On mount: validate prerequisites and check for existing auth session.
   // If user is already authenticated (returning from OAuth or adding another topic),
@@ -26,6 +33,16 @@ export default function ConnectPage() {
     const names = onboardingStorage.getNames();
     if (!category || !names) {
       router.replace("/onboarding/category");
+      return;
+    }
+
+    // Resume-in-place: if a schemaId already exists in sessionStorage, the
+    // hypothesis call has already happened (or is happening). Skip the POST
+    // and jump straight to the scanning page so a refresh during the loading
+    // state cannot create a duplicate schema (#14).
+    const existingSchemaId = onboardingStorage.getSchemaId();
+    if (existingSchemaId) {
+      router.replace("/onboarding/scanning");
       return;
     }
 
@@ -52,6 +69,20 @@ export default function ConnectPage() {
     if (!category || !names) return;
 
     setStatus("generating");
+
+    // Surface a "taking longer than usual" state if the call hasn't returned
+    // by HYPOTHESIS_TIMEOUT_MS. We don't abort the fetch — the server may
+    // still be writing the schema, and idempotency (#14) makes a retry safe.
+    slowTimerRef.current = setTimeout(() => {
+      setStatus((prev) => (prev === "generating" ? "slow" : prev));
+    }, HYPOTHESIS_TIMEOUT_MS);
+
+    const clearSlowTimer = () => {
+      if (slowTimerRef.current) {
+        clearTimeout(slowTimerRef.current);
+        slowTimerRef.current = null;
+      }
+    };
 
     const supabase = createBrowserClient();
     supabase.auth
@@ -86,6 +117,7 @@ export default function ConnectPage() {
         return res.json();
       })
       .then((data: { data?: { schemaId?: string }; schemaId?: string }) => {
+        clearSlowTimer();
         // The API returns { data: hypothesis } where hypothesis includes schemaId.
         const schemaId = data.data?.schemaId ?? data.schemaId;
         if (!schemaId) {
@@ -95,10 +127,15 @@ export default function ConnectPage() {
         router.push("/onboarding/scanning");
       })
       .catch((err: unknown) => {
+        clearSlowTimer();
         hypothesisCalledRef.current = false;
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : "Something went wrong");
       });
+
+    return () => {
+      clearSlowTimer();
+    };
   }, [status, router]);
 
   const handleConnect = useCallback(() => {
@@ -121,6 +158,19 @@ export default function ConnectPage() {
 
   const handleRetry = useCallback(() => {
     setErrorMessage("");
+    hypothesisCalledRef.current = false;
+    setStatus("connected");
+  }, []);
+
+  // Manual continue from the "slow" state. Resets the call guard so the
+  // generating effect re-runs; idempotency on the server (#14) ensures we
+  // resolve to the same schemaId rather than creating a duplicate.
+  const handleContinueAnyway = useCallback(() => {
+    if (slowTimerRef.current) {
+      clearTimeout(slowTimerRef.current);
+      slowTimerRef.current = null;
+    }
+    hypothesisCalledRef.current = false;
     setStatus("connected");
   }, []);
 
@@ -192,6 +242,23 @@ export default function ConnectPage() {
                 <p className="text-primary font-medium">Setting up your topic...</p>
               </>
             )}
+          </div>
+        )}
+
+        {/* Slow — passed the timeout but still working */}
+        {status === "slow" && (
+          <div className="flex flex-col items-center gap-4 max-w-sm text-center">
+            <span className="material-symbols-outlined text-[40px] text-accent animate-spin">
+              progress_activity
+            </span>
+            <p className="text-primary font-medium">This is taking longer than usual</p>
+            <p className="text-sm text-muted">
+              We&apos;re still setting up your topic. You can keep waiting, or tap continue to
+              retry.
+            </p>
+            <Button onClick={handleContinueAnyway} fullWidth={false} className="mt-2">
+              Continue
+            </Button>
           </div>
         )}
 

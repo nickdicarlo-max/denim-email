@@ -1,0 +1,108 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Denim" [level=1] [ref=e4]
+      - generic [ref=e5]: account_circle
+    - generic [ref=e40]:
+      - generic [ref=e41]:
+        - button "All" [ref=e42] [cursor=pointer]
+        - button "Girls Activites Nick Test March 21 2026" [ref=e43] [cursor=pointer]
+        - button "Kids Activities" [active] [ref=e44] [cursor=pointer]
+        - button "North 40 Test 1 – 1501 Sylvan / 3305 Cardinal / 851 Peavy" [ref=e45] [cursor=pointer]
+        - button "March 23 Soccer Test After Dependency Update" [ref=e46] [cursor=pointer]
+        - button "School Parent – Soccer / St Agnes / Lanier / Dance" [ref=e47] [cursor=pointer]
+        - button "Property Management – Portfolio Pro Advisors" [ref=e48] [cursor=pointer]
+        - button "Girls Activities Test 2 March 22" [ref=e49] [cursor=pointer]
+        - button "Property Management" [ref=e50] [cursor=pointer]
+      - generic [ref=e1167]:
+        - button "Dance (1)" [ref=e1168] [cursor=pointer]
+        - button "St Agnes (1)" [ref=e1169] [cursor=pointer]
+        - button "Lanier (1)" [ref=e1170] [cursor=pointer]
+        - button "Soccer (3)" [ref=e1171] [cursor=pointer]
+        - button "ZSA Soccer (U11/12 Girls) (0)" [ref=e1172] [cursor=pointer]
+    - generic [ref=e51]:
+      - generic [ref=e91]:
+        - generic [ref=e92]:
+          - generic [ref=e93]: upcoming
+          - heading "Upcoming" [level=2] [ref=e94]
+        - generic [ref=e95]:
+          - link "Dance Pia Spring Dance Show – Time Updated Tue, May 5 · 6:30 PM check_box_outline_blank Pia Spring Dance Show Feb 24" [ref=e425] [cursor=pointer]:
+            - /url: /feed/cmmxtbfbg006vqej8ih9licn8
+            - generic [ref=e426]:
+              - generic [ref=e428]: Dance
+              - heading "Pia Spring Dance Show – Time Updated" [level=3] [ref=e429]
+              - paragraph [ref=e430]: Tue, May 5 · 6:30 PM
+              - generic [ref=e431]:
+                - generic [ref=e432]: check_box_outline_blank
+                - generic [ref=e433]: Pia Spring Dance Show
+              - paragraph [ref=e434]: Feb 24
+          - link "Soccer US Soccer Circle Insider Membership Renewal check_box_outline_blank Renew U.S. Soccer Circle Insider Membership Jan 27" [ref=e757] [cursor=pointer]:
+            - /url: /feed/cmmxtbadd005jqej8qb68lu1r
+            - generic [ref=e758]:
+              - generic [ref=e760]: Soccer
+              - heading "US Soccer Circle Insider Membership Renewal" [level=3] [ref=e761]
+              - generic [ref=e762]:
+                - generic [ref=e763]: check_box_outline_blank
+                - generic [ref=e764]: Renew U.S. Soccer Circle Insider Membership
+              - paragraph [ref=e765]: Jan 27
+      - generic [ref=e766]:
+        - generic [ref=e767]:
+          - generic [ref=e768]: check_circle
+          - heading "No Action Needed" [level=2] [ref=e769]
+        - generic [ref=e770]:
+          - link "Soccer ZSA U11/12 Girls Soccer Practice Due Sun, Feb 1 check_box_outline_blank Update availability for practice Feb 1" [ref=e1083] [cursor=pointer]:
+            - /url: /feed/cmmxtbblz0061qej8zjcpctws
+            - generic [ref=e1084]:
+              - generic [ref=e1086]: Soccer
+              - heading "ZSA U11/12 Girls Soccer Practice" [level=3] [ref=e1087]
+              - paragraph [ref=e1088]: Due Sun, Feb 1
+              - generic [ref=e1089]:
+                - generic [ref=e1090]: check_box_outline_blank
+                - generic [ref=e1091]: Update availability for practice
+              - paragraph [ref=e1092]: Feb 1
+          - link "Lanier IB Learner Profile Award Ceremony – Nick DiCarlo Thu, Feb 5 · 8:30 AM · Lanier Middle School check_box_outline_blank Attend IB Learner Profile Award Ceremony Jan 30" [ref=e1115] [cursor=pointer]:
+            - /url: /feed/cmmxtbb3u005vqej8gy3hfp0v
+            - generic [ref=e1116]:
+              - generic [ref=e1118]: Lanier
+              - heading "IB Learner Profile Award Ceremony – Nick DiCarlo" [level=3] [ref=e1120]
+              - paragraph [ref=e1121]: Thu, Feb 5 · 8:30 AM · Lanier Middle School
+              - generic [ref=e1122]:
+                - generic [ref=e1123]: check_box_outline_blank
+                - generic [ref=e1124]: Attend IB Learner Profile Award Ceremony
+              - paragraph [ref=e1125]: Jan 30
+          - link "St Agnes Dads & Donuts Event at St. Agnes – Jan 30 Fri, Jan 30 · 9:00 AM · St. Agnes Academy check_box_outline_blank Attend Dads & Donuts at St. Agnes Academy Jan 27" [ref=e1137] [cursor=pointer]:
+            - /url: /feed/cmmxtbaqs005pqej8nqdik63v
+            - generic [ref=e1138]:
+              - generic [ref=e1140]: St Agnes
+              - heading "Dads & Donuts Event at St. Agnes – Jan 30" [level=3] [ref=e1142]
+              - paragraph [ref=e1143]: Fri, Jan 30 · 9:00 AM · St. Agnes Academy
+              - generic [ref=e1144]:
+                - generic [ref=e1145]: check_box_outline_blank
+                - generic [ref=e1146]: Attend Dads & Donuts at St. Agnes Academy
+              - paragraph [ref=e1147]: Jan 27
+          - link "Soccer U.S. Soccer Circle Insider Membership Renewal Due Sat, Jan 24 check_box_outline_blank Verify and resolve Circle Insider auto-renewal status Jan 24" [ref=e1156] [cursor=pointer]:
+            - /url: /feed/cmmxtb9um005bqej8ubkqxyq3
+            - generic [ref=e1157]:
+              - generic [ref=e1159]: Soccer
+              - heading "U.S. Soccer Circle Insider Membership Renewal" [level=3] [ref=e1161]
+              - paragraph [ref=e1162]: Due Sat, Jan 24
+              - generic [ref=e1163]:
+                - generic [ref=e1164]: check_box_outline_blank
+                - generic [ref=e1165]: Verify and resolve Circle Insider auto-renewal status
+              - paragraph [ref=e1166]: Jan 24
+    - navigation [ref=e19]:
+      - generic [ref=e20]:
+        - link "dynamic_feed Feed" [ref=e21] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e22]: dynamic_feed
+          - generic [ref=e23]: Feed
+        - button "add_circle Note" [ref=e24] [cursor=pointer]:
+          - generic [ref=e25]: add_circle
+          - generic [ref=e26]: Note
+        - link "settings Settings" [ref=e27] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e28]: settings
+          - generic [ref=e29]: Settings
+  - button "Open Next.js Dev Tools" [ref=e35] [cursor=pointer]:
+    - img [ref=e36]
+  - alert [ref=e39]

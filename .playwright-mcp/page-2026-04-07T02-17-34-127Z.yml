@@ -1,0 +1,74 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - heading "My Topics" [level=1] [ref=e5]
+        - link "add Add Topic" [ref=e6] [cursor=pointer]:
+          - /url: /onboarding/category
+          - generic [ref=e7]: add
+          - text: Add Topic
+      - generic [ref=e8]:
+        - generic [ref=e9]:
+          - generic [ref=e10]:
+            - heading "Property Management – Portfolio Pro Advisors" [level=3] [ref=e11]
+            - paragraph [ref=e12]: 2 entities · 0 cases · 0 emails
+            - paragraph [ref=e13]: Active since Mar 25, 2026
+          - generic [ref=e14]: ONBOARDING
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - heading "March 23 Soccer Test After Dependency Update" [level=3] [ref=e17]
+            - paragraph [ref=e18]: 2 entities · 32 cases · 50 emails
+            - paragraph [ref=e19]: Active since Mar 23, 2026
+          - generic [ref=e20]: ACTIVE
+        - generic [ref=e21]:
+          - generic [ref=e22]:
+            - heading "Property Management" [level=3] [ref=e23]
+            - paragraph [ref=e24]: 8 entities · 23 cases · 82 emails
+            - paragraph [ref=e25]: Active since Mar 22, 2026
+          - generic [ref=e26]: ONBOARDING
+        - generic [ref=e27]:
+          - generic [ref=e28]:
+            - heading "Girls Activities Test 2 March 22" [level=3] [ref=e29]
+            - paragraph [ref=e30]: 7 entities · 37 cases · 56 emails
+            - paragraph [ref=e31]: Active since Mar 22, 2026
+          - generic [ref=e32]: ONBOARDING
+        - generic [ref=e33]:
+          - generic [ref=e34]:
+            - heading "North 40 Test 1 – 1501 Sylvan / 3305 Cardinal / 851 Peavy" [level=3] [ref=e35]
+            - paragraph [ref=e36]: 6 entities · 68 cases · 170 emails
+            - paragraph [ref=e37]: Active since Mar 21, 2026
+          - generic [ref=e38]: ONBOARDING
+        - generic [ref=e39]:
+          - generic [ref=e40]:
+            - heading "Girls Activites Nick Test March 21 2026" [level=3] [ref=e41]
+            - paragraph [ref=e42]: 6 entities · 34 cases · 51 emails
+            - paragraph [ref=e43]: Active since Mar 21, 2026
+          - generic [ref=e44]: ONBOARDING
+        - generic [ref=e45]:
+          - generic [ref=e46]:
+            - heading "School Parent – Soccer / St Agnes / Lanier / Dance" [level=3] [ref=e47]
+            - paragraph [ref=e48]: 5 entities · 7 cases · 52 emails
+            - paragraph [ref=e49]: Active since Mar 20, 2026
+          - generic [ref=e50]: ONBOARDING
+        - generic [ref=e51]:
+          - generic [ref=e52]:
+            - heading "Kids Activities" [level=3] [ref=e53]
+            - paragraph [ref=e54]: 6 entities · 12 cases · 48 emails
+            - paragraph [ref=e55]: Active since Mar 19, 2026
+          - generic [ref=e56]: ONBOARDING
+    - navigation [ref=e57]:
+      - generic [ref=e58]:
+        - link "dynamic_feed Feed" [ref=e59] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e60]: dynamic_feed
+          - generic [ref=e61]: Feed
+        - button "add_circle Note" [ref=e62] [cursor=pointer]:
+          - generic [ref=e63]: add_circle
+          - generic [ref=e64]: Note
+        - link "settings Settings" [ref=e65] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e66]: settings
+          - generic [ref=e67]: Settings
+  - button "Open Next.js Dev Tools" [ref=e73] [cursor=pointer]:
+    - img [ref=e74]
+  - alert [ref=e77]

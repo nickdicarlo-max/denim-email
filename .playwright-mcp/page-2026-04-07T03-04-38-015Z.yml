@@ -1,0 +1,17 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e10]:
+    - heading "Connect your Gmail" [level=1] [ref=e11]
+    - paragraph [ref=e12]: We'll scan for emails matching what you entered. Read-only access only.
+    - button "Connect Gmail" [ref=e14] [cursor=pointer]
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]: visibility_off
+        - generic [ref=e18]: Read-only access. We never send, delete, or modify email.
+      - generic [ref=e19]:
+        - generic [ref=e20]: lock
+        - generic [ref=e21]: Your data is encrypted and never shared.
+      - generic [ref=e22]:
+        - generic [ref=e23]: filter_alt
+        - generic [ref=e24]: We only look at emails matching your topics.
+  - button "Open Next.js Dev Tools" [ref=e30] [cursor=pointer]:
+    - img [ref=e31]

@@ -73,6 +73,12 @@ export const fanOutExtraction = inngest.createFunction(
 
 /**
  * Process a single batch of emails through the extraction pipeline.
+ *
+ * If all retries are exhausted, the `onFailure` handler runs to record the
+ * batch as failed (incrementing `failedEmails` by the batch size) and emit
+ * the `extraction.batch.completed` event so downstream stages still advance.
+ * Without this handler, a single bad batch silently dropped 20 emails from
+ * the accounting and the pipeline could stall waiting for completion (#16).
  */
 export const extractBatch = inngest.createFunction(
   {
@@ -83,6 +89,51 @@ export const extractBatch = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 3,
+    onFailure: async ({ event, error, step }) => {
+      // FailureEventPayload wraps the original event under data.event.
+      const original = event.data.event.data as {
+        schemaId: string;
+        scanJobId: string;
+        emailIds: string[];
+        batchIndex: number;
+        totalBatches: number;
+      };
+      const { schemaId, scanJobId, emailIds, batchIndex, totalBatches } = original;
+
+      await step.run("record-batch-failure", async () => {
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: {
+            failedEmails: { increment: emailIds.length },
+            statusMessage: `Batch ${batchIndex + 1}/${totalBatches} failed after retries`,
+          },
+        });
+        logger.error({
+          service: "inngest",
+          operation: "extractBatch.exhaustedRetries",
+          schemaId,
+          scanJobId,
+          batchIndex,
+          batchSize: emailIds.length,
+          error: error?.message ?? String(error),
+        });
+      });
+
+      await step.run("emit-completed-after-failure", async () => {
+        await inngest.send({
+          name: "extraction.batch.completed",
+          data: {
+            schemaId,
+            scanJobId,
+            batchIndex,
+            totalBatches,
+            processedCount: 0,
+            excludedCount: 0,
+            failedCount: emailIds.length,
+          },
+        });
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } =
@@ -207,6 +258,25 @@ export const checkExtractionComplete = inngest.createFunction(
         scanJob.processedEmails + scanJob.excludedEmails + scanJob.failedEmails;
 
       if (totalProcessed >= scanJob.totalEmails) {
+        // Accounting invariant: every discovered email must be accounted for
+        // as processed, excluded, or failed (#16). A mismatch here means a
+        // pipeline stage silently dropped emails — log loudly so the next
+        // eval surfaces it.
+        if (totalProcessed !== scanJob.totalEmails) {
+          logger.error({
+            service: "inngest",
+            operation: "checkExtractionComplete.accountingMismatch",
+            schemaId,
+            scanJobId,
+            totalEmails: scanJob.totalEmails,
+            processed: scanJob.processedEmails,
+            excluded: scanJob.excludedEmails,
+            failed: scanJob.failedEmails,
+            sum: totalProcessed,
+            gap: totalProcessed - scanJob.totalEmails,
+          });
+        }
+
         // All emails processed — keep EXTRACTING phase, clustering will advance it
         await prisma.scanJob.update({
           where: { id: scanJobId },
@@ -598,6 +668,37 @@ export const runSynthesis = inngest.createFunction(
     // 5. Update scan job to COMPLETED
     if (scanJobId) {
       await step.run("complete-job", async () => {
+        // Final accounting invariant (#16). At pipeline completion, every
+        // discovered email should be in exactly one bucket: processed,
+        // excluded, or failed. If the sum doesn't match `totalEmails`, a
+        // pipeline stage silently dropped emails — log it so the next eval
+        // can pinpoint the dropoff stage.
+        const finalJob = await prisma.scanJob.findUniqueOrThrow({
+          where: { id: scanJobId },
+          select: {
+            totalEmails: true,
+            processedEmails: true,
+            excludedEmails: true,
+            failedEmails: true,
+          },
+        });
+        const accounted =
+          finalJob.processedEmails + finalJob.excludedEmails + finalJob.failedEmails;
+        if (accounted !== finalJob.totalEmails) {
+          logger.error({
+            service: "inngest",
+            operation: "runSynthesis.accountingMismatch",
+            schemaId,
+            scanJobId,
+            totalEmails: finalJob.totalEmails,
+            processed: finalJob.processedEmails,
+            excluded: finalJob.excludedEmails,
+            failed: finalJob.failedEmails,
+            accounted,
+            gap: finalJob.totalEmails - accounted,
+          });
+        }
+
         await prisma.scanJob.update({
           where: { id: scanJobId },
           data: {

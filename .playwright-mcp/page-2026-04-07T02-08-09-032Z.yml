@@ -1,0 +1,86 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - main [ref=e1176]:
+      - generic [ref=e1177]:
+        - heading "Denim" [level=1] [ref=e1178]
+        - link "arrow_back Feed" [ref=e1179] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e1180]: arrow_back
+          - text: Feed
+      - generic [ref=e1182]:
+        - generic [ref=e1183]:
+          - generic [ref=e1184]:
+            - generic [ref=e1185]:
+              - heading "Stagnes Academic Awards Ceremony – Apr 14" [level=1] [ref=e1186]
+              - generic [ref=e1187]:
+                - generic [ref=e1188]: Open
+                - generic [ref=e1189]: St. Agnes School (Stagnes)
+                - generic [ref=e1190]: St. Agnes School (Stagnes)
+            - generic [ref=e1192]:
+              - button "Thumbs up" [ref=e1193]:
+                - img [ref=e1194]
+              - button "Thumbs down" [ref=e1196]:
+                - img [ref=e1197]
+          - generic [ref=e1199]:
+            - generic [ref=e1200]: Schedule
+            - generic [ref=e1201]: Action Required
+        - generic [ref=e1202]:
+          - heading "Summary" [level=2] [ref=e1203]
+          - generic [ref=e1204]:
+            - heading "What" [level=3] [ref=e1205]
+            - paragraph [ref=e1206]: A Google Calendar invitation was received for the Stagnes Academic Awards event on Tuesday, April 14, 2026.
+          - generic [ref=e1207]:
+            - heading "Details" [level=3] [ref=e1208]
+            - paragraph [ref=e1209]: The event is scheduled from 7:00 PM to 8:30 PM CDT and was sent by Amy DiCarlo to Nick DiCarlo.
+          - generic [ref=e1210]:
+            - heading "Action Needed" [level=3] [ref=e1211]
+            - paragraph [ref=e1212]: No action has been taken yet; attendance at the Academic Awards ceremony on April 14th is pending.
+          - generic [ref=e1213]:
+            - heading "Key Data" [level=3] [ref=e1214]
+            - generic [ref=e1216]:
+              - generic [ref=e1217]: eventDate
+              - generic [ref=e1218]: 2026-04-14T19:00:00-05:00
+        - generic [ref=e1219]:
+          - heading "Actions (1)" [level=2] [ref=e1220]
+          - generic [ref=e1221]:
+            - heading "Pending" [level=3] [ref=e1222]
+            - generic [ref=e1224]:
+              - button "○" [ref=e1225] [cursor=pointer]
+              - generic [ref=e1226]: 📅
+              - generic [ref=e1227]:
+                - text: Attend Stagnes Academic Awards
+                - paragraph [ref=e1228]: Academic Awards ceremony at St. Agnes School on Tuesday, April 14, 2026, from 7:00 PM to 8:30 PM CDT.
+                - generic [ref=e1230]: Due just now
+        - generic [ref=e1231]:
+          - heading "Emails (1)" [level=2] [ref=e1232]
+          - generic [ref=e1234]:
+            - generic [ref=e1235]:
+              - generic [ref=e1236]:
+                - generic [ref=e1237]:
+                  - 'heading "Invitation: Stagnes Academic Awards @ Tue Apr 14, 2026 7pm - 8:30pm (CDT) (Nick DiCarlo)" [level=4] [ref=e1238]'
+                  - generic [ref=e1239]: \uD83D\uDCCE 2
+                - generic [ref=e1240]:
+                  - generic [ref=e1241]: Amy DiCarlo
+                  - generic [ref=e1242]: Mar 18
+              - button "Exclude" [ref=e1243]
+            - paragraph [ref=e1244]: This is a Google Calendar invitation for the Stagnes Academic Awards event scheduled for Tuesday, April 14, 2026, from 7pm to 8:30pm CDT.
+            - generic [ref=e1246]: Schedule
+        - button "▶ Clustering Debug" [ref=e1248]:
+          - generic [ref=e1249]: ▶
+          - text: Clustering Debug
+    - navigation [ref=e19]:
+      - generic [ref=e20]:
+        - link "dynamic_feed Feed" [ref=e21] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e22]: dynamic_feed
+          - generic [ref=e23]: Feed
+        - button "add_circle Note" [ref=e24] [cursor=pointer]:
+          - generic [ref=e25]: add_circle
+          - generic [ref=e26]: Note
+        - link "settings Settings" [ref=e27] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e28]: settings
+          - generic [ref=e29]: Settings
+  - button "Open Next.js Dev Tools" [ref=e35] [cursor=pointer]:
+    - img [ref=e36]
+  - alert [ref=e39]

@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e101]:
+    - generic [ref=e102]: error
+    - paragraph [ref=e103]: Hypothesis generation failed (400)
+    - button "Try again" [ref=e104] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]

@@ -22,13 +22,20 @@ const PHASE_FALLBACK_PROGRESS: Record<string, number> = {
 };
 
 interface StatusResponse {
-  phase: string;
-  totalEmails: number;
-  processedEmails: number;
-  newEmails: number;
-  status: string;
+  schemaStatus: string;
+  emailCount: number;
+  caseCount: number;
+  actionCount: number;
+  scanJob: {
+    phase: string;
+    status: string;
+    totalEmails: number;
+    processedEmails: number;
+    excludedEmails: number;
+    failedEmails: number;
+  } | null;
   recentDiscoveries?: {
-    entities?: string[];
+    entities?: Array<{ name: string; emailCount: number }>;
   };
 }
 
@@ -60,23 +67,31 @@ export function ScanStream({ schemaId, onComplete }: ScanStreamProps) {
       if (!res.ok) return;
 
       const data: StatusResponse = await res.json();
-      setPhase(data.phase ?? data.status ?? "IDLE");
-      setTotalEmails(data.totalEmails ?? 0);
-      setProcessedEmails(data.processedEmails ?? 0);
-      setNewEmails(data.newEmails ?? 0);
+      const job = data.scanJob;
+      setPhase(job?.phase ?? job?.status ?? data.schemaStatus ?? "IDLE");
+      setTotalEmails(job?.totalEmails ?? 0);
+      setProcessedEmails(job?.processedEmails ?? 0);
+      setNewEmails(data.emailCount ?? 0);
 
       if (data.recentDiscoveries?.entities) {
         setEntities((prev) => {
           const combined = [...prev];
           for (const e of data.recentDiscoveries?.entities ?? []) {
-            if (!combined.includes(e)) combined.push(e);
+            if (!combined.includes(e.name)) combined.push(e.name);
           }
           return combined;
         });
       }
 
-      const status = data.status ?? data.phase;
-      if (status === "COMPLETED" && !completedRef.current) {
+      // Two completion signals: scan job is COMPLETED, or schema has been
+      // flipped to ACTIVE by the synthesis step. Either is sufficient to
+      // advance the user to the review page.
+      const isComplete =
+        job?.status === "COMPLETED" ||
+        job?.phase === "COMPLETED" ||
+        data.schemaStatus === "ACTIVE";
+
+      if (isComplete && !completedRef.current) {
         completedRef.current = true;
         if (intervalRef.current) {
           clearInterval(intervalRef.current);

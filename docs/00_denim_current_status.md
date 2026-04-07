@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-07 (UX overhaul complete: Waves 1-3 + onboarding connect fix)
+Last updated: 2026-04-07 (Eval Session 1 — FAIL — 15 follow-up issues filed against #12)
 
 ## Completed
 
@@ -712,21 +712,95 @@ Key changes:
 3. ~~**Deterministic status decay**~~ — FIXED: `computeCaseDecay` + daily cron + read-time freshness
 4. **Schema additions needed** — UserNote, NotificationPreference models; User.stripeCustomerId/subscriptionStatus/trialEndDate fields
 
+## Eval Session 1 — 2026-04-07 — FAIL
+
+First formal end-to-end eval of the new-user experience after the UX overhaul. Wiped DB, fresh OAuth, single user walkthrough on desktop with screen recording. Tracked in #12. **Result: end-to-end flow does not work; case quality is partially broken.** 15 follow-up issues filed (#14–#28).
+
+### Rubric scores
+| # | Criterion                              | Score      |
+|---|----------------------------------------|------------|
+| 1 | Works end-to-end                       | **0/5**    |
+| 2 | New-user UX delivers core value prop   | (deferred — flow broke) |
+| 3 | Generates great cases                  | **1/5**    |
+| 4 | Information hierarchy actionable       | (partial)  |
+| 5 | Performant UI                          | (deferred — needs prod build per #13) |
+| 6 | Easy to navigate                       | **2-3/5**  |
+
+### Top findings (full detail in #12)
+
+**Pipeline / orchestration (P0):**
+- **Loading screens hang** (#15) — both "Setting up Gmail" and "Setting up topic" hang indefinitely; only escape is browser refresh
+- **Refresh creates duplicate schemas** (#14) — the refresh from above re-submits, creating duplicate schemas. Eval session created **6 schemas when 2 were intended**, burning ~6× expected cost ($2.19 actual vs ~$0.40 expected).
+- **Scans silently drop 60-85% of emails** (#16) — every scan job marked `status=COMPLETED` while only processing 35-75 of ~200 discovered emails, with no `failed` count to explain the gap. **Highest-impact bug** — case quality cannot be honestly evaluated until this is fixed.
+- **No auto-transition from scanning to review/feed** (#17) — pipeline finishes, UI keeps polling, user stuck on the loading screen. **Root cause identified 2026-04-07 (post-eval research):** `/api/schemas/[id]/status` returns `{ schemaStatus, scanJob: { phase, status, totalEmails, processedEmails, ... }, recentDiscoveries }`, but `apps/web/src/components/onboarding/scan-stream.tsx` reads `data.phase`, `data.status`, `data.totalEmails`, `data.processedEmails` off the top level. The fields are nested under `scanJob` so the polling loop never observes `status === "COMPLETED"` and `onComplete()` never fires. The Inngest pipeline (including the `activate-schema` step at `functions.ts:614-619` flipping CaseSchema ONBOARDING→ACTIVE) is working — the bug is purely a client/server contract mismatch in the polling endpoint.
+- **Review screen has no schema context** (#18) — visiting `/onboarding/review` directly does not show which schema is being reviewed
+
+**Case quality (P1):**
+- **Clustering non-determinism** (#19) — same Gmail account, same interview answers, two parallel runs produced wildly different output (school #1: 6 cases with multi-email clustering; school #2: 18 cases all single-email)
+- **User-defined topic anchors not respected as boundaries** (#20) — entered "1501 Sylvan", "3910 Bucknell", "205 Freedom" as separate topics; clustering still combined two of them into one case
+- **Time-decay urgency not de-prioritizing aged cases** (#21) — a 32-day-old tax-prep thread surfaced as UPCOMING
+- **Topic pills read from wrong column** (#22) — pills show `case_schemas.name` (AI-generated) instead of `discoveryQueries` (what the user typed)
+- **scan_jobs denormalized fields broken** (#23) — `casesCreated` double-counts (= cases + clusters); `estimatedCostUsd` rollup never written ($0.00 in scan_jobs vs $2.19 real spend in extraction_costs)
+
+**Scanning UX (P1):**
+- **Progress bar does not reflect pipeline progress** (#24) — bar shows the same level for minutes while Inngest runs real work. This is the proximate trigger of the duplicate-schema bug.
+- **Scanning UX needs better in-flight info AND faster wall-clock** (#25) — 4-10 minutes for ~70 emails with no live status; needs both per-stage info and parallelization
+
+**Desktop layout (P2):**
+- **Feed desktop layout not built to spec** (#26) — single-column "cards crash into each other"; missing the two-column grid, sidebar, search bar, and hero block from the Stitch design
+- **Case detail single-column on desktop** (#27) — should be 3-column per design intent
+- **Accent color mismatch** (#28) — tokens say caramel, designs use teal/coral as the dominant visual
+
+### Good news
+- Property schemas produced **legitimately useful cases** when they worked: titles like "3910 Bucknell - Foundation & Plumbing Repairs" (17 emails, 2 actions), "Commercial Property Insurance Policy Decision" (5 emails, 2 actions). Clustering + synthesis stack works when input is clean.
+- Discovery is doing useful work: surfaced **2310 Healey** as a property even though the user did not enter it.
+- Eval infrastructure now exists: `apps/web/scripts/eval-snapshot.ts`, `apps/web/scripts/eval-wipe.ts` (with snapshot guard), `apps/web/scripts/eval-diagnose.ts`, snapshot at `docs/test-results/pre-eval-snapshot-2026-04-07.json`, eval writeup at `docs/test-results/eval-session-1-comment.md`. Re-runnable for future eval cycles.
+- Visual design system showcase live at `/design-system` (built in this session).
+
+### Suggested fix order (per the index comment on #12)
+1. **#15** — fix loading-screen hangs (removes the user's reason to refresh)
+2. **#14** — add idempotency as defense in depth
+3. **#17 + #18 together** — auto-transition + review-screen schemaId context
+4. **#16** — silent early termination (highest case-quality lever)
+5. **Clean eval rerun** — validate end-to-end before touching P1s
+6. **P1 case-quality:** #19 (non-determinism) and #20 (topic anchors as boundaries) have the biggest case-quality impact
+7. **P1 scanning UX:** #24 + #25 should be designed together (shared status payload)
+8. **P2 UI:** #28 (accent reconciliation) before #26 (feed layout) so layout uses correct colors
+
 ## Next Steps
 
-### Immediate: Pre-UX Code Fixes — ALL DONE except schema additions
-1. ~~**Time-neutral language directives**~~ — DONE (2026-03-31): extraction + synthesis prompts enforce absolute dates
-2. ~~**Broaden post-synthesis expiry**~~ — DONE (2026-03-31): `computeCaseDecay` handles all action types
-3. ~~**computeCaseDecay pure function**~~ — DONE (2026-03-31): `packages/engine/src/actions/lifecycle.ts` + 18 unit tests
-4. ~~**Daily status decay cron**~~ — DONE (2026-03-31): `apps/web/src/lib/inngest/daily-status-decay.ts` (6 AM ET)
-5. **Schema additions** — UserNote, NotificationPreference models; User.stripe* fields for billing
+### Immediate: Eval Session 1 P0 follow-ups (BLOCK SHIP)
+Eval Session 1 (#12) failed end-to-end. Five P0 issues block any further progress on UX or features. Fix order:
 
-### UX Overhaul Phases (waiting on Stitch designs for Phases 2-3)
-- **Phase 1**: Performance + routing foundation (parallel queries, loading.tsx, smart redirect, /feed route, bottom nav, status decay)
-- **Phase 2**: Case Feed UX — NEEDS STITCH DESIGNS (card component, feed layout, filters, empty states)
-- **Phase 3**: New User Flow — NEEDS STITCH DESIGNS (landing page, onboarding, Stripe, scanning animation)
+1. **#15 — Onboarding loading screens hang** (Gmail + topic setup). Removes the user's reason to refresh.
+2. **#14 — Topic-creation idempotency.** Defense in depth so any future hang doesn't multiply schemas.
+3. **#17 + #18 together — Auto-transition + review-screen schema context.** Same flow, fix as one.
+4. **#16 — Scans silently drop 60-85% of emails.** Highest case-quality lever in the entire eval.
+5. **Clean eval rerun.** Validate end-to-end before touching P1s.
+
+### After P0s: Eval P1 case-quality fixes
+- **#19 — Clustering non-determinism.** Same input produces different output across runs.
+- **#20 — Topic anchors not respected as case boundaries.** User's WHATs should partition cases.
+- **#21 — Time-decay urgency.** 32-day-old quiet cases should not be UPCOMING.
+- **#22 — Topic pills wrong column source.**
+- **#23 — `scan_jobs` denormalized fields broken** (`casesCreated` double-count + cost rollup not written).
+
+### After P1 case quality: Scanning UX (designed together, share status payload)
+- **#24 — Progress bar doesn't reflect pipeline.**
+- **#25 — Better in-flight info AND faster wall-clock time.**
+
+### Then: UX P2 (desktop layout — accent reconciliation first)
+- **#28 — Accent color reconciliation** (caramel vs teal/coral). **Land before #26 so layout uses correct colors.**
+- **#26 — Feed desktop layout to spec** (two-column grid, sidebar, hero, search, card spacing).
+- **#27 — Case detail desktop 3-column layout.**
+
+### After eval bugs are clear: Schema additions still pending
+- **Schema additions** — UserNote, NotificationPreference models; User.stripeCustomerId/subscriptionStatus/trialEndDate fields for billing
+
+### Long-deferred (still on the board)
 - **Phase 4**: Notes & Settings (UserNote CRUD, topic editor, dashboard, notifications)
 - **Phase 5**: Calendar & Polish (calendar integration, PWA, digest email, first-run tooltips)
+- **Eval criterion 5 (perf, #13)** — deferred until P0s land and a clean eval can run; needs prod build, not dev
 
 ### Needs Scoping (design + plan before building)
 - **Learning loop** — gravity model weight adjustment from user corrections

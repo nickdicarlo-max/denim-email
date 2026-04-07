@@ -18,9 +18,39 @@ import type { HypothesisValidation } from "@denim/types";
  * email discovery + extraction. Returns the new schemaId so the client can
  * navigate to the scanning page.
  */
+// Window during which a fresh POST is treated as a duplicate of an in-flight
+// onboarding instead of starting a new schema. Slightly longer than the
+// realistic worst-case scan time so that any user refresh during onboarding
+// resumes in place rather than spawning a parallel pipeline.
+const ONBOARDING_DEDUP_WINDOW_MS = 15 * 60 * 1000;
+
 export const POST = withAuth(async ({ userId, request }) => {
   try {
     const body = await request.json();
+
+    // Idempotency: if the user already has a recent ONBOARDING schema, return
+    // its id instead of generating a duplicate. Eval session 1 (#14) showed
+    // that without this guard, a user refresh during the loading state
+    // multiplied the schema count and burned ~6x the expected AI cost.
+    const existing = await prisma.caseSchema.findFirst({
+      where: {
+        userId,
+        status: "ONBOARDING",
+        createdAt: { gte: new Date(Date.now() - ONBOARDING_DEDUP_WINDOW_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+
+    if (existing) {
+      logger.info({
+        service: "interview",
+        operation: "hypothesis.idempotent.hit",
+        userId,
+        schemaId: existing.id,
+      });
+      return NextResponse.json({ data: { schemaId: existing.id } });
+    }
 
     // Step 1: Generate hypothesis from input (calls Claude)
     const hypothesis = await generateHypothesis(body, { userId });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import { type EntityData, ReviewEntities } from "@/components/onboarding/review-entities";
@@ -13,6 +13,7 @@ type PageStatus = "loading" | "ready" | "finalizing" | "error";
 
 export default function ReviewPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const fetchCalledRef = useRef(false);
 
   const [status, setStatus] = useState<PageStatus>("loading");
@@ -22,12 +23,20 @@ export default function ReviewPage() {
   const [userThings, setUserThings] = useState<string[]>([]);
   const [schemaId, setSchemaId] = useState<string | null>(null);
 
-  // On mount: validate prerequisites and fetch schema data
+  // On mount: validate prerequisites and fetch schema data.
+  // Prefer ?schemaId=... from the URL (deep-linkable) and fall back to
+  // sessionStorage so refreshes mid-flow still resolve. If neither exists,
+  // bounce back to the start of onboarding.
   useEffect(() => {
-    const id = onboardingStorage.getSchemaId();
+    const urlId = searchParams.get("schemaId");
+    const storedId = onboardingStorage.getSchemaId();
+    const id = urlId ?? storedId;
     if (!id) {
       router.replace("/onboarding/category");
       return;
+    }
+    if (urlId && urlId !== storedId) {
+      onboardingStorage.setSchemaId(urlId);
     }
     setSchemaId(id);
 
@@ -73,7 +82,7 @@ export default function ReviewPage() {
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : "Failed to load data");
       });
-  }, [router]);
+  }, [router, searchParams]);
 
   const handleToggleEntity = useCallback((entityId: string, active: boolean) => {
     setEntities((prev) => prev.map((e) => (e.id === entityId ? { ...e, isActive: active } : e)));
@@ -108,7 +117,9 @@ export default function ReviewPage() {
       }
 
       onboardingStorage.clearAll();
-      router.push("/feed");
+      // Land on the single-topic feed for the schema the user just confirmed.
+      // FeedClient hydrates `activeSchemaId` from the `?schema=` query param.
+      router.push(`/feed?schema=${schemaId}`);
     } catch (err: unknown) {
       setStatus("ready");
       setErrorMessage(err instanceof Error ? err.message : "Something went wrong");
