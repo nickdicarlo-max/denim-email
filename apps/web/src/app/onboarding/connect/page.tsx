@@ -16,7 +16,11 @@ export default function ConnectPage() {
   const hypothesisCalledRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  // On mount: validate prerequisites and check for returning OAuth
+  // On mount: validate prerequisites and check for existing auth session.
+  // If user is already authenticated (returning from OAuth or adding another topic),
+  // skip the Connect Gmail button and go straight to hypothesis generation.
+  // provider_token is NOT available in cookie-based SSR sessions after redirect,
+  // so we check for session.user instead.
   useEffect(() => {
     const category = onboardingStorage.getCategory();
     const names = onboardingStorage.getNames();
@@ -25,16 +29,19 @@ export default function ConnectPage() {
       return;
     }
 
-    // Check if returning from OAuth callback
     const supabase = createBrowserClient();
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.provider_token) {
+      if (session?.user) {
         setStatus("connected");
       }
     });
   }, [router]);
 
-  // When connected, auto-trigger hypothesis generation
+  // When connected, auto-trigger hypothesis generation.
+  // We do NOT abort the fetch on unmount/cleanup because React Strict Mode
+  // double-invokes effects in dev, which would cancel the in-flight request
+  // before the second run sees the ref guard. The hypothesisCalledRef ensures
+  // we only ever fire one request per page lifetime.
   useEffect(() => {
     if (status !== "connected") return;
     if (hypothesisCalledRef.current) return;
@@ -45,9 +52,6 @@ export default function ConnectPage() {
     if (!category || !names) return;
 
     setStatus("generating");
-
-    const controller = new AbortController();
-    abortRef.current = controller;
 
     const supabase = createBrowserClient();
     supabase.auth
@@ -72,28 +76,29 @@ export default function ConnectPage() {
               ? { customDescription: category.customDescription }
               : {}),
           }),
-          signal: controller.signal,
         });
       })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Hypothesis generation failed (${res.status})`);
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`Hypothesis generation failed (${res.status}): ${body}`);
+        }
         return res.json();
       })
-      .then((data: { schemaId: string }) => {
-        onboardingStorage.setSchemaId(data.schemaId);
+      .then((data: { data?: { schemaId?: string }; schemaId?: string }) => {
+        // The API returns { data: hypothesis } where hypothesis includes schemaId.
+        const schemaId = data.data?.schemaId ?? data.schemaId;
+        if (!schemaId) {
+          throw new Error("Schema ID missing from hypothesis response");
+        }
+        onboardingStorage.setSchemaId(schemaId);
         router.push("/onboarding/scanning");
       })
       .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
         hypothesisCalledRef.current = false;
         setStatus("error");
         setErrorMessage(err instanceof Error ? err.message : "Something went wrong");
       });
-
-    return () => {
-      controller.abort();
-      abortRef.current = null;
-    };
   }, [status, router]);
 
   const handleConnect = useCallback(() => {
