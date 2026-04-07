@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-01 (tag scoring added to gravity model, clustering intelligence experiment completed)
+Last updated: 2026-04-07 (UX overhaul complete: Waves 1-3 + onboarding connect fix)
 
 ## Completed
 
@@ -633,14 +633,14 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | 3: Extraction Pipeline | **Complete** | Gemini extraction, relevance gating, entity routing |
 | 4: Clustering Engine | **Complete** | Two-pass gravity model, case splitting, tag scoring |
 | 5: Synthesis Service | **Complete** | Claude enrichment, urgency, action dedup, emoji, mood |
-| 6A: Case Review UI | **Mostly complete** | Feed, detail, filters, actions, feedback. **Remaining:** Full UX overhaul (user designing in Stitch) |
+| 6A: Case Review UI | **Complete** | Feed, detail, filters, actions, feedback — replaced by UX overhaul Waves 2-3 |
 | 6B: Chrome Extension | Deferred | After web quality validated |
 | 7: Feedback & Quality | **Mostly complete** | EMAIL_MOVE + ExclusionRule + QualityService + re-synthesis + API. **Remaining:** CASE_MERGE/SPLIT processing, learning loop |
 | AI Audit Fixes | **Complete** | All original + remaining issues resolved 2026-03-31 |
 | AI Prompt Quality | **Complete** | Time-neutral language, body/email caps, mood, signature noise, calibration bounds (2026-03-31) |
 | Case Urgency & Decay | **Complete** | nextActionDate sort, computeCaseDecay, daily cron, read-time freshness (2026-03-31) |
 | Major Dep Migration | **Complete** | Merged to main 2026-03-30 (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19, Next.js 16, Tailwind 4, Inngest 4) |
-| UX Overhaul | **In Progress** | Branch: feature/ux-overhaul. Pre-UX code fixes done. Waiting on Stitch designs for Phases 2-3. |
+| UX Overhaul | **Complete** | All 3 waves done 2026-04-07. Branch: feature/ux-overhaul. Onboarding flow, cross-topic feed, settings hub, old route cleanup. |
 | 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
@@ -860,13 +860,15 @@ Key decisions:
 - **Onboarding**: Category → Names+People → Goals → Subscribe+Connect → Scanning → Review (6 steps)
 - **Design collaboration**: Stitch by Google → DESIGN.md + screenshots → Claude Code implements
 
-### Status (updated 2026-04-01)
+### Status (updated 2026-04-07)
 - **Phase 0**: ✅ Complete (AI audit fixes, emoji, mood, time-neutral directives, expiry scope, computeCaseDecay, daily cron)
 - **Pre-Phase 1**: ✅ Complete — all code fixes done except schema additions (UserNote, billing fields)
-- **Phase 1**: Ready to start — no designs needed (routing, performance, loading states)
-- **Phase 2**: Case Feed UX — **BLOCKED: needs Stitch designs**
-- **Phase 3**: New User Flow — **BLOCKED: needs Stitch designs**
-- **Phases 4-5**: After 2-3 (Notes, Settings, Calendar, Polish)
+- **Wave 1 (Onboarding)**: ✅ Complete — 5-step flow under `/onboarding/*`, sessionStorage state
+- **Wave 2 (Feed + Detail)**: ✅ Complete (commit `e39bc61`) — cross-topic feed, bottom nav, 5-line cards, case detail
+- **Wave 3 (Settings + Cleanup)**: ✅ Complete (commit `6e02ea5`) — settings hub, topic list, -2,381 lines of legacy code
+- **Onboarding Connect Fix**: ✅ Complete (commit `8ad1d56`) — three bugs blocking schema creation resolved
+- **Phase 4** (Notes, Account, Topic Edit): Pending — needs schema additions first
+- **Phase 5** (Calendar, Polish): Pending
 
 ## Clustering Intelligence Experiment & Tag Scoring (2026-04-01)
 
@@ -931,6 +933,70 @@ timeDecay:    1.0 within 60 days, linear decay to 0.2 at 365 days
 mergeThreshold: 35 (school_parent) / 45 (property)
 ```
 
+## UX Overhaul Complete (2026-04-07)
+
+All 3 waves of the UX overhaul are merged on `feature/ux-overhaul`. The app is now mobile-first with a 5-step onboarding, cross-topic feed, persistent bottom navigation, and settings hub. Old `/interview` and `/dashboard` routes are deleted.
+
+### Wave 1: Onboarding (committed earlier in branch)
+5-step guided flow under `/onboarding/*`:
+- **O1 Category** (`/onboarding/category`) — pick role/domain from 6 options with Material icons
+- **O2 Names** (`/onboarding/names`) — enter "things you track" + "people who email you" with chip input
+- **O3 Connect** (`/onboarding/connect`) — Gmail OAuth + auto-trigger schema creation
+- **O4 Scanning** (`/onboarding/scanning`) — polling progress with `recentDiscoveries` from schema status
+- **O5 Review** (`/onboarding/review`) — confirm entities + topic name, mark schema ACTIVE
+- `OnboardingProgress` component (5-dot indicator)
+- `onboardingStorage` helper for sessionStorage state across routes
+
+### Wave 2: Feed + Case Detail (commit `e39bc61`)
+- **`(authenticated)/layout.tsx`** — wraps protected routes with `BottomNav`
+- **`BottomNav`** — fixed bottom nav with Feed / + Note / Settings (Material icons, 44px touch targets)
+- **`GET /api/feed`** — cross-topic case query with urgency sorting, `computeCaseDecay` at read time, schema metadata with entity counts
+- **Feed page** (`/feed`) — server fetches user avatar, client component handles all filtering
+- **Feed components** (`components/feed/`):
+  - `FeedHeader` — sticky Denim wordmark + avatar
+  - `TopicChips` — scrollable schema chips + entity sub-chips
+  - `UrgencySection` — tier label + card group
+  - `FeedEmptyState` — 3 variants (processing, caught-up, no-topics)
+  - `FeedClient` — main client component with instant client-side filtering by schema/entity
+- **Case detail** (`/feed/[caseId]`) — server component, ownership verified via schema → user chain, no schemaId in URL
+- **5-line CaseCard rewrite** — emoji + entity name + mood, title, `DomainContextLine`, top action + "+N more", date range
+- **`DomainContextLine`** — domain-aware (school events, property payments, fallback dates)
+
+### Wave 3: Settings + Cleanup (commit `6e02ea5`)
+- **Settings hub** (`/settings`) — My Topics / Add a Topic / Account links
+- **My Topics** (`/settings/topics`) — lists all schemas with entity/case/email counts and ACTIVE/ONBOARDING status badges
+- **Old routes deleted**: `/interview/*`, `/dashboard/*` (5 page files)
+- **Orphaned components removed**: `MetricBar`, `ClusteringDebug`, `Card3Scan`
+- **Unused hooks removed**: `useInterviewFlow`, `useInterviewScan`
+- **Dashboard components removed**: `scan-progress`, `scan-trigger`, `schema-card`, `schema-card-list`
+- **Net cleanup**: -2,381 lines of legacy UI code
+
+### Onboarding Connect Fix (commit `8ad1d56`)
+Three bugs were blocking the simplified onboarding from creating a schema:
+
+1. **Wrong session check** — Connect page checked `session.provider_token` to detect returning OAuth, but `provider_token` is not stored in cookie-based SSR sessions after PKCE code exchange. Switched to `session.user`, which works for both fresh OAuth returns and already-authenticated users adding a topic.
+
+2. **Validation rejected empty arrays** — `InterviewInputSchema` required `groups.min(1)` and `goals.min(1)`. The simplified onboarding doesn't ask for these (groups derived from `whats`, goals derived from domain). Made both optional with `.default([])`. Added `customDescription` field for the "Something else" category.
+
+3. **Hypothesis route only generated JSON** — `/api/interview/hypothesis` previously called `generateHypothesis()` and returned the JSON without persisting a `CaseSchema`. The simplified onboarding has no separate finalize step, so the client had no `schemaId` to navigate to scanning. Restructured the route to also call `finalizeSchema` (with empty validation/confirmations) and trigger the discovery + extraction pipeline (matching the old `/api/interview/finalize` route's behavior). Now returns `{ data: { schemaId } }`.
+
+4. **React Strict Mode aborted in-flight fetch** — Removed the `AbortController` cleanup in the connect page's `useEffect`. Strict Mode double-invokes effects in dev, aborting the in-flight fetch on the first cleanup. The second run then sees `hypothesisCalledRef.current === true` and bails early. The ref guard alone is sufficient to prevent duplicate calls.
+
+### E2E Verification (Playwright + Supabase admin OTP)
+Used Supabase admin API to generate OTP and verify session via JS, then drove the full flow with Playwright:
+
+- ✅ Onboarding category → names → connect → scanning (full pipeline triggers)
+- ✅ Feed page renders 8 schemas, urgency sections, 5-line cards
+- ✅ Topic chip filtering (instant, client-side)
+- ✅ Entity sub-chips appear on schema selection
+- ✅ Case detail page with summary, actions, emails, "← Feed" back link
+- ✅ Bottom nav present on all authenticated pages
+- ✅ Settings hub + My Topics page with status badges
+- ✅ Old routes return 404: `/interview`, `/dashboard`
+- ✅ Typecheck clean, 133 unit tests passing across all packages
+
+Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-hub.png`, `topics-list.png`, `scanning-active.png`
+
 ## Core Pipeline Quality Assessment (2026-04-01)
 
 ### What's working well
@@ -952,35 +1018,38 @@ mergeThreshold: 35 (school_parent) / 45 (property)
 ### Assessment
 **The core stack is good enough for real user testing.** The remaining clustering gaps are the kind that can only be discovered and fixed with real user feedback — which is exactly what the calibration loop is designed for. Spending more time tuning the gravity model in isolation has diminishing returns (proven by the clustering intelligence experiment). The next quality signal needs to come from users correcting cases.
 
-## What's Next (2026-04-01)
+## What's Next (2026-04-07)
 
-### Immediate: Stitch Designs (user working on these)
-Design screens in Stitch for:
-- Case Feed (cards, layout, filters, empty states, urgency tiers)
-- New User Flow (landing page, onboarding steps, scanning animation)
-- Case Detail (summary sections, actions, email list, corrections)
+### Immediate: Merge UX Overhaul to Main
+- All 3 waves committed on `feature/ux-overhaul`
+- Typecheck clean, 133 unit tests passing, E2E verified
+- Ready for PR + merge to `main`
 
-Reference: `docs/stitch-screen-briefs.md` (29 screens), `docs/screen-schema-flow.md` (data flow)
+### After Merge: Schema Additions
+- `UserNote` model — for the "+ Note" button in bottom nav
+- `NotificationPreference` model — daily digest opt-in
+- `User.stripeCustomerId / subscriptionStatus / trialEndDate` — billing fields
 
-### Ready to build now (UX Phase 1 — no designs needed):
-1. **Smart root redirect** — `/` → `/feed` (returning user) or `/onboarding` (new user) or `/welcome` (unauthenticated)
-2. **New route structure** — `/feed`, `/feed/[caseId]`, `/settings/topics/*`, `/onboarding`
-3. **`loading.tsx` skeletons** — instant perceived load for feed and case detail
-4. **Bottom nav component** — Feed / + Note / Settings (mobile-first, 44px touch targets)
-5. **Parallel data queries** — feed loads schema + cases + quality in parallel, not waterfall
-6. **Schema additions** — UserNote model, NotificationPreference model, User.stripe* billing fields
+### After Schema Additions: Notes & Polish (UX Phase 4)
+- Note creation modal from bottom nav
+- Note list view
+- Account settings page (currently 404 stub)
+- Topic edit page (rename, delete, re-scan)
+- Notification preferences UI
 
-### After Stitch designs arrive (UX Phases 2-3):
-- Implement case feed cards, layout, and filters from designs
-- Build new user onboarding flow from designs
-- Landing/marketing page
-- Subscription/Stripe integration
-
-### After user testing begins:
-- Measure final post-split case counts (gravity model + case splitting combined)
+### User Testing
+- Once merged, gather real-user feedback on the new flow
 - Observe user corrections → calibration loop tunes clustering automatically
 - Learning loop: gravity model weight adjustment from feedback (not yet built)
-- Playwright e2e tests for interview flow + case feed
+
+### Future Phases
+- **Phase 4 polish**: notes, account, topic edit, notifications
+- **Phase 5 calendar**: progressive OAuth, CalendarService, Add to Calendar buttons
+- **Phase 6B**: Chrome extension + side panel
+- **Phase 7.5**: Periodic scanning (automated daily scans)
+- **Phase 8**: Calendar integration
+- **Phase 9**: Scan automation & delta processing
+- Playwright e2e tests for onboarding + feed + case detail (manual E2E done, automated suite next)
 
 See `docs/roadmap.md` for the full feature roadmap beyond UX.
 
