@@ -4,7 +4,7 @@ import { useCallback, useState } from "react";
 import { Button } from "../ui/button";
 import { CaseCard, type CaseCardData } from "./case-card";
 import { FilterTabs } from "./filter-tabs";
-import { MetricBar } from "./metric-bar";
+
 import { ScopeHeaders } from "./scope-headers";
 
 interface CaseFeedProps {
@@ -42,7 +42,7 @@ export function CaseFeed({
   initialNextCursor,
   entities,
   statusCounts,
-  qualityPhase,
+  qualityPhase: _qualityPhase,
 }: CaseFeedProps) {
   const [cases, setCases] = useState(initialCases);
   const [nextCursor, setNextCursor] = useState(initialNextCursor);
@@ -130,8 +130,6 @@ export function CaseFeed({
 
   return (
     <div className="space-y-6">
-      <MetricBar phase={qualityPhase as "CALIBRATING" | "TRACKING" | "STABLE"} />
-
       {/* Filters */}
       <div className="space-y-3">
         {entities.length > 1 && (

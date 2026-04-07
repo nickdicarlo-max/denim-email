@@ -3,7 +3,7 @@
 import { Tag } from "../ui/tag";
 import { ActionList } from "./action-list";
 import { CaseSummary } from "./case-summary";
-import { ClusteringDebug } from "./clustering-debug";
+
 import { EmailList, type EmailWithAssignment } from "./email-list";
 import { ThumbsFeedback } from "./thumbs-feedback";
 
@@ -123,9 +123,6 @@ export function CaseDetail({
 
       {/* Emails */}
       <EmailList emails={emails} schemaId={schemaId} />
-
-      {/* Clustering debug */}
-      <ClusteringDebug emails={emails} clusterRecords={clusterRecords as any} />
     </div>
   );
 }
