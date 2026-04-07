@@ -1,8 +1,8 @@
+import { createServerClient } from "@supabase/ssr";
+import { type NextRequest, NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { storeGmailTokens } from "@/lib/services/gmail-tokens";
-import { createServerClient } from "@supabase/ssr";
-import { type NextRequest, NextResponse } from "next/server";
 
 /**
  * Create a Supabase client that reads/writes cookies via the request/response objects.
@@ -129,11 +129,9 @@ export async function GET(request: NextRequest) {
             operation: "callback.dynamicRoute",
             userId: authedUser.id,
             schemaCount,
-            destination: schemaCount > 0 ? "/dashboard" : "/interview",
+            destination: schemaCount > 0 ? "/feed" : "/onboarding/category",
           });
-          return redirect(
-            `${origin}${schemaCount > 0 ? "/dashboard" : "/interview"}`,
-          );
+          return redirect(`${origin}${schemaCount > 0 ? "/feed" : "/onboarding/category"}`);
         }
       } catch (routeErr) {
         logger.warn({
@@ -143,7 +141,7 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      return redirect(`${origin}/interview`);
+      return redirect(`${origin}/onboarding/category`);
     } catch (err) {
       logger.error({
         service: "auth",
