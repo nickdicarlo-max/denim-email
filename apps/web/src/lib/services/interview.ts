@@ -1,17 +1,22 @@
+import {
+  buildHypothesisPrompt,
+  buildValidationPrompt,
+  type EntityGroupContext,
+  parseHypothesisResponse,
+  parseValidationResponse,
+} from "@denim/ai";
+import type {
+  EntityGroupInput,
+  HypothesisValidation,
+  InterviewInput,
+  SchemaHypothesis,
+} from "@denim/types";
+import { ExternalAPIError } from "@denim/types";
+import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { InterviewInputSchema, validateInput } from "@/lib/validation/interview";
-import {
-  buildHypothesisPrompt,
-  buildValidationPrompt,
-  parseHypothesisResponse,
-  parseValidationResponse,
-  type EntityGroupContext,
-} from "@denim/ai";
-import type { EntityGroupInput, HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
-import { ExternalAPIError } from "@denim/types";
-import type { Prisma } from "@prisma/client";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 
@@ -184,23 +189,62 @@ interface FinalizeConfirmations {
 }
 
 /**
- * Finalize a schema by merging hypothesis + validation + user confirmations,
- * then persisting everything to the database in a single transaction.
+ * Create a minimal CaseSchema stub row at the start of onboarding.
  *
- * Creates: CaseSchema, Entity, SchemaTag, and ExtractedFieldDef rows.
- * Returns the new schemaId.
+ * Used by the onboarding workflow to claim a schema id before hypothesis
+ * generation runs (so the polling endpoint has something to read). All the
+ * real content — name, domain, entities, tags, prompts, configs — lands
+ * later via `persistSchemaRelations`.
+ *
+ * The stub is valid enough to satisfy the Prisma schema's NOT NULL
+ * constraints but carries placeholder values that `persistSchemaRelations`
+ * overwrites. Status starts at DRAFT and phase at PENDING; callers are
+ * responsible for advancing both via the state-machine helpers.
  */
-export async function finalizeSchema(
+export async function createSchemaStub(opts: {
+  userId: string;
+  inputs?: InterviewInput;
+}): Promise<string> {
+  const schema = await prisma.caseSchema.create({
+    data: {
+      userId: opts.userId,
+      // Placeholder fields — overwritten by persistSchemaRelations.
+      name: "Setting up...",
+      description: "",
+      primaryEntityConfig: {} as Prisma.InputJsonValue,
+      discoveryQueries: [] as unknown as Prisma.InputJsonValue,
+      summaryLabels: {} as Prisma.InputJsonValue,
+      clusteringConfig: {} as Prisma.InputJsonValue,
+      extractionPrompt: "",
+      synthesisPrompt: "",
+      // Real values.
+      status: "DRAFT",
+      phase: "PENDING",
+      phaseUpdatedAt: new Date(),
+      inputs: opts.inputs ? (opts.inputs as unknown as Prisma.InputJsonValue) : undefined,
+    },
+    select: { id: true },
+  });
+  return schema.id;
+}
+
+/**
+ * Populate an existing CaseSchema row with hypothesis + validation +
+ * confirmations data. Assumes the stub row has already been created via
+ * `createSchemaStub` (or the delegating `finalizeSchema` wrapper).
+ *
+ * Writes: updates the existing CaseSchema row (name, domain, configs,
+ * prompts, raw hypothesis) and creates Entity, EntityGroup, SchemaTag,
+ * ExtractedFieldDef rows. All relation writes are wrapped in a single
+ * transaction; the initial stub row creation is intentionally outside
+ * that transaction (see finalizeSchema note below).
+ */
+export async function persistSchemaRelations(
+  schemaId: string,
   hypothesis: SchemaHypothesis,
   validation: HypothesisValidation,
   confirmations: FinalizeConfirmations,
-  options: { userId: string },
-): Promise<string> {
-  const start = Date.now();
-  const operation = "finalizeSchema";
-
-  logger.info({ service: "interview", operation, userId: options.userId });
-
+): Promise<void> {
   // Build final entity list: hypothesis entities (minus removed) + discovered (if confirmed) + user-added
   const removedSet = new Set(confirmations.removedEntities);
   const confirmedDiscoveredSet = new Set(confirmations.confirmedEntities);
@@ -255,15 +299,14 @@ export async function finalizeSchema(
     })),
   ];
 
-  // Create everything in a transaction
-  const schemaId = await prisma.$transaction(async (tx) => {
-    const schema = await tx.caseSchema.create({
+  await prisma.$transaction(async (tx) => {
+    // Overwrite the stub's placeholder values with the real configs.
+    await tx.caseSchema.update({
+      where: { id: schemaId },
       data: {
-        userId: options.userId,
         name: confirmations.schemaName ?? hypothesis.schemaName,
         description: `${hypothesis.domain} schema`,
         domain: hypothesis.domain,
-        status: "ONBOARDING",
         interviewResponses: {
           groups: (confirmations.groups ?? []) as unknown as Prisma.InputJsonValue,
           sharedWhos: (confirmations.sharedWhos ?? []) as unknown as Prisma.InputJsonValue,
@@ -279,8 +322,7 @@ export async function finalizeSchema(
         discoveryQueries: hypothesis.discoveryQueries as unknown as Prisma.InputJsonValue,
         summaryLabels: hypothesis.summaryLabels as unknown as Prisma.InputJsonValue,
         clusteringConfig: hypothesis.clusteringConfig as unknown as Prisma.InputJsonValue,
-        extractionPrompt: "", // Generated in Phase 3
-        synthesisPrompt: "", // Generated in Phase 5
+        // extractionPrompt / synthesisPrompt still filled in by later pipeline stages.
       },
     });
 
@@ -288,7 +330,7 @@ export async function finalizeSchema(
     if (finalEntities.length > 0) {
       await tx.entity.createMany({
         data: finalEntities.map((e) => ({
-          schemaId: schema.id,
+          schemaId,
           name: e.name,
           type: e.type,
           secondaryTypeName: e.secondaryTypeName,
@@ -300,7 +342,7 @@ export async function finalizeSchema(
 
       // Load created entities for linking
       const createdEntities = await tx.entity.findMany({
-        where: { schemaId: schema.id, isActive: true },
+        where: { schemaId, isActive: true },
         select: { id: true, name: true, type: true },
       });
       const entityByName = new Map(createdEntities.map((e) => [e.name, e]));
@@ -319,7 +361,7 @@ export async function finalizeSchema(
 
           const entityGroup = await tx.entityGroup.create({
             data: {
-              schemaId: schema.id,
+              schemaId,
               index: i,
             },
           });
@@ -349,12 +391,8 @@ export async function finalizeSchema(
         }
       } else {
         // Fallback: no groups — associate every secondary with every primary
-        const primaryIds = createdEntities
-          .filter((e) => e.type === "PRIMARY")
-          .map((e) => e.id);
-        const secondaryIds = createdEntities
-          .filter((e) => e.type === "SECONDARY")
-          .map((e) => e.id);
+        const primaryIds = createdEntities.filter((e) => e.type === "PRIMARY").map((e) => e.id);
+        const secondaryIds = createdEntities.filter((e) => e.type === "SECONDARY").map((e) => e.id);
 
         if (primaryIds.length > 0 && secondaryIds.length > 0) {
           for (const secId of secondaryIds) {
@@ -388,7 +426,7 @@ export async function finalizeSchema(
         if (existing?.groupId) continue;
 
         const entityGroup = await tx.entityGroup.create({
-          data: { schemaId: schema.id, index: autoGroupIndex++ },
+          data: { schemaId, index: autoGroupIndex++ },
         });
         await tx.entity.update({
           where: { id: primary.id },
@@ -405,7 +443,7 @@ export async function finalizeSchema(
 
         await tx.entity.create({
           data: {
-            schemaId: schema.id,
+            schemaId,
             name: whoName,
             type: "SECONDARY",
             secondaryTypeName: null,
@@ -423,7 +461,7 @@ export async function finalizeSchema(
     if (finalTags.length > 0) {
       await tx.schemaTag.createMany({
         data: finalTags.map((t) => ({
-          schemaId: schema.id,
+          schemaId,
           name: t.name,
           description: t.description,
           aiGenerated: true,
@@ -436,7 +474,7 @@ export async function finalizeSchema(
     if (hypothesis.extractedFields.length > 0) {
       await tx.extractedFieldDef.createMany({
         data: hypothesis.extractedFields.map((f) => ({
-          schemaId: schema.id,
+          schemaId,
           name: f.name,
           type: f.type,
           description: f.description,
@@ -447,8 +485,51 @@ export async function finalizeSchema(
         })),
       });
     }
+  });
 
-    return schema.id;
+  logger.info({
+    service: "interview",
+    operation: "persistSchemaRelations.complete",
+    schemaId,
+    entityCount: finalEntities.length,
+    tagCount: finalTags.length,
+  });
+}
+
+/**
+ * Finalize a schema by merging hypothesis + validation + user confirmations,
+ * then persisting everything to the database.
+ *
+ * Delegates to `createSchemaStub` + `persistSchemaRelations` and then flips
+ * the schema's status to ONBOARDING to match the existing contract. Returns
+ * the new schemaId.
+ *
+ * NOTE: the stub create and the relation writes are now in SEPARATE
+ * transactions (the old implementation was single-transaction). A failure
+ * in `persistSchemaRelations` leaves an orphan DRAFT/PENDING stub behind
+ * instead of rolling the whole thing back. This is intentional — the
+ * onboarding state machine can recover from an orphan stub (phase=PENDING
+ * with no name/entities), whereas the single-transaction version could
+ * not be resumed.
+ */
+export async function finalizeSchema(
+  hypothesis: SchemaHypothesis,
+  validation: HypothesisValidation,
+  confirmations: FinalizeConfirmations,
+  options: { userId: string },
+): Promise<string> {
+  const start = Date.now();
+  const operation = "finalizeSchema";
+
+  logger.info({ service: "interview", operation, userId: options.userId });
+
+  const schemaId = await createSchemaStub({ userId: options.userId });
+  await persistSchemaRelations(schemaId, hypothesis, validation, confirmations);
+
+  // Preserve existing contract: finalizeSchema callers expect status=ONBOARDING.
+  await prisma.caseSchema.update({
+    where: { id: schemaId },
+    data: { status: "ONBOARDING" },
   });
 
   const durationMs = Date.now() - start;
@@ -458,8 +539,6 @@ export async function finalizeSchema(
     userId: options.userId,
     durationMs,
     schemaId,
-    entityCount: finalEntities.length,
-    tagCount: finalTags.length,
   });
 
   return schemaId;
