@@ -8,6 +8,7 @@ import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-me
 import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
 import { dailyStatusDecay } from "./daily-status-decay";
+import { runOnboarding } from "./onboarding";
 import { runScan } from "./scan";
 
 const BATCH_SIZE = 20;
@@ -779,17 +780,6 @@ export const runSynthesis = inngest.createFunction(
       });
     }
 
-    // 6b. TRANSITIONAL: flip schema from ONBOARDING to ACTIVE. This is the
-    //     old pre-state-machine contract. Task 9 (runOnboarding orchestrator)
-    //     will own this transition via the scan.completed event above and
-    //     this block should be removed at that time.
-    await step.run("activate-schema", async () => {
-      await prisma.caseSchema.updateMany({
-        where: { id: schemaId, status: "ONBOARDING" },
-        data: { status: "ACTIVE" },
-      });
-    });
-
     // 7. Emit synthesis.case.completed events
     await step.run("emit-events", async () => {
       const events = caseIds.map((caseId) => ({
@@ -813,6 +803,7 @@ export const runSynthesis = inngest.createFunction(
 );
 
 export const functions = [
+  runOnboarding, // Parent workflow — consumes onboarding.session.started, owns CaseSchema.phase
   runScan, // Parent workflow — consumes scan.requested, emits scan.emails.discovered
   fanOutExtraction,
   extractBatch,

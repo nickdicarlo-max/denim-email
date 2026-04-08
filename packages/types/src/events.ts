@@ -5,6 +5,19 @@
  */
 
 export type DenimEvents = {
+  "onboarding.session.started": {
+    /**
+     * Kicks off the runOnboarding parent workflow. The CaseSchema stub
+     * must already exist in phase=PENDING and carry the raw InterviewInput
+     * in `inputs` — runOnboarding reads it and drives the schema through
+     * GENERATING_HYPOTHESIS → FINALIZING_SCHEMA → PROCESSING_SCAN →
+     * AWAITING_REVIEW.
+     */
+    data: {
+      schemaId: string;
+      userId: string;
+    };
+  };
   "scan.requested": {
     /**
      * Request a scan for an existing ScanJob row. Consumed by runScan

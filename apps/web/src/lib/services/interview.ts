@@ -242,12 +242,33 @@ export async function createSchemaStub(opts: {
 export async function persistSchemaRelations(
   schemaId: string,
   hypothesis: SchemaHypothesis,
-  validation: HypothesisValidation,
-  confirmations: FinalizeConfirmations,
+  validation?: HypothesisValidation,
+  confirmations?: FinalizeConfirmations,
 ): Promise<void> {
+  // Both validation and confirmations are optional so the state-machine
+  // orchestrator (runOnboarding / Task 9) can call this with just the
+  // hypothesis — the auto-onboarding path has no human-in-the-loop review
+  // step, so validation+confirmations become identity merges.
+  const effectiveValidation: HypothesisValidation = validation ?? {
+    confirmedEntities: [],
+    discoveredEntities: [],
+    confirmedTags: [],
+    suggestedTags: [],
+    noisePatterns: [],
+    sampleEmailCount: 0,
+    scanDurationMs: 0,
+    confidenceScore: 1,
+  };
+  const effectiveConfirmations: FinalizeConfirmations = confirmations ?? {
+    confirmedEntities: [],
+    removedEntities: [],
+    confirmedTags: [],
+    removedTags: [],
+  };
+
   // Build final entity list: hypothesis entities (minus removed) + discovered (if confirmed) + user-added
-  const removedSet = new Set(confirmations.removedEntities);
-  const confirmedDiscoveredSet = new Set(confirmations.confirmedEntities);
+  const removedSet = new Set(effectiveConfirmations.removedEntities);
+  const confirmedDiscoveredSet = new Set(effectiveConfirmations.confirmedEntities);
 
   const finalEntities = [
     ...hypothesis.entities
@@ -260,7 +281,7 @@ export async function persistSchemaRelations(
         confidence: e.confidence,
         autoDetected: e.source === "email_scan",
       })),
-    ...validation.discoveredEntities
+    ...effectiveValidation.discoveredEntities
       .filter((e) => confirmedDiscoveredSet.has(e.name))
       .map((e) => ({
         name: e.name,
@@ -270,7 +291,7 @@ export async function persistSchemaRelations(
         confidence: e.confidence,
         autoDetected: true,
       })),
-    ...(confirmations.addedEntities ?? []).map((name) => ({
+    ...(effectiveConfirmations.addedEntities ?? []).map((name) => ({
       name,
       type: "PRIMARY" as const,
       secondaryTypeName: null as string | null,
@@ -281,18 +302,18 @@ export async function persistSchemaRelations(
   ];
 
   // Build final tag list: hypothesis tags (minus removed) + suggested (if confirmed) + user-added
-  const removedTagSet = new Set(confirmations.removedTags);
+  const removedTagSet = new Set(effectiveConfirmations.removedTags);
 
   const finalTags = [
     ...hypothesis.tags.filter((t) => !removedTagSet.has(t.name)),
-    ...validation.suggestedTags
-      .filter((t) => confirmations.confirmedTags.includes(t.name))
+    ...effectiveValidation.suggestedTags
+      .filter((t) => effectiveConfirmations.confirmedTags.includes(t.name))
       .map((t) => ({
         name: t.name,
         description: t.description,
         isActionable: t.isActionable,
       })),
-    ...(confirmations.addedTags ?? []).map((name) => ({
+    ...(effectiveConfirmations.addedTags ?? []).map((name) => ({
       name,
       description: "",
       isActionable: false,
@@ -304,12 +325,12 @@ export async function persistSchemaRelations(
     await tx.caseSchema.update({
       where: { id: schemaId },
       data: {
-        name: confirmations.schemaName ?? hypothesis.schemaName,
+        name: effectiveConfirmations.schemaName ?? hypothesis.schemaName,
         description: `${hypothesis.domain} schema`,
         domain: hypothesis.domain,
         interviewResponses: {
-          groups: (confirmations.groups ?? []) as unknown as Prisma.InputJsonValue,
-          sharedWhos: (confirmations.sharedWhos ?? []) as unknown as Prisma.InputJsonValue,
+          groups: (effectiveConfirmations.groups ?? []) as unknown as Prisma.InputJsonValue,
+          sharedWhos: (effectiveConfirmations.sharedWhos ?? []) as unknown as Prisma.InputJsonValue,
         } as Prisma.InputJsonValue,
         rawHypothesis: hypothesis as unknown as Prisma.InputJsonValue,
         primaryEntityConfig: {
@@ -348,7 +369,7 @@ export async function persistSchemaRelations(
       const entityByName = new Map(createdEntities.map((e) => [e.name, e]));
 
       // Create EntityGroup rows and link entities via groupId + associatedPrimaryIds
-      const groups = confirmations.groups ?? [];
+      const groups = effectiveConfirmations.groups ?? [];
       if (groups.length > 0) {
         for (let i = 0; i < groups.length; i++) {
           const group = groups[i];
@@ -436,7 +457,7 @@ export async function persistSchemaRelations(
 
       // Process shared WHOs — SECONDARY entities with no group, empty associatedPrimaryIds.
       // These are discovery senders: their "from:" queries find emails, but content determines routing.
-      const sharedWhos = confirmations.sharedWhos ?? [];
+      const sharedWhos = effectiveConfirmations.sharedWhos ?? [];
       for (const whoName of sharedWhos) {
         // Skip if already created as part of a group
         if (entityByName.has(whoName)) continue;
