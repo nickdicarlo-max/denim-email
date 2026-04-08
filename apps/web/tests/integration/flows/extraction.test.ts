@@ -104,7 +104,6 @@ describe("Extraction Flow (live Gemini)", () => {
     );
 
     expect(result.excluded).toBe(false);
-    expect(result.failed).toBe(false);
     expect(result.emailId).toBeTruthy();
 
     // Verify Email row in DB
@@ -148,7 +147,6 @@ describe("Extraction Flow (live Gemini)", () => {
     );
 
     expect(result.excluded).toBe(false);
-    expect(result.failed).toBe(false);
 
     // Should not have created a duplicate
     const emailCount = await prisma.email.count({
@@ -195,7 +193,6 @@ describe("Extraction Flow (live Gemini)", () => {
     );
 
     expect(result.excluded).toBe(true);
-    expect(result.failed).toBe(false);
 
     // Email row exists but is excluded
     const email = await prisma.email.findUnique({

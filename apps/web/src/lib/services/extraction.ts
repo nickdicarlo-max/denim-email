@@ -32,13 +32,14 @@ interface ExtractEmailOptions {
 interface ExtractEmailResult {
   emailId: string;
   excluded: boolean;
-  failed: boolean;
 }
 
 interface ProcessBatchResult {
   processed: number;
   excluded: number;
-  failed: number;
+  // `failed` is no longer a denormalized counter — derive it via
+  // computeScanMetrics (which reads ScanFailure rows written per email
+  // in the catch block of processEmailBatch below).
 }
 
 /**
@@ -152,10 +153,13 @@ export async function extractEmail(
         isExcluded: true,
         excludeReason: `rule:${exclusionCheck.rule!.ruleType.toLowerCase()}`,
         bodyLength: gmailMessage.body.length,
+        firstScanJobId: scanJobId ?? null,
+        lastScanJobId: scanJobId ?? null,
       },
       update: {
         isExcluded: true,
         excludeReason: `rule:${exclusionCheck.rule!.ruleType.toLowerCase()}`,
+        lastScanJobId: scanJobId ?? undefined,
       },
     });
 
@@ -169,7 +173,7 @@ export async function extractEmail(
       data: { matchCount: { increment: 1 } },
     });
 
-    return { emailId: email.id, excluded: true, failed: false };
+    return { emailId: email.id, excluded: true };
   }
 
   // 2. Build prompt and call Gemini
@@ -212,11 +216,14 @@ export async function extractEmail(
         isExcluded: true,
         excludeReason: `relevance:low`,
         bodyLength: gmailMessage.body.length,
+        firstScanJobId: scanJobId ?? null,
+        lastScanJobId: scanJobId ?? null,
       },
       update: {
         isExcluded: true,
         excludeReason: `relevance:low`,
         summary: parsed.summary,
+        lastScanJobId: scanJobId ?? undefined,
       },
     });
 
@@ -236,7 +243,7 @@ export async function extractEmail(
       },
     });
 
-    return { emailId: email.id, excluded: true, failed: false };
+    return { emailId: email.id, excluded: true };
   }
 
   // 4. Content-first entity routing
@@ -452,6 +459,8 @@ export async function extractEmail(
         senderEntityId,
         entityId,
         routingDecision: routingDecision as any,
+        firstScanJobId: scanJobId ?? null,
+        lastScanJobId: scanJobId ?? null,
       },
       update: {
         summary: parsed.summary,
@@ -466,6 +475,9 @@ export async function extractEmail(
         entityId,
         routingDecision: routingDecision as any,
         reprocessedAt: new Date(),
+        // Advance lastScanJobId to the current scan; firstScanJobId stays as-is
+        // so scan-metrics can attribute emails to the scan that first ingested them.
+        lastScanJobId: scanJobId ?? undefined,
       },
     });
 
@@ -523,7 +535,7 @@ export async function extractEmail(
     },
   });
 
-  return { emailId: email.id, excluded: false, failed: false };
+  return { emailId: email.id, excluded: false };
 }
 
 /**
@@ -541,7 +553,6 @@ export async function processEmailBatch(
   const gmailClient = new GmailClient(accessToken);
   let processed = 0;
   let excluded = 0;
-  let failed = 0;
 
   // Pre-check which emails already exist to skip re-extraction
   const existingEmails = await prisma.email.findMany({
@@ -578,16 +589,44 @@ export async function processEmailBatch(
         processed++;
       }
     } catch (error) {
-      failed++;
+      // Record the per-email failure as a ScanFailure row so
+      // computeScanMetrics can derive failedEmails on demand. Idempotent
+      // via the (scanJobId, gmailMessageId) unique index — a retry of the
+      // same batch just bumps attemptCount and refreshes errorMessage.
+      if (options.scanJobId) {
+        await prisma.scanFailure.upsert({
+          where: {
+            scanJobId_gmailMessageId: {
+              scanJobId: options.scanJobId,
+              gmailMessageId: messageId,
+            },
+          },
+          create: {
+            scanJobId: options.scanJobId,
+            schemaId: options.schemaId,
+            gmailMessageId: messageId,
+            phase: "EXTRACTING",
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? (error.stack ?? null) : null,
+          },
+          update: {
+            attemptCount: { increment: 1 },
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? (error.stack ?? null) : null,
+          },
+        });
+      }
+
       logger.error({
         service: "extraction",
         operation: "extractEmail.error",
         schemaId: options.schemaId,
+        scanJobId: options.scanJobId,
         error,
         messageId,
       });
     }
   }
 
-  return { processed, excluded, failed };
+  return { processed, excluded };
 }
