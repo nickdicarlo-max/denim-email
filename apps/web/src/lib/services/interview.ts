@@ -202,11 +202,14 @@ interface FinalizeConfirmations {
  * responsible for advancing both via the state-machine helpers.
  */
 export async function createSchemaStub(opts: {
+  /** Optional client-supplied ULID/cuid. When omitted, Prisma generates one. */
+  schemaId?: string;
   userId: string;
   inputs?: InterviewInput;
 }): Promise<string> {
   const schema = await prisma.caseSchema.create({
     data: {
+      ...(opts.schemaId ? { id: opts.schemaId } : {}),
       userId: opts.userId,
       // Placeholder fields — overwritten by persistSchemaRelations.
       name: "Setting up...",
