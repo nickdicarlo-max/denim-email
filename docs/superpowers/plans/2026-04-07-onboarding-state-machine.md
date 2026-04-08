@@ -24,7 +24,7 @@
 
 ## Execution Progress (as of 2026-04-08)
 
-**Branch:** `feature/ux-overhaul` · **Position:** 14 of 18 tasks landed, **Phase 7 complete** (all HTTP routes in place) · **Next:** Task 14 — Phase 8 client flow collapse
+**Branch:** `feature/ux-overhaul` · **Position:** 15 of 18 tasks landed, **Phases 0–8 complete** (server state machine + HTTP routes + client flow collapse) · **Next:** Task 15 — Phase 9 delete old routes and pages
 
 **Auto-memory mirror:** `~/.claude/projects/C--Users-alkam-Documents-NDSoftware-denim-email/memory/project_onboarding_state_machine_progress.md` carries a richer version of this header (architecture diagrams, file inventory, test matrix, remaining-task summaries). When the two disagree, trust this in-repo header — it updates in the same commit as the task. Use the memory file for context, not as the source of truth.
 
@@ -46,6 +46,13 @@
 - `apps/web/src/app/api/schemas/[schemaId]/scans/route.ts` — `GET` list 50 most recent scans / `POST` manual rescan with 409 conflict guard (Task 13)
 - `apps/web/src/app/api/schemas/[schemaId]/scans/[scanJobId]/route.ts` — `GET` per-scan detail with failures + metrics (Task 13)
 
+**New client surface (Phase 8 complete):**
+- `apps/web/src/components/onboarding/flow.tsx` — switch component mapping `OnboardingPollingResponse.phase` to one of ten per-phase subcomponents
+- `apps/web/src/components/onboarding/phase-{pending,generating,finalizing,discovering,extracting,clustering,synthesizing,no-emails,failed}.tsx` — nine progress/terminal screens
+- `apps/web/src/components/onboarding/phase-review.tsx` — lifted from the old review page; POSTs to Task 11's `/api/onboarding/:schemaId` confirm handler
+- `apps/web/src/app/onboarding/[schemaId]/page.tsx` — 2s polling observer page that drives the flow and navigates on `phase=COMPLETED`
+- `apps/web/src/app/onboarding/connect/page.tsx` — modified to POST to `/api/onboarding/start` with a client-generated ULID and route to the observer page (was: POST to `/api/interview/hypothesis` → route to `/onboarding/scanning`)
+
 **Modified files worth tracking:** `apps/web/prisma/schema.prisma`, `apps/web/src/lib/services/interview.ts` (split), `apps/web/src/lib/services/extraction.ts` (ScanFailure writes + `firstScanJobId`), `apps/web/src/lib/services/cluster.ts` (counter writes removed), `apps/web/src/lib/inngest/functions.ts` (CAS wiring + exports), `apps/web/src/app/api/schemas/[schemaId]/status/route.ts`, `apps/web/src/app/(authenticated)/settings/topics/page.tsx`, `apps/web/scripts/eval-diagnose.ts`, `packages/types/src/events.ts`.
 
 ### Task status
@@ -65,8 +72,8 @@
 | 7 | 11. GET /api/onboarding/[schemaId] + POST (confirm) + DELETE (cancel) | ✅ done | `926e8af` | Polling via `derivePollingResponse`, POST CAS-flips `AWAITING_REVIEW → COMPLETED` + `status=ACTIVE` (resolves status-flip deferred debt), DELETE emits `onboarding.session.cancelled` + archives. Added `ARCHIVED` to `SchemaStatus` enum (live ALTER TYPE against DB), added `cancelOn` to `runOnboarding`, added `onboarding.session.cancelled` to `DenimEvents`. 20/20 onboarding-polling tests still green. |
 | 7 | 12. POST /api/onboarding/[schemaId]/retry | ✅ done | `1d37294` | **Deviation from plan snippet:** parses the failed phase out of `phaseError` ("[PHASE] message") and resets to that instead of resetting to PENDING. Plan snippet's reset-to-PENDING would re-run `persistSchemaRelations`, which is not idempotent and would create duplicate entity/tag rows. Only resumable pre-scan phases honored; unknown values fall back to PENDING. Scan-stage failures are a v1 limitation (20m waitForEvent timeout — Task 13's concern). |
 | 7 | 13. Scan management routes | ✅ done | `ac72787` | **Plan path deviation:** `[id]` → `[schemaId]` to match repo convention (`api/schemas/[schemaId]/{status,summary}` already exists). GET list + POST manual rescan (409 conflict with existing active scan, returns scanJobId so the client can redirect) + GET per-scan detail with 50 most recent failures and computed metrics. **Task 13 does NOT resolve the Task 12 scan-stage retry limitation** (see deferred debt) — a manual rescan creates a new `triggeredBy=MANUAL` ScanJob, but `runOnboarding.waitForEvent` matches on the original scanJobId, so the new scan's `scan.completed` event is ignored by the still-waiting workflow. Scan-metrics tests 8/8 still green. |
-| 8 | 14. OnboardingFlow switch component | ⏳ next | | `apps/web/src/components/onboarding/flow.tsx` — single component driven off the polling phase, replaces the multi-page O1..O5 flow. Lifts the current review page into `phase-review.tsx` which POSTs to `/api/onboarding/:schemaId` instead of `/api/interview/review-finalize`. |
-| 9 | 15. Remove old routes and pages | ⏳ pending | | Delete `api/interview/hypothesis`, old multi-page routes. Requires grep for lingering references. |
+| 8 | 14. OnboardingFlow switch component | ✅ done | `8c8495e` | 10 phase components + `flow.tsx` switch + observer page at `app/onboarding/[schemaId]/page.tsx` (2s poll loop against Task 11's GET handler) + `connect/page.tsx` rewired to `POST /api/onboarding/start` with a client-generated ULID. Added `ulid` to `apps/web`. Typecheck clean first try; onboarding-polling 20/20 still green. `phase-review.tsx` is lifted from the standalone review page with the submit target pointed at Task 11's confirm handler. **Gap:** the plan sketch for `phase-extracting.tsx` referenced a `recentDiscoveries.entities` feed that `OnboardingPollingResponse` doesn't carry — shipping with just emails-processed/total, can add the discoveries feed later without a schema change. The old `onboarding/scanning/page.tsx` and `onboarding/review/page.tsx` are still live — Task 15 deletes them. |
+| 9 | 15. Remove old routes and pages | ⏳ next | | Delete `api/interview/hypothesis`, `api/interview/finalize`, `api/interview/validate`, `api/interview/review-finalize`, `onboarding/scanning/page.tsx`, `onboarding/review/page.tsx`, and `components/onboarding/scan-stream.tsx`. Requires grep for lingering references. |
 | 10 | 16. End-to-end integration tests | ⏳ pending | | `onboarding-happy-path.test.ts` via real Inngest dev server. Happy + failure + re-entry. |
 | 11 | 17. Cron stub | ⏳ pending | | `apps/web/src/lib/inngest/cron.ts` that fires `scan.requested` for stale schemas (uses `lastScannedAt`). |
 | 11 | 18. Full verification + status doc update | ⏳ pending | | Typecheck + all integration tests + eval rerun. Flip the canonical status doc to "refactor complete". |

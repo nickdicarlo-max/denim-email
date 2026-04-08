@@ -1096,7 +1096,7 @@ Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-
 
 Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a durable, resumable, observable server-side state machine. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase for every transition, all counters computed on demand, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups.
 
-**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, **14 of 18 tasks are landed. Phase 7 is complete** — the server-side state machine and the full HTTP surface area are in place. The remaining four tasks are all client-side or verification-only.
+**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, **15 of 18 tasks are landed. Phases 0–8 are complete** — server state machine, HTTP routes, and client flow collapse are all done. The remaining three tasks are cleanup, e2e tests, and cron + final verification.
 
 **Done (Phases 0–7):**
 - Phase 0 — Schema migration, `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, `ARCHIVED` added to `SchemaStatus` (Task 11), dropped denormalized counters
@@ -1115,16 +1115,16 @@ Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a
   - `GET /api/schemas/:schemaId/scans` (Task 13) — audit-log listing with compute-on-demand metrics
   - `POST /api/schemas/:schemaId/scans` (Task 13) — manual rescan, 409 conflict guard if an active scan exists
   - `GET /api/schemas/:schemaId/scans/:scanJobId` (Task 13) — per-scan detail with the 50 most recent ScanFailure rows and computed metrics
+- Phase 8 (complete) — client flow collapse. Task 14 landed the single `<OnboardingFlow>` switch component + 10 per-phase subcomponents + the 2s-polling observer page at `apps/web/src/app/onboarding/[schemaId]/page.tsx`. The connect page now POSTs to `/api/onboarding/start` with a client-generated ULID and navigates to the observer page — no more `/api/interview/hypothesis`. `phase-review.tsx` is lifted from the old review page with its submit target pointed at Task 11's confirm handler. The old scanning and review pages are still on disk but no longer reachable from the new flow — Task 15 deletes them.
 
-**Remaining (4 tasks, all client-side or verification):**
-- Phase 8 — Task 14: `OnboardingFlow` switch component + per-phase subcomponents + `apps/web/src/app/onboarding/[schemaId]/page.tsx` polling page. Lifts the current review page into `phase-review.tsx` and POSTs to `/api/onboarding/:schemaId`.
-- Phase 9 — Task 15: delete the old multi-page onboarding routes and the interview/* HTTP routes the new flow replaces. Grep pass before each deletion.
+**Remaining (3 tasks, cleanup + tests + final verification):**
+- Phase 9 — Task 15: delete the old multi-page onboarding routes (`onboarding/scanning/page.tsx`, `onboarding/review/page.tsx`, `components/onboarding/scan-stream.tsx`) and the interview HTTP routes the new flow replaces (`api/interview/hypothesis`, `/finalize`, `/validate`, `/review-finalize`). Grep pass before each deletion.
 - Phase 10 — Task 16: `onboarding-happy-path.test.ts` against real Inngest + Next dev servers. Happy + failure (via retry route) + re-entry scenarios.
 - Phase 11 — Task 17 (cron stub for stale schemas using `lastScannedAt`) + Task 18 (full verification sweep and flip this doc to "refactor complete").
 
 **Canonical progress doc + architecture snapshot + file inventory + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, a status table for all 18 tasks, a file inventory, and verification routine. Three of the four original deferred-debt items are now **resolved** (`ScanFailure` writes, the transitional `runSynthesis` status flip, and the `status=ACTIVE` flip on review confirmation). One new deferred-debt item was added in Phase 7 and is **still open**: scan-stage retry doesn't actually recover — a `PROCESSING_SCAN` failure re-enters `waitForEvent` on the same FAILED scanJobId and hits the 20m timeout, and Task 13's manual rescan creates a new scanJobId that the waiting workflow ignores. Deferring until a scan-stage failure actually bites in practice (none have in testing so far).
 
-**Next:** Phase 8 / Task 14 — `apps/web/src/components/onboarding/flow.tsx` switch component + per-phase subcomponents + `apps/web/src/app/onboarding/[schemaId]/page.tsx` polling page that drives the whole flow off `GET /api/onboarding/:schemaId`. This is the client-side collapse of the multi-page O1..O5 flow into one phase-driven surface. The richest subcomponent is `phase-review.tsx` — lift entity toggles + topic name + finalize button from the current `apps/web/src/app/onboarding/review/page.tsx` and point its submit at Task 11's confirm handler instead of the old `/api/interview/review-finalize` endpoint.
+**Next:** Phase 9 / Task 15 — delete the old multi-page onboarding surface and the `/api/interview/*` HTTP routes the new flow replaces. Each deletion needs a grep pass for lingering references (tests, storybook if any, docs). Expected deletions: `api/interview/{hypothesis,finalize,validate,review-finalize}/route.ts`, `onboarding/scanning/page.tsx`, `onboarding/review/page.tsx`, `components/onboarding/scan-stream.tsx`. The plan lists `api/schemas/[schemaId]/status/route.ts` for deletion too, but that route is still referenced by `settings/topics/page.tsx` — verify whether the new `/api/onboarding/:schemaId` covers everything that page needs before deleting it.
 
 ## What's Next (2026-04-07)
 
