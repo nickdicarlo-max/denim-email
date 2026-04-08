@@ -1096,7 +1096,7 @@ Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-
 
 Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a durable, resumable, observable server-side state machine. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase for every transition, all counters computed on demand, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups.
 
-**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, **12 of 18 tasks are landed** (Phases 0–7 through Task 11):
+**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, **13 of 18 tasks are landed** (Phases 0–7 through Task 12):
 
 **Done:**
 - Phase 0 — Schema migration, `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, dropped counters
@@ -1106,10 +1106,10 @@ Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a
 - Phase 4 — Split `finalizeSchema` into `createSchemaStub` + `persistSchemaRelations` + delegating wrapper
 - Phase 5 — Wired `advanceScanPhase` into every pipeline transition, `ScanFailure` rows on per-email + whole-batch failures, `firstScanJobId` / `lastScanJobId` on Email create paths, `failed` field dropped from result interfaces
 - Phase 6 — `runScan` parent Inngest workflow (Task 8) owns `PENDING → DISCOVERING → EXTRACTING`, short-circuits empty scans, hands off via `scan.emails.discovered`
-- Phase 7 so far — `runOnboarding` parent workflow (Task 9) drives schema phases end-to-end with CAS; `POST /api/onboarding/start` (Task 10) is the idempotent session-claim entry point; `GET/POST/DELETE /api/onboarding/[schemaId]` (Task 11) handles polling, review confirmation (CAS-flips `AWAITING_REVIEW → COMPLETED` + `status=ACTIVE` — resolves the deferred status-flip debt), and cancellation (emits `onboarding.session.cancelled`, matched by `runOnboarding.cancelOn`, then flips `status=ARCHIVED`). `SchemaStatus` enum gained `ARCHIVED`.
+- Phase 7 so far — `runOnboarding` parent workflow (Task 9) drives schema phases end-to-end with CAS; `POST /api/onboarding/start` (Task 10) is the idempotent session-claim entry point; `GET/POST/DELETE /api/onboarding/[schemaId]` (Task 11) handles polling, review confirmation (CAS-flips `AWAITING_REVIEW → COMPLETED` + `status=ACTIVE` — resolves the deferred status-flip debt), and cancellation (emits `onboarding.session.cancelled`, matched by `runOnboarding.cancelOn`, then flips `status=ARCHIVED`); `POST /api/onboarding/[schemaId]/retry` (Task 12) resumes a FAILED run by parsing the failed phase out of `phaseError` and resetting the schema to that phase — so previously-completed pre-failure steps skip via the CAS index check and only the failed step re-runs, avoiding `persistSchemaRelations` duplicates. `SchemaStatus` enum gained `ARCHIVED`.
 
-**Remaining (6 tasks):**
-- Phase 7 — Task 12 (retry route), Task 13 (scan management routes)
+**Remaining (5 tasks):**
+- Phase 7 — Task 13 (scan management routes — likely also the fix for the Task 12 scan-stage retry limitation)
 - Phase 8 — Task 14 (single `OnboardingFlow` switch component driven off the polling phase)
 - Phase 9 — Task 15 (delete the old multi-page onboarding routes)
 - Phase 10 — Task 16 (end-to-end integration tests via real Inngest dev server)
@@ -1117,7 +1117,7 @@ Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a
 
 **Canonical progress doc + architecture snapshot + file inventory + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, a status table for all 18 tasks, a file inventory, and verification routine — I update it in the same commit as each task. All three previously-deferred items (`ScanFailure` writes, the transitional `runSynthesis` status flip, and the `status=ACTIVE` flip on review confirmation) are now **resolved**.
 
-**Next:** Phase 7 / Task 12 — `POST /api/onboarding/[schemaId]/retry`. Validates `phase === "FAILED"`, clears error columns + resets to `PENDING`, re-emits `onboarding.session.started`. Each step's CAS-on-phase skips already-completed work on replay.
+**Next:** Phase 7 / Task 13 — scan management routes at `api/schemas/[id]/scans/` (list + trigger-manual rescan). Likely also the fix for the Task 12 scan-stage retry limitation — giving callers a way to re-run a failed ScanJob independently of the onboarding workflow, so a PROCESSING_SCAN failure can actually recover instead of hitting the 20m waitForEvent timeout.
 
 ## What's Next (2026-04-07)
 

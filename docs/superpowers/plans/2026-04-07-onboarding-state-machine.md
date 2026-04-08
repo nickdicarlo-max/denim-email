@@ -24,7 +24,7 @@
 
 ## Execution Progress (as of 2026-04-08)
 
-**Branch:** `feature/ux-overhaul` · **Position:** 12 of 18 tasks landed (Phases 0–7 through Task 11) · **Next:** Task 12
+**Branch:** `feature/ux-overhaul` · **Position:** 13 of 18 tasks landed (Phases 0–7 through Task 12) · **Next:** Task 13
 
 **Auto-memory mirror:** `~/.claude/projects/C--Users-alkam-Documents-NDSoftware-denim-email/memory/project_onboarding_state_machine_progress.md` carries a richer version of this header (architecture diagrams, file inventory, test matrix, remaining-task summaries). When the two disagree, trust this in-repo header — it updates in the same commit as the task. Use the memory file for context, not as the source of truth.
 
@@ -42,6 +42,7 @@
 **New HTTP routes:**
 - `apps/web/src/app/api/onboarding/start/route.ts` — `POST` (Task 10; idempotent session claim)
 - `apps/web/src/app/api/onboarding/[schemaId]/route.ts` — `GET` (polling) / `POST` (review confirm) / `DELETE` (cancel) (Task 11)
+- `apps/web/src/app/api/onboarding/[schemaId]/retry/route.ts` — `POST` (resume from the failed phase) (Task 12)
 
 **Modified files worth tracking:** `apps/web/prisma/schema.prisma`, `apps/web/src/lib/services/interview.ts` (split), `apps/web/src/lib/services/extraction.ts` (ScanFailure writes + `firstScanJobId`), `apps/web/src/lib/services/cluster.ts` (counter writes removed), `apps/web/src/lib/inngest/functions.ts` (CAS wiring + exports), `apps/web/src/app/api/schemas/[schemaId]/status/route.ts`, `apps/web/src/app/(authenticated)/settings/topics/page.tsx`, `apps/web/scripts/eval-diagnose.ts`, `packages/types/src/events.ts`.
 
@@ -60,8 +61,8 @@
 | 7 | 9. `runOnboarding` parent orchestrator | ✅ done | `b8dc3b0` | Drives `CaseSchema.phase` through the full state machine, waits for `scan.completed` with 20m timeout + match on scanJobId, quality gate for unsynthesized cases. `persistSchemaRelations` `validation`/`confirmations` made optional. **Removed TRANSITIONAL `activate-schema` step from `runSynthesis`.** Added `onboarding.session.started` to `DenimEvents`. |
 | 7 | 10. POST /api/onboarding/start | ✅ done | `a36480c` | Idempotent on client-supplied ULID, 202 on fresh + existing, 403 on different user. Reuses `InterviewInputSchema`. `createSchemaStub` now accepts optional client-supplied `schemaId`. |
 | 7 | 11. GET /api/onboarding/[schemaId] + POST (confirm) + DELETE (cancel) | ✅ done | `926e8af` | Polling via `derivePollingResponse`, POST CAS-flips `AWAITING_REVIEW → COMPLETED` + `status=ACTIVE` (resolves status-flip deferred debt), DELETE emits `onboarding.session.cancelled` + archives. Added `ARCHIVED` to `SchemaStatus` enum (live ALTER TYPE against DB), added `cancelOn` to `runOnboarding`, added `onboarding.session.cancelled` to `DenimEvents`. 20/20 onboarding-polling tests still green. |
-| 7 | 12. POST /api/onboarding/[schemaId]/retry | ⏳ next | | Re-emits `onboarding.session.started` to resume a failed run. |
-| 7 | 13. Scan management routes | ⏳ pending | | `apps/web/src/app/api/schemas/[id]/scans/route.ts` (list + trigger-manual). |
+| 7 | 12. POST /api/onboarding/[schemaId]/retry | ✅ done | `1d37294` | **Deviation from plan snippet:** parses the failed phase out of `phaseError` ("[PHASE] message") and resets to that instead of resetting to PENDING. Plan snippet's reset-to-PENDING would re-run `persistSchemaRelations`, which is not idempotent and would create duplicate entity/tag rows. Only resumable pre-scan phases honored; unknown values fall back to PENDING. Scan-stage failures are a v1 limitation (20m waitForEvent timeout — Task 13's concern). |
+| 7 | 13. Scan management routes | ⏳ next | | `apps/web/src/app/api/schemas/[id]/scans/route.ts` (list + trigger-manual). Likely resolves the scan-failure retry limitation from Task 12. |
 | 8 | 14. OnboardingFlow switch component | ⏳ pending | | `apps/web/src/components/onboarding/flow.tsx` — single component driven off the polling phase, replaces the multi-page O1..O5 flow. |
 | 9 | 15. Remove old routes and pages | ⏳ pending | | Delete `api/interview/hypothesis`, old multi-page routes. Requires grep for lingering references. |
 | 10 | 16. End-to-end integration tests | ⏳ pending | | `onboarding-happy-path.test.ts` via real Inngest dev server. Happy + failure + re-entry. |
