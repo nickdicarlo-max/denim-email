@@ -24,33 +24,70 @@
 
 ## Execution Progress (as of 2026-04-08)
 
-Branch: `feature/ux-overhaul`
+**Branch:** `feature/ux-overhaul` · **Position:** 11 of 18 tasks landed (Phases 0–7 through Task 10) · **Next:** Task 11
+
+**Auto-memory mirror:** `~/.claude/projects/C--Users-alkam-Documents-NDSoftware-denim-email/memory/project_onboarding_state_machine_progress.md` carries a richer version of this header (architecture diagrams, file inventory, test matrix, remaining-task summaries). When the two disagree, trust this in-repo header — it updates in the same commit as the task. Use the memory file for context, not as the source of truth.
+
+### File inventory (state machine + pipeline)
+
+**New service files:**
+- `apps/web/src/lib/services/scan-metrics.ts` — `computeScanMetrics` / `computeSchemaMetrics` (compute-on-demand counters)
+- `apps/web/src/lib/services/onboarding-state.ts` — `advanceSchemaPhase` / `advanceScanPhase` / `markSchemaFailed` / `markScanFailed` + phase ordering
+- `apps/web/src/lib/services/onboarding-polling.ts` — `derivePollingResponse` flat merge for the client
+
+**New Inngest workflows:**
+- `apps/web/src/lib/inngest/scan.ts` — `runScan` parent (consumes `scan.requested`, owns `PENDING → DISCOVERING → EXTRACTING`)
+- `apps/web/src/lib/inngest/onboarding.ts` — `runOnboarding` parent (consumes `onboarding.session.started`, owns all `CaseSchema.phase` transitions)
+
+**New HTTP routes:**
+- `apps/web/src/app/api/onboarding/start/route.ts` — `POST` (Task 10; idempotent session claim)
+
+**Modified files worth tracking:** `apps/web/prisma/schema.prisma`, `apps/web/src/lib/services/interview.ts` (split), `apps/web/src/lib/services/extraction.ts` (ScanFailure writes + `firstScanJobId`), `apps/web/src/lib/services/cluster.ts` (counter writes removed), `apps/web/src/lib/inngest/functions.ts` (CAS wiring + exports), `apps/web/src/app/api/schemas/[schemaId]/status/route.ts`, `apps/web/src/app/(authenticated)/settings/topics/page.tsx`, `apps/web/scripts/eval-diagnose.ts`, `packages/types/src/events.ts`.
+
+### Task status
 
 | Phase | Task | Status | Commit | Notes |
 |-------|------|--------|--------|-------|
 | 0 | 1. Schema migration + enums + ScanFailure | ✅ done | `952d0bf` / `b92ff2e` | |
 | 1 | 2. `computeScanMetrics` / `computeSchemaMetrics` helpers | ✅ done | `8354c6e` | 8 integration tests. `Case`→`Email` is via `CaseEmail` junction (plan snippet was wrong). |
-| 1 | 3. Replace all dropped-counter reads | ✅ done | `d42de28` | Also fixed `ScanTrigger` enum casing ("manual"→"MANUAL", "onboarding"→"ONBOARDING") in 3 route handlers. `status/route.ts` returns `casesMerged: 0`, `clustersCreated: 0` for client compat. `eval-diagnose.ts` has metric helpers inlined (uses standalone Prisma client). |
-| 2 | 4. `advanceSchemaPhase` / `advanceScanPhase` CAS helpers | ✅ done | `a51cbd1` | 18 integration tests. `advanceScanPhase` uses `scan.phase` (read value) in the `where` clause so legacy IDLE rows satisfy a `from: PENDING` request — slight divergence from plan's example. |
-| 3 | 5. `derivePollingResponse` merge function | ✅ done | `daaf034` | 20 integration tests (not mocked — `CaseSchema` has too many required fields to hand-mock). Added `phase === COMPLETED` branch the plan missed. ACTIVE status takes precedence over stale FAILED phase. |
-| 4 | 6. Extract `persistSchemaRelations` from `finalizeSchema` | ✅ done | `529262d` | Split into `createSchemaStub` (stub row with placeholder JSON configs, phase=PENDING) + `persistSchemaRelations` (updates row + creates relations in one tx) + delegating `finalizeSchema` wrapper. **Behavior change:** stub create and relation writes are now in separate transactions — a failure in persistSchemaRelations leaves an orphan DRAFT/PENDING stub. Intentional (state machine can recover). Entity-groups direct-service tests 13/13 still pass. |
-| 5 | 7. Add CAS to extractBatch / clustering / synthesis + ScanFailure writes + firstScanJobId | ✅ done | `5f6a4a0` | Every pipeline phase write now goes through `advanceScanPhase`. ScanFailure rows written per-email in `processEmailBatch` catch (upsert on unique index) and per-batch in `extractBatch.onFailure` (createMany + skipDuplicates). Email create paths carry `firstScanJobId`/`lastScanJobId`; update paths leave `firstScanJobId` alone. `ExtractEmailResult`/`ProcessBatchResult` drop `failed` field. `runSynthesis` emits `scan.completed` for Task 9; TRANSITIONAL direct `status=ONBOARDING→ACTIVE` flip kept until the orchestrator lands. |
-| 6 | 8. `runScan` parent orchestrator | ✅ done | `6803130` | New `apps/web/src/lib/inngest/scan.ts`. Consumes `scan.requested`, owns `PENDING → DISCOVERING → EXTRACTING` transitions via `advanceScanPhase`, handles empty-scan short-circuit (`DISCOVERING → COMPLETED` multi-phase jump + `scan.completed` with `reason=no-emails-found`), hands off to the existing chain via `scan.emails.discovered`. `retries=0` with explicit `markScanFailed` on catch. Also added `scan.requested` / `scan.completed` to `DenimEvents` (previously untyped). No unit tests — pure orchestration, primitives already tested. |
-| 7 | 9. `runOnboarding` parent orchestrator | ✅ done | `b8dc3b0` | New `apps/web/src/lib/inngest/onboarding.ts`. Consumes `onboarding.session.started`, drives `CaseSchema.phase` through `PENDING → GENERATING_HYPOTHESIS → FINALIZING_SCHEMA → PROCESSING_SCAN`, emits `scan.requested`, waits for `scan.completed` with 20m timeout + match on scanJobId, then advances to `AWAITING_REVIEW` (happy path, with quality gate for unsynthesized cases) or `NO_EMAILS_FOUND`. Re-entry safe via `advanceSchemaPhase` skip + scan-job lookup. `persistSchemaRelations` made `validation`/`confirmations` optional so the auto-onboarding path can call with just the hypothesis. **Removed the TRANSITIONAL `activate-schema` step from `runSynthesis`** — `runOnboarding` now owns `CaseSchema.phase`. Added `onboarding.session.started` to `DenimEvents`. |
-| 7 | 10. POST /api/onboarding/start | ✅ done | `a36480c` | Idempotent route: client-supplied ULID, 202 on both fresh and existing sessions. Fresh → `createSchemaStub` + emit `onboarding.session.started`. Existing, same user → no-op return. Existing, different user → 403. Body validated via the existing `InterviewInputSchema` (no fork). Also extended `createSchemaStub` to accept an optional client-supplied `schemaId`. |
-| 7 | 11. GET /api/onboarding/[schemaId] + POST (confirm) + DELETE (cancel) | ⏳ next | | |
-| 7+ | 12–18 | ⏳ pending | | |
+| 1 | 3. Replace all dropped-counter reads | ✅ done | `d42de28` | Also fixed `ScanTrigger` enum casing in 3 route handlers. `status/route.ts` returns `casesMerged: 0`, `clustersCreated: 0` for client compat. `eval-diagnose.ts` has metric helpers inlined. |
+| 2 | 4. `advanceSchemaPhase` / `advanceScanPhase` CAS helpers | ✅ done | `a51cbd1` | 18 integration tests. `advanceScanPhase` uses `scan.phase` (read value) in the `where` clause so legacy IDLE rows satisfy a `from: PENDING` request. |
+| 3 | 5. `derivePollingResponse` merge function | ✅ done | `daaf034` | 20 integration tests (not mocked — `CaseSchema` has too many required fields). Added `phase === COMPLETED` branch the plan missed. ACTIVE takes precedence over stale FAILED. |
+| 4 | 6. Extract `persistSchemaRelations` from `finalizeSchema` | ✅ done | `529262d` | Split into `createSchemaStub` + `persistSchemaRelations` + delegating `finalizeSchema` wrapper. Stub and relation writes are in separate transactions now — orphan DRAFT/PENDING stub possible on failure (intentional). |
+| 5 | 7. CAS in pipeline + ScanFailure writes + firstScanJobId | ✅ done | `5f6a4a0` | Every pipeline phase write via `advanceScanPhase`. ScanFailure rows per-email (upsert) + per-batch (createMany + skipDuplicates). Email create paths carry `firstScanJobId`/`lastScanJobId`. `ExtractEmailResult`/`ProcessBatchResult` drop `failed`. `runSynthesis` emits `scan.completed` for Task 9. |
+| 6 | 8. `runScan` parent orchestrator | ✅ done | `6803130` | Consumes `scan.requested`, empty-scan short-circuit (`DISCOVERING → COMPLETED` multi-phase jump), hands off via `scan.emails.discovered`. `retries=0`. Added `scan.requested` / `scan.completed` to `DenimEvents`. |
+| 7 | 9. `runOnboarding` parent orchestrator | ✅ done | `b8dc3b0` | Drives `CaseSchema.phase` through the full state machine, waits for `scan.completed` with 20m timeout + match on scanJobId, quality gate for unsynthesized cases. `persistSchemaRelations` `validation`/`confirmations` made optional. **Removed TRANSITIONAL `activate-schema` step from `runSynthesis`.** Added `onboarding.session.started` to `DenimEvents`. |
+| 7 | 10. POST /api/onboarding/start | ✅ done | `a36480c` | Idempotent on client-supplied ULID, 202 on fresh + existing, 403 on different user. Reuses `InterviewInputSchema`. `createSchemaStub` now accepts optional client-supplied `schemaId`. |
+| 7 | 11. GET /api/onboarding/[schemaId] + POST (confirm) + DELETE (cancel) | ⏳ next | | Polling via `derivePollingResponse`, POST flips `AWAITING_REVIEW → COMPLETED` + `status=ACTIVE` (resolves the status-flip deferred debt), DELETE emits `onboarding.session.cancelled`. Also add `cancelOn` to `runOnboarding` and possibly `ARCHIVED` to `SchemaStatus`. |
+| 7 | 12. POST /api/onboarding/[schemaId]/retry | ⏳ pending | | Re-emits `onboarding.session.started` to resume a failed run. |
+| 7 | 13. Scan management routes | ⏳ pending | | `apps/web/src/app/api/schemas/[id]/scans/route.ts` (list + trigger-manual). |
+| 8 | 14. OnboardingFlow switch component | ⏳ pending | | `apps/web/src/components/onboarding/flow.tsx` — single component driven off the polling phase, replaces the multi-page O1..O5 flow. |
+| 9 | 15. Remove old routes and pages | ⏳ pending | | Delete `api/interview/hypothesis`, old multi-page routes. Requires grep for lingering references. |
+| 10 | 16. End-to-end integration tests | ⏳ pending | | `onboarding-happy-path.test.ts` via real Inngest dev server. Happy + failure + re-entry. |
+| 11 | 17. Cron stub | ⏳ pending | | `apps/web/src/lib/inngest/cron.ts` that fires `scan.requested` for stale schemas (uses `lastScannedAt`). |
+| 11 | 18. Full verification + status doc update | ⏳ pending | | Typecheck + all integration tests + eval rerun. Flip the canonical status doc to "refactor complete". |
 
-**Known deferred debt** (intentionally left for later phases):
-- **`casesMerged` / `clustersCreated`** — permanently gone from the DB. `api/schemas/[schemaId]/status/route.ts` fabricates them as `0` for client compatibility; a future cleanup pass can remove them from the client response entirely.
-- **No automatic `status=ACTIVE` flip on AWAITING_REVIEW** — as of Task 9, `runSynthesis` no longer flips the schema's status. The review-confirmation route (Task 11 or 12) will flip `status=ACTIVE` when the user confirms the AWAITING_REVIEW checkpoint. Until those routes land, schemas completing onboarding via the new `runOnboarding` workflow will sit in `phase=AWAITING_REVIEW` with `status=DRAFT` and `derivePollingResponse` will return `AWAITING_REVIEW` (not `COMPLETED`) until the user confirms.
-- **Stale `SchemaTag.frequency` comment** — `schema.prisma` line 211 still references `schema.emailCount` (removed in Phase 0). Cosmetic, not a bug.
+### Known deferred debt (intentional)
 
-**Resolved debt** (tracked for history):
-- ~~ScanFailure row writes deferred to Phase 5~~ — **resolved in Task 7 (`5f6a4a0`)**. Per-email failures write `ScanFailure` rows via upsert in `processEmailBatch`; whole-batch failures write via `createMany` in `extractBatch.onFailure`. The accounting-invariant logs in `checkExtractionComplete` / `runSynthesis` should now show `gap=0` in the happy path.
-- ~~Transitional `status=ONBOARDING → ACTIVE` dual-write in `runSynthesis`~~ — **resolved in Task 9 (`b8dc3b0`)**. `runSynthesis` emits `scan.completed`; `runOnboarding` consumes it and advances `CaseSchema.phase` through the state machine. The status flip is now owned by the future review-confirmation route.
+- **No automatic `status=ACTIVE` on AWAITING_REVIEW.** Resolved in Task 11 (the review-confirmation POST). Until then, new onboarding runs end in `phase=AWAITING_REVIEW` + `status=DRAFT` and `derivePollingResponse` returns `AWAITING_REVIEW`.
+- **`casesMerged` / `clustersCreated` fabricated as 0** in `api/schemas/[schemaId]/status/route.ts` for client compatibility. Cleanup can remove them entirely.
+- **Stale comment** in `schema.prisma:211` references `schema.emailCount` (removed in Phase 0). Cosmetic.
 
-**Verified green after each commit:** `pnpm typecheck` + per-task integration test + `pnpm -r --filter '!web' test` (126 package unit tests).
+### Resolved debt
+
+- ~~ScanFailure row writes~~ — resolved in Task 7 (`5f6a4a0`).
+- ~~Transitional `status=ONBOARDING → ACTIVE` flip in `runSynthesis`~~ — resolved in Task 9 (`b8dc3b0`).
+
+### Verification routine
+
+1. `cd apps/web && pnpm typecheck` → exit 0
+2. Task's new integration test — `pnpm exec vitest run --config vitest.integration.config.ts <name>` from `apps/web/`
+3. Related tests that might regress (e.g. `entity-groups` when touching `interview.ts`) — one file at a time (the singleton test user trips up multi-file runs)
+4. Package unit tests — `pnpm -r --filter '!web' test` (126 tests: types 2 + engine 92 + ai 32)
+5. `pnpm biome check --write <files>`, then re-run the task test
+6. Update this header + the auto-memory mirror + `docs/00_denim_current_status.md` in the same commit sweep as the code change, or as a trailing `docs(plan):` commit
+
+**Dev server dependencies:** HTTP tests need `pnpm --filter web dev` on `:3000`. Inngest event-chain tests need `npx inngest-cli@latest dev` on `:8288`. The core state-machine suite (scan-metrics, onboarding-state, onboarding-polling) is pure Prisma and doesn't need either.
 
 ---
 

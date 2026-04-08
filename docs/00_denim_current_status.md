@@ -1096,20 +1096,28 @@ Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-
 
 Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a durable, resumable, observable server-side state machine. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase for every transition, all counters computed on demand, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups.
 
-**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, Phases 0–7 (through Task 9) are complete:
+**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, **11 of 18 tasks are landed** (Phases 0–7 through Task 10):
 
+**Done:**
 - Phase 0 — Schema migration, `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, dropped counters
 - Phase 1 — `computeScanMetrics` / `computeSchemaMetrics` helpers, replaced every denormalized-counter read
-- Phase 2 — `advanceSchemaPhase` / `advanceScanPhase` CAS helpers with idempotent skip, CAS-loss detection, and `markSchemaFailed` / `markScanFailed` terminal writers
+- Phase 2 — `advanceSchemaPhase` / `advanceScanPhase` CAS helpers with idempotent skip, CAS-loss detection, `markSchemaFailed` / `markScanFailed` terminal writers
 - Phase 3 — `derivePollingResponse` merges the two state machines into the client polling shape
-- Phase 4 — Split `finalizeSchema` into `createSchemaStub` + `persistSchemaRelations` + delegating wrapper (stub can be created early, relations populated later; orphan stubs recoverable by the state machine)
-- Phase 5 — Wired `advanceScanPhase` into every pipeline transition (`fanOutExtraction` / `runCoarseClustering` / `runSynthesis`), wrote `ScanFailure` rows on per-email + whole-batch failures, set `firstScanJobId`/`lastScanJobId` on Email create paths, dropped `failed` field from result interfaces, started emitting `scan.completed` for the orchestrator
-- Phase 6 — `runScan` parent Inngest workflow owns `PENDING → DISCOVERING → EXTRACTING` transitions, short-circuits empty scans to `COMPLETED` with `scan.completed` / `reason=no-emails-found`, hands off to the existing chain via `scan.emails.discovered`. `scan.requested` + `scan.completed` added to the typed `DenimEvents` contract.
-- Phase 7 (in progress) — `runOnboarding` parent workflow (Task 9) drives `CaseSchema.phase` through `PENDING → GENERATING_HYPOTHESIS → FINALIZING_SCHEMA → PROCESSING_SCAN → AWAITING_REVIEW` (or `NO_EMAILS_FOUND`). `persistSchemaRelations` made validation/confirmations optional for the auto-onboarding path. Transitional `runSynthesis` status flip removed. Tasks 10–13 (HTTP routes) are next.
+- Phase 4 — Split `finalizeSchema` into `createSchemaStub` + `persistSchemaRelations` + delegating wrapper
+- Phase 5 — Wired `advanceScanPhase` into every pipeline transition, `ScanFailure` rows on per-email + whole-batch failures, `firstScanJobId` / `lastScanJobId` on Email create paths, `failed` field dropped from result interfaces
+- Phase 6 — `runScan` parent Inngest workflow (Task 8) owns `PENDING → DISCOVERING → EXTRACTING`, short-circuits empty scans, hands off via `scan.emails.discovered`
+- Phase 7 so far — `runOnboarding` parent workflow (Task 9) drives schema phases end-to-end with CAS; `POST /api/onboarding/start` route (Task 10) is the first HTTP entry point, idempotent on client-supplied ULID
 
-**Canonical progress doc + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, test counts, and a status table for all 18 tasks — I update it after each task lands. Both previously-deferred items (`ScanFailure` writes and the transitional `runSynthesis` status flip) are now **resolved**.
+**Remaining (7 tasks):**
+- Phase 7 — Task 11 (`GET/POST/DELETE /api/onboarding/[schemaId]`, resolves the deferred `status=ACTIVE` flip), Task 12 (retry route), Task 13 (scan management routes)
+- Phase 8 — Task 14 (single `OnboardingFlow` switch component driven off the polling phase)
+- Phase 9 — Task 15 (delete the old multi-page onboarding routes)
+- Phase 10 — Task 16 (end-to-end integration tests via real Inngest dev server)
+- Phase 11 — Task 17 (cron stub for stale schemas), Task 18 (full verification + flip status to "complete")
 
-**Next:** Phase 7 / Task 10 — `POST /api/onboarding/start` route that creates the stub schema and emits `onboarding.session.started`, then Tasks 11–13 (polling, retry, scan management routes).
+**Canonical progress doc + architecture snapshot + file inventory + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, a status table for all 18 tasks, a file inventory, and verification routine — I update it in the same commit as each task. Both previously-deferred items (`ScanFailure` writes and the transitional `runSynthesis` status flip) are now **resolved**.
+
+**Next:** Phase 7 / Task 11 — the 3-handler route at `api/onboarding/[schemaId]` (polling via `derivePollingResponse`, POST to confirm review + flip `status=ACTIVE`, DELETE to cancel via a new `onboarding.session.cancelled` event consumed by `runOnboarding.cancelOn`).
 
 ## What's Next (2026-04-07)
 
