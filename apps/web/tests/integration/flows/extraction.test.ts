@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestUser, cleanupTestUser, type TestUser } from "../helpers/test-user";
-import { createTestSchema, type TestSchemaResult } from "../helpers/test-schema";
-import { buildGmailFixture } from "../helpers/gmail-fixtures";
-import { withTimeout } from "../helpers/timeout";
-import { extractEmail } from "@/lib/services/extraction";
-import { prisma } from "@/lib/prisma";
 import type { ExtractionSchemaContext } from "@denim/types";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { prisma } from "@/lib/prisma";
+import { extractEmail } from "@/lib/services/extraction";
+import { buildGmailFixture } from "../helpers/gmail-fixtures";
+import { createTestSchema, type TestSchemaResult } from "../helpers/test-schema";
+import { cleanupTestUser, createTestUser, type TestUser } from "../helpers/test-user";
+import { withTimeout } from "../helpers/timeout";
 
 let testUser: TestUser;
 let testSchema: TestSchemaResult;
@@ -15,11 +15,7 @@ let exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[];
 
 describe("Extraction Flow (live Gemini)", () => {
   beforeAll(async () => {
-    testUser = await withTimeout(
-      createTestUser(),
-      30_000,
-      "createTestUser",
-    );
+    testUser = await withTimeout(createTestUser(), 30_000, "createTestUser");
     testSchema = await createTestSchema(testUser.userId);
 
     // Load schema context the same way the service does
@@ -27,7 +23,9 @@ describe("Extraction Flow (live Gemini)", () => {
       where: { id: testSchema.schema.id },
       include: {
         tags: { select: { name: true, description: true, isActive: true } },
-        entities: { select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
+        entities: {
+          select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
+        },
         extractedFields: { select: { name: true, type: true, description: true, source: true } },
         exclusionRules: { select: { ruleType: true, pattern: true, isActive: true } },
       },
@@ -35,13 +33,17 @@ describe("Extraction Flow (live Gemini)", () => {
 
     schemaContext = {
       domain: schema.domain ?? "general",
-      tags: schema.tags.filter((t) => t.isActive).map((t) => ({ name: t.name, description: t.description ?? "" })),
-      entities: schema.entities.filter((e) => e.isActive).map((e) => ({
-        name: e.name,
-        type: e.type as "PRIMARY" | "SECONDARY",
-        aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-        isUserInput: !e.autoDetected,
-      })),
+      tags: schema.tags
+        .filter((t) => t.isActive)
+        .map((t) => ({ name: t.name, description: t.description ?? "" })),
+      entities: schema.entities
+        .filter((e) => e.isActive)
+        .map((e) => ({
+          name: e.name,
+          type: e.type as "PRIMARY" | "SECONDARY",
+          aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+          isUserInput: !e.autoDetected,
+        })),
       extractedFields: schema.extractedFields.map((f) => ({
         name: f.name,
         type: f.type,
@@ -131,10 +133,9 @@ describe("Extraction Flow (live Gemini)", () => {
       body: "Dear parents, please join us for the spring concert on March 25th at 6pm in the auditorium. Students should arrive by 5:30pm in concert attire. There is no cost for attendance.",
     });
 
-    // Record schema emailCount before re-extraction
-    const schemaBefore = await prisma.caseSchema.findUniqueOrThrow({
-      where: { id: testSchema.schema.id },
-      select: { emailCount: true },
+    // Record schema emailCount before re-extraction (compute-on-demand)
+    const emailCountBefore = await prisma.email.count({
+      where: { schemaId: testSchema.schema.id, isExcluded: false },
     });
 
     const result = await withTimeout(
@@ -159,11 +160,10 @@ describe("Extraction Flow (live Gemini)", () => {
     expect(emailCount).toBe(1);
 
     // emailCount should NOT have incremented again
-    const schemaAfter = await prisma.caseSchema.findUniqueOrThrow({
-      where: { id: testSchema.schema.id },
-      select: { emailCount: true },
+    const emailCountAfter = await prisma.email.count({
+      where: { schemaId: testSchema.schema.id, isExcluded: false },
     });
-    expect(schemaAfter.emailCount).toBe(schemaBefore.emailCount);
+    expect(emailCountAfter).toBe(emailCountBefore);
 
     // Email should have reprocessedAt set
     const email = await prisma.email.findFirst({
@@ -216,17 +216,15 @@ describe("Extraction Flow (live Gemini)", () => {
   }, 60_000);
 
   // -------------------------------------------------------------------
-  // Denormalized counts
+  // Compute-on-demand email count
   // -------------------------------------------------------------------
-  it("schema and entity emailCounts are correct", async () => {
-    const schema = await prisma.caseSchema.findUniqueOrThrow({
-      where: { id: testSchema.schema.id },
-      select: { emailCount: true },
-    });
-
+  it("schema email count (non-excluded) is correct", async () => {
     // We extracted 1 real email + 1 excluded (excluded should NOT count)
     // The idempotent re-extraction should NOT double-count
-    expect(schema.emailCount).toBe(1);
+    const count = await prisma.email.count({
+      where: { schemaId: testSchema.schema.id, isExcluded: false },
+    });
+    expect(count).toBe(1);
   });
 
   // -------------------------------------------------------------------

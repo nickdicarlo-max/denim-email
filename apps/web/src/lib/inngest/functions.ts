@@ -1,9 +1,10 @@
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { processEmailBatch } from "@/lib/services/extraction";
-import { coarseCluster, splitCoarseClusters, applyCalibration } from "@/lib/services/cluster";
-import { synthesizeCase } from "@/lib/services/synthesis";
-import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+import { applyCalibration, coarseCluster, splitCoarseClusters } from "@/lib/services/cluster";
+import { processEmailBatch } from "@/lib/services/extraction";
+import { getValidGmailToken } from "@/lib/services/gmail-tokens";
+import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-metrics";
+import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
 import { dailyStatusDecay } from "./daily-status-decay";
 
@@ -101,10 +102,13 @@ export const extractBatch = inngest.createFunction(
       const { schemaId, scanJobId, emailIds, batchIndex, totalBatches } = original;
 
       await step.run("record-batch-failure", async () => {
+        // Counter increments removed — failedEmails is now derived from
+        // ScanFailure rows via computeScanMetrics. Phase 5 will add the
+        // per-email ScanFailure writes for batch failures; for now we only
+        // update the status message.
         await prisma.scanJob.update({
           where: { id: scanJobId },
           data: {
-            failedEmails: { increment: emailIds.length },
             statusMessage: `Batch ${batchIndex + 1}/${totalBatches} failed after retries`,
           },
         });
@@ -136,19 +140,35 @@ export const extractBatch = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
-    const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } =
-      event.data;
+    const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } = event.data;
 
     const result = await step.run("process-batch", async () => {
       // Load schema with all needed relations
       const schema = await prisma.caseSchema.findUniqueOrThrow({
         where: { id: schemaId },
         include: {
-          tags: { where: { isActive: true }, select: { name: true, description: true, isActive: true } },
-          entities: { where: { isActive: true }, select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
+          tags: {
+            where: { isActive: true },
+            select: { name: true, description: true, isActive: true },
+          },
+          entities: {
+            where: { isActive: true },
+            select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
+          },
           extractedFields: { select: { name: true, type: true, description: true, source: true } },
-          exclusionRules: { where: { isActive: true }, select: { ruleType: true, pattern: true, isActive: true } },
-          entityGroups: { orderBy: { index: "asc" }, include: { entities: { where: { isActive: true }, select: { name: true, type: true, isActive: true } } } },
+          exclusionRules: {
+            where: { isActive: true },
+            select: { ruleType: true, pattern: true, isActive: true },
+          },
+          entityGroups: {
+            orderBy: { index: "asc" },
+            include: {
+              entities: {
+                where: { isActive: true },
+                select: { name: true, type: true, isActive: true },
+              },
+            },
+          },
         },
       });
 
@@ -200,13 +220,12 @@ export const extractBatch = inngest.createFunction(
         { schemaId, scanJobId, userId },
       );
 
-      // Update ScanJob progress
+      // processedEmails / excludedEmails / failedEmails are computed on
+      // demand by computeScanMetrics from Email rows + ScanFailure rows.
+      // Only the status message is updated here.
       await prisma.scanJob.update({
         where: { id: scanJobId },
         data: {
-          processedEmails: { increment: batchResult.processed },
-          excludedEmails: { increment: batchResult.excluded },
-          failedEmails: { increment: batchResult.failed },
           statusMessage: `Batch ${batchIndex + 1}/${totalBatches} complete`,
         },
       });
@@ -249,31 +268,33 @@ export const checkExtractionComplete = inngest.createFunction(
     const { schemaId, scanJobId, totalBatches } = event.data;
 
     await step.run("check-completion", async () => {
-      // Read current scan job state
-      const scanJob = await prisma.scanJob.findUniqueOrThrow({
-        where: { id: scanJobId },
-      });
+      // Counters are now computed on demand from Email + ScanFailure +
+      // ExtractionCost rows via computeScanMetrics.
+      const metrics = await computeScanMetrics(scanJobId);
 
       const totalProcessed =
-        scanJob.processedEmails + scanJob.excludedEmails + scanJob.failedEmails;
+        metrics.processedEmails + metrics.excludedEmails + metrics.failedEmails;
 
-      if (totalProcessed >= scanJob.totalEmails) {
+      if (totalProcessed >= metrics.totalEmails) {
         // Accounting invariant: every discovered email must be accounted for
         // as processed, excluded, or failed (#16). A mismatch here means a
         // pipeline stage silently dropped emails — log loudly so the next
         // eval surfaces it.
-        if (totalProcessed !== scanJob.totalEmails) {
+        //
+        // NOTE: until Phase 5 adds ScanFailure writes, failedEmails will
+        // read 0 and this invariant may report gaps during Phase 1.
+        if (totalProcessed !== metrics.totalEmails) {
           logger.error({
             service: "inngest",
             operation: "checkExtractionComplete.accountingMismatch",
             schemaId,
             scanJobId,
-            totalEmails: scanJob.totalEmails,
-            processed: scanJob.processedEmails,
-            excluded: scanJob.excludedEmails,
-            failed: scanJob.failedEmails,
+            totalEmails: metrics.totalEmails,
+            processed: metrics.processedEmails,
+            excluded: metrics.excludedEmails,
+            failed: metrics.failedEmails,
             sum: totalProcessed,
-            gap: totalProcessed - scanJob.totalEmails,
+            gap: totalProcessed - metrics.totalEmails,
           });
         }
 
@@ -281,24 +302,21 @@ export const checkExtractionComplete = inngest.createFunction(
         await prisma.scanJob.update({
           where: { id: scanJobId },
           data: {
-            statusMessage: `Extraction done: ${scanJob.processedEmails} extracted, ${scanJob.excludedEmails} excluded, ${scanJob.failedEmails} failed. Starting clustering...`,
+            statusMessage: `Extraction done: ${metrics.processedEmails} extracted, ${metrics.excludedEmails} excluded, ${metrics.failedEmails} failed. Starting clustering...`,
           },
         });
 
-        // Update tag frequencies
-        const schema = await prisma.caseSchema.findUniqueOrThrow({
-          where: { id: schemaId },
-          select: { emailCount: true },
-        });
+        // Update tag frequencies — schema email count is now computed on demand.
+        const schemaMetrics = await computeSchemaMetrics(schemaId);
 
-        if (schema.emailCount > 0) {
+        if (schemaMetrics.emailCount > 0) {
           const tags = await prisma.schemaTag.findMany({
             where: { schemaId, isActive: true },
             select: { id: true, emailCount: true },
           });
 
           for (const tag of tags) {
-            const frequency = tag.emailCount / schema.emailCount;
+            const frequency = tag.emailCount / schemaMetrics.emailCount;
             await prisma.schemaTag.update({
               where: { id: tag.id },
               data: {
@@ -319,10 +337,10 @@ export const checkExtractionComplete = inngest.createFunction(
           service: "inngest",
           operation: "extractionComplete",
           schemaId,
-          totalEmails: scanJob.totalEmails,
-          processed: scanJob.processedEmails,
-          excluded: scanJob.excludedEmails,
-          failed: scanJob.failedEmails,
+          totalEmails: metrics.totalEmails,
+          processed: metrics.processedEmails,
+          excluded: metrics.excludedEmails,
+          failed: metrics.failedEmails,
         });
       }
     });
@@ -362,14 +380,12 @@ export const runCoarseClustering = inngest.createFunction(
       return await coarseCluster(schemaId, scanJobId);
     });
 
-    // 3. Update scan job counts
+    // 3. Update scan job status message only — clustersCreated / casesCreated
+    //    / casesMerged counters are now computed on demand from Case rows.
     await step.run("update-counts", async () => {
       await prisma.scanJob.update({
         where: { id: scanJobId },
         data: {
-          clustersCreated: result.clustersCreated,
-          casesCreated: result.casesCreated,
-          casesMerged: result.casesMerged,
           statusMessage: `Coarse clustering done: ${result.casesCreated} clusters created, ${result.casesMerged} merged. Starting case splitting...`,
         },
       });
@@ -432,12 +448,11 @@ export const runCaseSplitting = inngest.createFunction(
     // 3. Combine cluster IDs from both passes
     const allClusterIds = [...coarseClusterIds, ...splitResult.clusterIds];
 
-    // 4. Update counts
+    // 4. Update status message only — casesCreated is computed on demand.
     await step.run("update-counts", async () => {
       await prisma.scanJob.update({
         where: { id: scanJobId },
         data: {
-          casesCreated: { increment: splitResult.casesCreated },
           statusMessage: `Case splitting done: ${splitResult.casesCreated} cases split`,
         },
       });
@@ -673,29 +688,24 @@ export const runSynthesis = inngest.createFunction(
         // excluded, or failed. If the sum doesn't match `totalEmails`, a
         // pipeline stage silently dropped emails — log it so the next eval
         // can pinpoint the dropoff stage.
-        const finalJob = await prisma.scanJob.findUniqueOrThrow({
-          where: { id: scanJobId },
-          select: {
-            totalEmails: true,
-            processedEmails: true,
-            excludedEmails: true,
-            failedEmails: true,
-          },
-        });
+        //
+        // NOTE: until Phase 5 adds ScanFailure writes, failedEmails will
+        // read 0 and this invariant may report gaps during Phase 1.
+        const finalMetrics = await computeScanMetrics(scanJobId);
         const accounted =
-          finalJob.processedEmails + finalJob.excludedEmails + finalJob.failedEmails;
-        if (accounted !== finalJob.totalEmails) {
+          finalMetrics.processedEmails + finalMetrics.excludedEmails + finalMetrics.failedEmails;
+        if (accounted !== finalMetrics.totalEmails) {
           logger.error({
             service: "inngest",
             operation: "runSynthesis.accountingMismatch",
             schemaId,
             scanJobId,
-            totalEmails: finalJob.totalEmails,
-            processed: finalJob.processedEmails,
-            excluded: finalJob.excludedEmails,
-            failed: finalJob.failedEmails,
+            totalEmails: finalMetrics.totalEmails,
+            processed: finalMetrics.processedEmails,
+            excluded: finalMetrics.excludedEmails,
+            failed: finalMetrics.failedEmails,
             accounted,
-            gap: finalJob.totalEmails - accounted,
+            gap: finalMetrics.totalEmails - accounted,
           });
         }
 
@@ -741,4 +751,15 @@ export const runSynthesis = inngest.createFunction(
   },
 );
 
-export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration, resynthesizeOnFeedback, dailyQualitySnapshot, dailyStatusDecay];
+export const functions = [
+  fanOutExtraction,
+  extractBatch,
+  checkExtractionComplete,
+  runCoarseClustering,
+  runCaseSplitting,
+  runSynthesis,
+  runClusteringCalibration,
+  resynthesizeOnFeedback,
+  dailyQualitySnapshot,
+  dailyStatusDecay,
+];

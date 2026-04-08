@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { GmailClient } from "@/lib/gmail/client";
 import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
@@ -8,7 +9,6 @@ import { runSmartDiscovery } from "@/lib/services/discovery";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { finalizeSchema } from "@/lib/services/interview";
 import { FinalizeConfirmationsSchema } from "@/lib/validation/interview";
-import { NextResponse } from "next/server";
 
 export const POST = withAuth(async ({ userId, request }) => {
   try {
@@ -28,7 +28,9 @@ export const POST = withAuth(async ({ userId, request }) => {
     const parseResult = FinalizeConfirmationsSchema.safeParse(rawConfirmations);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: `Invalid confirmations: ${parseResult.error.issues.map((i) => i.message).join("; ")}` },
+        {
+          error: `Invalid confirmations: ${parseResult.error.issues.map((i) => i.message).join("; ")}`,
+        },
         { status: 400 },
       );
     }
@@ -86,7 +88,7 @@ export const POST = withAuth(async ({ userId, request }) => {
             status: "PENDING",
             phase: "DISCOVERING",
             totalEmails: emailIds.length,
-            triggeredBy: "onboarding",
+            triggeredBy: "ONBOARDING",
             statusMessage: `Found ${emailIds.length} emails`,
           },
         });

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/middleware/auth";
 import { prisma } from "@/lib/prisma";
+import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-metrics";
 
 /**
  * GET /api/schemas/:schemaId/status
@@ -22,8 +23,6 @@ export const GET = withAuth(async ({ userId, request }) => {
     where: { id: schemaId },
     select: {
       userId: true,
-      emailCount: true,
-      caseCount: true,
       status: true,
     },
   });
@@ -39,7 +38,10 @@ export const GET = withAuth(async ({ userId, request }) => {
     return NextResponse.json({ error: "Forbidden", code: 403, type: "FORBIDDEN" }, { status: 403 });
   }
 
-  // Get the latest scan job
+  // Schema-level counters are computed on demand from Email / Case / CaseAction rows.
+  const schemaMetrics = await computeSchemaMetrics(schemaId);
+
+  // Get the latest scan job (durable fields only — counters come from computeScanMetrics)
   const latestJob = await prisma.scanJob.findFirst({
     where: { schemaId },
     orderBy: { createdAt: "desc" },
@@ -49,22 +51,14 @@ export const GET = withAuth(async ({ userId, request }) => {
       phase: true,
       statusMessage: true,
       totalEmails: true,
-      processedEmails: true,
-      excludedEmails: true,
-      failedEmails: true,
-      casesCreated: true,
-      casesMerged: true,
-      clustersCreated: true,
       completedAt: true,
       startedAt: true,
       createdAt: true,
     },
   });
 
-  // Count actual CaseAction rows for this schema
-  const actionCount = await prisma.caseAction.count({
-    where: { schemaId },
-  });
+  // Derive the scan-level counters the status panel used to read off the row.
+  const scanMetrics = latestJob ? await computeScanMetrics(latestJob.id) : null;
 
   // Fetch recently discovered entities during the current scan
   const recentDiscoveries = latestJob
@@ -85,10 +79,23 @@ export const GET = withAuth(async ({ userId, request }) => {
 
   return NextResponse.json({
     schemaStatus: schema.status,
-    emailCount: schema.emailCount,
-    caseCount: schema.caseCount,
-    actionCount,
-    scanJob: latestJob,
+    emailCount: schemaMetrics.emailCount,
+    caseCount: schemaMetrics.caseCount,
+    actionCount: schemaMetrics.actionCount,
+    scanJob:
+      latestJob && scanMetrics
+        ? {
+            ...latestJob,
+            processedEmails: scanMetrics.processedEmails,
+            excludedEmails: scanMetrics.excludedEmails,
+            failedEmails: scanMetrics.failedEmails,
+            casesCreated: scanMetrics.casesCreated,
+            // casesMerged / clustersCreated are no longer tracked — the merge
+            // and cluster-count numbers are only log-line statusMessages now.
+            casesMerged: 0,
+            clustersCreated: 0,
+          }
+        : latestJob,
     recentDiscoveries,
   });
 });

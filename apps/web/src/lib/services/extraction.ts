@@ -3,21 +3,18 @@
  * to produce rich metadata records stored in the Email table.
  *
  * Write owner for: Email, EmailAttachment
- * Also increments: SchemaTag.emailCount, CaseSchema.emailCount, Entity.emailCount
+ * Also increments: SchemaTag.emailCount, Entity.emailCount
+ * (CaseSchema email/case counts are now compute-on-demand via scan-metrics.)
  */
 
+import { buildExtractionPrompt, parseExtractionResponse } from "@denim/ai";
+import { resolveEntity } from "@denim/engine";
+import type { ExtractionInput, ExtractionResult, ExtractionSchemaContext } from "@denim/types";
 import { callGemini } from "@/lib/ai/client";
 import { GmailClient } from "@/lib/gmail/client";
 import type { GmailMessageFull } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import type {
-  ExtractionInput,
-  ExtractionResult,
-  ExtractionSchemaContext,
-} from "@denim/types";
-import { buildExtractionPrompt, parseExtractionResponse } from "@denim/ai";
-import { resolveEntity } from "@denim/engine";
 import { matchesExclusionRule } from "./exclusion";
 
 const GEMINI_MODEL = "gemini-2.5-flash";
@@ -50,7 +47,13 @@ interface ProcessBatchResult {
 function buildSchemaContext(schema: {
   domain: string | null;
   tags: { name: string; description: string | null; isActive: boolean }[];
-  entities: { name: string; type: string; aliases: unknown; isActive: boolean; autoDetected: boolean }[];
+  entities: {
+    name: string;
+    type: string;
+    aliases: unknown;
+    isActive: boolean;
+    autoDetected: boolean;
+  }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[];
   entityGroups?: { index: number; entities: { name: string; type: string; isActive: boolean }[] }[];
@@ -82,9 +85,7 @@ function buildSchemaContext(schema: {
       description: f.description,
       source: f.source,
     })),
-    exclusionPatterns: schema.exclusionRules
-      .filter((r) => r.isActive)
-      .map((r) => r.pattern),
+    exclusionPatterns: schema.exclusionRules.filter((r) => r.isActive).map((r) => r.pattern),
     entityGroups,
   };
 }
@@ -221,8 +222,7 @@ export async function extractEmail(
 
     // Still log the extraction cost
     const estimatedCost =
-      aiResult.inputTokens * GEMINI_INPUT_COST +
-      aiResult.outputTokens * GEMINI_OUTPUT_COST;
+      aiResult.inputTokens * GEMINI_INPUT_COST + aiResult.outputTokens * GEMINI_OUTPUT_COST;
     await prisma.extractionCost.create({
       data: {
         emailId: email.id,
@@ -258,7 +258,12 @@ export async function extractEmail(
   );
   if (entityMatch) {
     const senderEntity = await prisma.entity.findFirst({
-      where: { schemaId, name: entityMatch.entityName, type: entityMatch.entityType, isActive: true },
+      where: {
+        schemaId,
+        name: entityMatch.entityName,
+        type: entityMatch.entityType,
+        isActive: true,
+      },
       select: { id: true },
     });
     senderEntityId = senderEntity?.id ?? null;
@@ -266,7 +271,7 @@ export async function extractEmail(
 
   // Stage 1: Gemini's relevanceEntity — AI reads the email and names the WHAT
   if (parsed.relevanceEntity) {
-    const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.80);
+    const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.8);
     if (relevanceMatch) {
       const matchedEntity = await prisma.entity.findFirst({
         where: { schemaId, name: relevanceMatch.entityName, isActive: true },
@@ -330,11 +335,16 @@ export async function extractEmail(
   // Stage 3: Gemini's detectedEntities — fallback to detected entity list
   if (!entityId && parsed.detectedEntities.length > 0) {
     for (const detected of parsed.detectedEntities) {
-      const detectedMatch = resolveEntity(detected.name, "", entities, 0.80);
+      const detectedMatch = resolveEntity(detected.name, "", entities, 0.8);
       if (!detectedMatch) continue;
 
       const matchedEntity = await prisma.entity.findFirst({
-        where: { schemaId, name: detectedMatch.entityName, type: detectedMatch.entityType, isActive: true },
+        where: {
+          schemaId,
+          name: detectedMatch.entityName,
+          type: detectedMatch.entityType,
+          isActive: true,
+        },
         select: { id: true, type: true, associatedPrimaryIds: true },
       });
       if (!matchedEntity) continue;
@@ -361,7 +371,12 @@ export async function extractEmail(
   // Stage 4: Sender match (last resort) — only when no WHAT found in content
   if (!entityId && entityMatch) {
     const senderEntity = await prisma.entity.findFirst({
-      where: { schemaId, name: entityMatch.entityName, type: entityMatch.entityType, isActive: true },
+      where: {
+        schemaId,
+        name: entityMatch.entityName,
+        type: entityMatch.entityType,
+        isActive: true,
+      },
       select: { id: true, type: true, associatedPrimaryIds: true },
     });
 
@@ -468,11 +483,8 @@ export async function extractEmail(
         });
       }
 
-      // Increment CaseSchema.emailCount
-      await tx.caseSchema.update({
-        where: { id: schemaId },
-        data: { emailCount: { increment: 1 } },
-      });
+      // CaseSchema.emailCount is computed on demand by computeSchemaMetrics
+      // (no denormalized counter to increment).
 
       // Increment Entity.emailCount for sender entity
       if (senderEntityId) {
@@ -496,8 +508,7 @@ export async function extractEmail(
 
   // 7. Write ExtractionCost row (outside transaction — non-critical)
   const estimatedCost =
-    aiResult.inputTokens * GEMINI_INPUT_COST +
-    aiResult.outputTokens * GEMINI_OUTPUT_COST;
+    aiResult.inputTokens * GEMINI_INPUT_COST + aiResult.outputTokens * GEMINI_OUTPUT_COST;
 
   await prisma.extractionCost.create({
     data: {

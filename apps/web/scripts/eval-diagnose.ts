@@ -33,6 +33,69 @@ function hhmmss(d: Date): string {
   return d.toISOString().slice(11, 19);
 }
 
+/**
+ * Inlined equivalents of computeScanMetrics / computeSchemaMetrics from
+ * `@/lib/services/scan-metrics` — duplicated here because this script uses
+ * its own Prisma client instance and we don't want to spin up a second one.
+ */
+interface InlineScanMetrics {
+  totalEmails: number;
+  processedEmails: number;
+  excludedEmails: number;
+  failedEmails: number;
+  estimatedCostUsd: number;
+  casesCreated: number;
+}
+async function computeScanMetrics(scanJobId: string): Promise<InlineScanMetrics> {
+  const scan = await prisma.scanJob.findUnique({
+    where: { id: scanJobId },
+    select: { totalEmails: true, schemaId: true },
+  });
+  if (!scan) {
+    return {
+      totalEmails: 0,
+      processedEmails: 0,
+      excludedEmails: 0,
+      failedEmails: 0,
+      estimatedCostUsd: 0,
+      casesCreated: 0,
+    };
+  }
+  const [processed, excluded, failed, costSum, casesCreated] = await Promise.all([
+    prisma.email.count({ where: { firstScanJobId: scanJobId, isExcluded: false } }),
+    prisma.email.count({ where: { firstScanJobId: scanJobId, isExcluded: true } }),
+    prisma.scanFailure.count({ where: { scanJobId } }),
+    prisma.extractionCost.aggregate({ where: { scanJobId }, _sum: { estimatedCostUsd: true } }),
+    prisma.case.count({
+      where: {
+        schemaId: scan.schemaId,
+        caseEmails: { some: { email: { firstScanJobId: scanJobId } } },
+      },
+    }),
+  ]);
+  return {
+    totalEmails: scan.totalEmails,
+    processedEmails: processed,
+    excludedEmails: excluded,
+    failedEmails: failed,
+    estimatedCostUsd: Number(costSum._sum.estimatedCostUsd ?? 0),
+    casesCreated,
+  };
+}
+interface InlineSchemaMetrics {
+  emailCount: number;
+  caseCount: number;
+  actionCount: number;
+}
+async function computeSchemaMetrics(schemaId: string): Promise<InlineSchemaMetrics> {
+  const [emailCount, caseCount, actionCount] = await Promise.all([
+    prisma.email.count({ where: { schemaId, isExcluded: false } }),
+    prisma.case.count({ where: { schemaId } }),
+    prisma.caseAction.count({ where: { schemaId } }),
+  ]);
+  return { emailCount, caseCount, actionCount };
+}
+
 async function main() {
   // === SCHEMAS ===
   const schemas = await prisma.caseSchema.findMany({
@@ -40,9 +103,13 @@ async function main() {
   });
   console.log("=== SCHEMAS ===");
   console.log(`Total: ${schemas.length}\n`);
+  // computeSchemaMetrics per schema — counters are compute-on-demand now.
+  const schemaMetricsById = new Map<string, Awaited<ReturnType<typeof computeSchemaMetrics>>>();
   for (const s of schemas) {
+    const m = await computeSchemaMetrics(s.id);
+    schemaMetricsById.set(s.id, m);
     console.log(
-      `  ${short(s.id)} | ${pad(s.name ?? "(unnamed)", 30)} | ${pad(s.domain ?? "(none)", 14)} | ${pad(s.status, 11)} | emails=${s.emailCount} cases=${s.caseCount} | ${hhmmss(s.createdAt)}`,
+      `  ${short(s.id)} | ${pad(s.name ?? "(unnamed)", 30)} | ${pad(s.domain ?? "(none)", 14)} | ${pad(s.status, 11)} | emails=${m.emailCount} cases=${m.caseCount} | ${hhmmss(s.createdAt)}`,
     );
   }
 
@@ -50,16 +117,19 @@ async function main() {
   const jobs = await prisma.scanJob.findMany({ orderBy: { createdAt: "asc" } });
   console.log(`\n=== SCAN JOBS ===`);
   console.log(`Total: ${jobs.length}\n`);
+  // computeScanMetrics per job — counters and cost come from derived rows now.
+  const scanMetricsById = new Map<string, Awaited<ReturnType<typeof computeScanMetrics>>>();
   let totalCost = 0;
   for (const j of jobs) {
+    const m = await computeScanMetrics(j.id);
+    scanMetricsById.set(j.id, m);
     const durMs = j.completedAt
       ? j.completedAt.getTime() - (j.startedAt?.getTime() ?? j.createdAt.getTime())
       : null;
     const dur = durMs ? `${Math.round(durMs / 1000)}s` : "running";
-    const cost = Number(j.estimatedCostUsd ?? 0);
-    totalCost += cost;
+    totalCost += m.estimatedCostUsd;
     console.log(
-      `  ${short(j.schemaId)} | ${pad(j.status, 10)} | ${pad(j.phase ?? "-", 14)} | ${j.processedEmails}/${j.totalEmails} proc, ${j.failedEmails} failed | cases=${j.casesCreated} clusters=${j.clustersCreated} | $${cost.toFixed(3)} | ${dur} | ${hhmmss(j.createdAt)}`,
+      `  ${short(j.schemaId)} | ${pad(j.status, 10)} | ${pad(j.phase ?? "-", 14)} | ${m.processedEmails}/${m.totalEmails} proc, ${m.failedEmails} failed | cases=${m.casesCreated} | $${m.estimatedCostUsd.toFixed(3)} | ${dur} | ${hhmmss(j.createdAt)}`,
     );
   }
   console.log(`\nTotal scan job cost: $${totalCost.toFixed(3)}`);
@@ -149,8 +219,9 @@ async function main() {
     if (list.length > 1) {
       console.log(`  DUPLICATE domain "${domain}" has ${list.length} schemas:`);
       for (const s of list) {
+        const m = schemaMetricsById.get(s.id);
         console.log(
-          `    ${short(s.id)} "${s.name ?? "unnamed"}" status=${s.status} emails=${s.emailCount} cases=${s.caseCount} created=${hhmmss(s.createdAt)}`,
+          `    ${short(s.id)} "${s.name ?? "unnamed"}" status=${s.status} emails=${m?.emailCount ?? 0} cases=${m?.caseCount ?? 0} created=${hhmmss(s.createdAt)}`,
         );
       }
     }
@@ -163,8 +234,9 @@ async function main() {
     if (jobsForSchema.length > 1) {
       console.log(`  schema ${short(s.id)} has ${jobsForSchema.length} scan jobs:`);
       for (const j of jobsForSchema) {
+        const m = scanMetricsById.get(j.id);
         console.log(
-          `    ${j.status} ${j.phase ?? "-"} processed=${j.processedEmails}/${j.totalEmails} ${hhmmss(j.createdAt)}`,
+          `    ${j.status} ${j.phase ?? "-"} processed=${m?.processedEmails ?? 0}/${m?.totalEmails ?? j.totalEmails} ${hhmmss(j.createdAt)}`,
         );
       }
     }

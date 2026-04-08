@@ -1,3 +1,4 @@
+import type { HypothesisValidation } from "@denim/types";
 import { NextResponse } from "next/server";
 import { GmailClient } from "@/lib/gmail/client";
 import { inngest } from "@/lib/inngest/client";
@@ -8,7 +9,6 @@ import { prisma } from "@/lib/prisma";
 import { runSmartDiscovery } from "@/lib/services/discovery";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { finalizeSchema, generateHypothesis } from "@/lib/services/interview";
-import type { HypothesisValidation } from "@denim/types";
 
 /**
  * POST /api/interview/hypothesis
@@ -132,7 +132,7 @@ export const POST = withAuth(async ({ userId, request }) => {
             status: "PENDING",
             phase: "DISCOVERING",
             totalEmails: emailIds.length,
-            triggeredBy: "onboarding",
+            triggeredBy: "ONBOARDING",
             statusMessage: `Found ${emailIds.length} emails`,
           },
         });
