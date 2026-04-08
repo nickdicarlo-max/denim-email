@@ -131,15 +131,25 @@ model CaseSchema {
 
   // --- SCAN CONFIG ---
   defaultScanDepthDays  Int  @default(90)  // How far back to scan on initial setup
-  lastFullScanAt        DateTime?          // When the full scan last ran
+  lastFullScanAt        DateTime?          // When the full scan last completed
+  lastScannedAt         DateTime?          // Cron watermark — last time ANY scan (cron/manual) ran
   scanFrequency         String @default("daily")  // "manual" | "daily" | "hourly"
 
   // --- CO-PILOT CONFIG (Phase 2) ---
   copilotConfig     Json?              // { enabled, startedAt, expiresAt, adjustmentsApplied }
 
-  // Counts (denormalized for performance)
-  emailCount        Int      @default(0)
-  caseCount         Int      @default(0)
+  // --- ONBOARDING WORKFLOW STATE MACHINE ---
+  // Null after AWAITING_REVIEW is confirmed and the schema goes live.
+  phase           SchemaPhase?
+  phaseError      String?
+  phaseErrorAt    DateTime?
+  phaseUpdatedAt  DateTime?
+
+  // Raw onboarding inputs + intermediate hypothesis (only meaningful during onboarding).
+  // Note: distinct from interviewResponses/rawHypothesis above — those are kept for
+  // debugging/analytics; these are the workflow handles read by the state machine.
+  inputs          Json?
+  hypothesis      Json?
 
   // Relationships
   tags              SchemaTag[]
@@ -152,6 +162,7 @@ model CaseSchema {
   feedbackEvents    FeedbackEvent[]
   qualitySnapshots  QualitySnapshot[]
   scanJobs          ScanJob[]
+  scanFailures      ScanFailure[]
   exclusionRules    ExclusionRule[]
   pipelineIntelligence PipelineIntelligence[]
 
@@ -373,6 +384,12 @@ model Email {
   // Sender entity (secondary entity match)
   senderEntityId  String?
   senderEntity    Entity? @relation("SenderEntity", fields: [senderEntityId], references: [id], onDelete: SetNull)
+
+  // --- SCAN PROVENANCE ---
+  // The scan that first ingested this email; the most recent scan that touched it.
+  // computeScanMetrics queries firstScanJobId to attribute counters.
+  firstScanJobId  String?
+  lastScanJobId   String?
 
   // --- GMAIL REFERENCE (for re-fetching) ---
   gmailMessageId  String                // Gmail unique ID
@@ -936,35 +953,29 @@ model ScanJob {
 
   // Job status
   status        JobStatus    @default(PENDING)
-  phase         ScanPhase    @default(IDLE)
-  
-  // Progress tracking
+  phase         ScanPhase    @default(PENDING)
+
+  // Progress tracking — durable, set once at discovery
   totalEmails       Int  @default(0)    // Total emails found in Gmail search
-  processedEmails   Int  @default(0)    // Emails processed so far
   newEmails         Int  @default(0)    // Emails not previously seen
-  excludedEmails    Int  @default(0)    // Emails skipped by exclusion rules
-  failedEmails      Int  @default(0)    // Emails that failed processing
-  
-  // Synthesis progress
-  clustersCreated   Int  @default(0)
-  casesMerged       Int  @default(0)
-  casesCreated      Int  @default(0)
+  // All other counters (processed/excluded/failed/cases*/cost/tokens) are computed
+  // on demand by computeScanMetrics — never stored.
 
-  // Cost tracking
-  totalInputTokens  Int  @default(0)
-  totalOutputTokens Int  @default(0)
-  estimatedCostUsd  Float @default(0)
+  // Discovery output: the Gmail message IDs this scan intends to process
+  discoveredEmailIds Json?
 
-  // Trigger
-  triggeredBy       String @default("manual")  // "manual" | "scheduled" | "onboarding"
-  
+  // Trigger source — drives concurrency, retry, and routing decisions in runScan
+  triggeredBy       ScanTrigger  @default(ONBOARDING)
+
   // Status message (for UI display)
   statusMessage     String?
-  
+
   // Error info
+  errorPhase        ScanPhase?
   errorMessage      String?  @db.Text
-  
+
   pipelineIntelligence PipelineIntelligence[]
+  failures             ScanFailure[]
 
   startedAt         DateTime?
   completedAt       DateTime?
@@ -984,13 +995,58 @@ enum JobStatus {
 }
 
 enum ScanPhase {
-  IDLE
+  PENDING             // Scan created, not yet picked up by runScan
+  IDLE                // Legacy initial state — kept for backward compat
   DISCOVERING         // Finding emails via Gmail search
   EXTRACTING          // Processing emails through AI pipeline
   CLUSTERING          // Running gravity model
   SYNTHESIZING        // AI generating case titles/summaries
   COMPLETED
   FAILED
+}
+
+// Onboarding workflow state machine — owned by CaseSchema.phase.
+// PENDING is the initial state when an interview is started; the schema clears
+// phase to NULL once AWAITING_REVIEW is confirmed and the schema goes live.
+enum SchemaPhase {
+  PENDING
+  GENERATING_HYPOTHESIS
+  FINALIZING_SCHEMA
+  PROCESSING_SCAN
+  AWAITING_REVIEW
+  COMPLETED
+  NO_EMAILS_FOUND
+  FAILED
+}
+
+// What kicked off a ScanJob — drives concurrency keys and retry policy in runScan.
+enum ScanTrigger {
+  ONBOARDING
+  CRON_DAILY
+  CRON_HOURLY
+  MANUAL
+  FEEDBACK
+}
+
+// Per-email failures recorded during a ScanJob. Replaces the failedEmails counter
+// and gives us a per-message audit trail for debugging and resume decisions.
+model ScanFailure {
+  id              String    @id @default(cuid())
+  scanJobId       String
+  schemaId        String
+  gmailMessageId  String
+  phase           ScanPhase
+  errorMessage    String
+  errorStack      String?
+  attemptCount    Int       @default(1)
+  createdAt       DateTime  @default(now())
+
+  scanJob         ScanJob    @relation(fields: [scanJobId], references: [id], onDelete: Cascade)
+  schema          CaseSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+
+  @@unique([scanJobId, gmailMessageId])
+  @@index([schemaId, createdAt])
+  @@map("scan_failures")
 }
 
 
