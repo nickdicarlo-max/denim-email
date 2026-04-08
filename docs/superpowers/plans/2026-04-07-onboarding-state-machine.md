@@ -34,13 +34,17 @@ Branch: `feature/ux-overhaul`
 | 2 | 4. `advanceSchemaPhase` / `advanceScanPhase` CAS helpers | ✅ done | `a51cbd1` | 18 integration tests. `advanceScanPhase` uses `scan.phase` (read value) in the `where` clause so legacy IDLE rows satisfy a `from: PENDING` request — slight divergence from plan's example. |
 | 3 | 5. `derivePollingResponse` merge function | ✅ done | `daaf034` | 20 integration tests (not mocked — `CaseSchema` has too many required fields to hand-mock). Added `phase === COMPLETED` branch the plan missed. ACTIVE status takes precedence over stale FAILED phase. |
 | 4 | 6. Extract `persistSchemaRelations` from `finalizeSchema` | ✅ done | `529262d` | Split into `createSchemaStub` (stub row with placeholder JSON configs, phase=PENDING) + `persistSchemaRelations` (updates row + creates relations in one tx) + delegating `finalizeSchema` wrapper. **Behavior change:** stub create and relation writes are now in separate transactions — a failure in persistSchemaRelations leaves an orphan DRAFT/PENDING stub. Intentional (state machine can recover). Entity-groups direct-service tests 13/13 still pass. |
-| 5 | 7. Add CAS to extractBatch / clustering / synthesis | ⏳ next | | |
-| 5+ | 8–18 | ⏳ pending | | |
+| 5 | 7. Add CAS to extractBatch / clustering / synthesis + ScanFailure writes + firstScanJobId | ✅ done | `5f6a4a0` | Every pipeline phase write now goes through `advanceScanPhase`. ScanFailure rows written per-email in `processEmailBatch` catch (upsert on unique index) and per-batch in `extractBatch.onFailure` (createMany + skipDuplicates). Email create paths carry `firstScanJobId`/`lastScanJobId`; update paths leave `firstScanJobId` alone. `ExtractEmailResult`/`ProcessBatchResult` drop `failed` field. `runSynthesis` emits `scan.completed` for Task 9; TRANSITIONAL direct `status=ONBOARDING→ACTIVE` flip kept until the orchestrator lands. |
+| 6 | 8. runScan orchestrator | ⏳ next | | |
+| 7+ | 9–18 | ⏳ pending | | |
 
 **Known deferred debt** (intentionally left for later phases):
-- **ScanFailure row writes** — Phase 1 Task 3 deleted the `failedEmails` increment side effects. Nothing currently writes `ScanFailure` rows, so `computeScanMetrics.failedEmails` will read as 0 until **Phase 5 / Task 7** wires the per-email failure writes into the extraction pipeline. Accounting-invariant logs in `inngest/functions.ts` (`checkExtractionComplete`, `runSynthesis` complete-job step) will temporarily report gaps equal to `totalEmails` — comments flag this inline.
-- **`casesMerged` / `clustersCreated`** — these are permanently gone from the DB. `api/schemas/[schemaId]/status/route.ts` fabricates them as `0` for client compatibility; a future cleanup pass can remove them from the client response entirely.
+- **`casesMerged` / `clustersCreated`** — permanently gone from the DB. `api/schemas/[schemaId]/status/route.ts` fabricates them as `0` for client compatibility; a future cleanup pass can remove them from the client response entirely.
+- **TRANSITIONAL schema status flip** — `runSynthesis` still does a direct `status=ONBOARDING → ACTIVE` update as a dual-write alongside emitting `scan.completed`. Task 9 (`runOnboarding` orchestrator) will take ownership of `CaseSchema.phase` via the event and this block should be removed. Comment in `inngest/functions.ts` flags the location.
 - **Stale `SchemaTag.frequency` comment** — `schema.prisma` line 211 still references `schema.emailCount` (removed in Phase 0). Cosmetic, not a bug.
+
+**Resolved debt** (tracked for history):
+- ~~ScanFailure row writes deferred to Phase 5~~ — **resolved in Task 7 (`5f6a4a0`)**. Per-email failures write `ScanFailure` rows via upsert in `processEmailBatch`; whole-batch failures write via `createMany` in `extractBatch.onFailure`. The accounting-invariant logs in `checkExtractionComplete` / `runSynthesis` should now show `gap=0` in the happy path.
 
 **Verified green after each commit:** `pnpm typecheck` + per-task integration test + `pnpm -r --filter '!web' test` (126 package unit tests).
 
