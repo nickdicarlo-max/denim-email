@@ -1092,6 +1092,21 @@ Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-
 ### Assessment
 **The core stack is good enough for real user testing.** The remaining clustering gaps are the kind that can only be discovered and fixed with real user feedback — which is exactly what the calibration loop is designed for. Spending more time tuning the gravity model in isolation has diminishing returns (proven by the clustering intelligence experiment). The next quality signal needs to come from users correcting cases.
 
+## In Progress: Onboarding State Machine Refactor (2026-04-07 → ongoing)
+
+Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a durable, resumable, observable server-side state machine. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase for every transition, all counters computed on demand, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups.
+
+**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, Phases 0–3 are complete:
+
+- Phase 0 — Schema migration, `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, dropped counters
+- Phase 1 — `computeScanMetrics` / `computeSchemaMetrics` helpers, replaced every denormalized-counter read
+- Phase 2 — `advanceSchemaPhase` / `advanceScanPhase` CAS helpers with idempotent skip, CAS-loss detection, and `markSchemaFailed` / `markScanFailed` terminal writers
+- Phase 3 — `derivePollingResponse` merges the two state machines into the client polling shape
+
+**Canonical progress doc + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, test counts, and a status table for all 18 tasks — I update it after each task lands. The big known deferred item is that `ScanFailure` row writes are intentionally pushed to Phase 5, so `failedEmails` temporarily reads as 0 (inline comments flag every affected log site).
+
+**Next:** Phase 4 / Task 6 — extract `persistSchemaRelations` from `finalizeSchema`.
+
 ## What's Next (2026-04-07)
 
 ### Immediate: Merge UX Overhaul to Main
