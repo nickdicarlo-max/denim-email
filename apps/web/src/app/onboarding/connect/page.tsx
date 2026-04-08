@@ -2,19 +2,23 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ulid } from "ulid";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import { Button } from "@/components/ui/button";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import { createBrowserClient } from "@/lib/supabase/client";
 
-type Status = "idle" | "connecting" | "connected" | "generating" | "slow" | "error";
+type Status = "idle" | "connecting" | "connected" | "starting" | "slow" | "error";
 
-// Hypothesis call usually completes in ~30s (Claude ~28s + finalize/discovery).
-// At 90s we surface a "taking longer than usual" recovery state instead of
-// leaving the user staring at an indefinite spinner (#15). Server-side
-// idempotency (#14) makes the manual retry safe — it resolves to the same
-// schemaId if the original POST already created one.
-const HYPOTHESIS_TIMEOUT_MS = 90 * 1000;
+// `POST /api/onboarding/start` returns in <1s (it only creates a stub row
+// and fires an Inngest event). The 90s safety net is kept purely for the
+// recovery UI — if the request is still outstanding at 90s, something is
+// genuinely wrong (network, 5xx loop, etc.) and we want to surface a
+// "taking longer than usual" state rather than leave the user staring.
+// Server-side idempotency on the client-supplied ULID (Task 10) makes the
+// manual retry safe — it resolves to the same schemaId if the original
+// POST already created one.
+const START_TIMEOUT_MS = 90 * 1000;
 
 export default function ConnectPage() {
   const router = useRouter();
@@ -37,12 +41,14 @@ export default function ConnectPage() {
     }
 
     // Resume-in-place: if a schemaId already exists in sessionStorage, the
-    // hypothesis call has already happened (or is happening). Skip the POST
-    // and jump straight to the scanning page so a refresh during the loading
-    // state cannot create a duplicate schema (#14).
+    // start call has already happened (or is happening). Skip the POST and
+    // jump straight to the observer page so a refresh during the loading
+    // state cannot create a duplicate schema (#14). The observer page polls
+    // `GET /api/onboarding/:schemaId` which works for any phase including
+    // PENDING.
     const existingSchemaId = onboardingStorage.getSchemaId();
     if (existingSchemaId) {
-      router.replace("/onboarding/scanning");
+      router.replace(`/onboarding/${existingSchemaId}`);
       return;
     }
 
@@ -54,11 +60,19 @@ export default function ConnectPage() {
     });
   }, [router]);
 
-  // When connected, auto-trigger hypothesis generation.
+  // When connected, auto-trigger the onboarding start call.
   // We do NOT abort the fetch on unmount/cleanup because React Strict Mode
   // double-invokes effects in dev, which would cancel the in-flight request
-  // before the second run sees the ref guard. The hypothesisCalledRef ensures
+  // before the second run sees the ref guard. The startCalledRef ensures
   // we only ever fire one request per page lifetime.
+  //
+  // Task 14 change: replaced the old `/api/interview/hypothesis` call with
+  // `POST /api/onboarding/start` (Task 10). The client now generates a
+  // stable ULID up front, persists it to sessionStorage before the POST so
+  // a mid-flight refresh resumes against the same id, and sends the raw
+  // InterviewInput as the request body. The whole hypothesis + finalize +
+  // scan pipeline runs server-side via runOnboarding; the client just
+  // routes to `/onboarding/:schemaId` and polls.
   useEffect(() => {
     if (status !== "connected") return;
     if (hypothesisCalledRef.current) return;
@@ -68,14 +82,18 @@ export default function ConnectPage() {
     const names = onboardingStorage.getNames();
     if (!category || !names) return;
 
-    setStatus("generating");
+    setStatus("starting");
 
-    // Surface a "taking longer than usual" state if the call hasn't returned
-    // by HYPOTHESIS_TIMEOUT_MS. We don't abort the fetch — the server may
-    // still be writing the schema, and idempotency (#14) makes a retry safe.
+    // Generate (or reuse) a stable ULID. Persisting it before the POST
+    // means a mid-flight refresh hits the "resume-in-place" branch above
+    // and navigates straight to the observer page — the server's
+    // idempotency guard on the same id makes the second POST a no-op.
+    const schemaId = onboardingStorage.getSchemaId() ?? ulid();
+    onboardingStorage.setSchemaId(schemaId);
+
     slowTimerRef.current = setTimeout(() => {
-      setStatus((prev) => (prev === "generating" ? "slow" : prev));
-    }, HYPOTHESIS_TIMEOUT_MS);
+      setStatus((prev) => (prev === "starting" ? "slow" : prev));
+    }, START_TIMEOUT_MS);
 
     const clearSlowTimer = () => {
       if (slowTimerRef.current) {
@@ -90,41 +108,38 @@ export default function ConnectPage() {
       .then(({ data: { session } }) => {
         if (!session) throw new Error("No session found");
 
-        return fetch("/api/interview/hypothesis", {
+        return fetch("/api/onboarding/start", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({
-            role: category.role,
-            domain: category.domain,
-            whats: names.whats,
-            whos: names.whos,
-            groups: [],
-            goals: [],
-            ...(category.customDescription
-              ? { customDescription: category.customDescription }
-              : {}),
+            schemaId,
+            inputs: {
+              role: category.role,
+              domain: category.domain,
+              whats: names.whats,
+              whos: names.whos,
+              groups: [],
+              goals: [],
+              ...(category.customDescription
+                ? { customDescription: category.customDescription }
+                : {}),
+            },
           }),
         });
       })
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.text();
-          throw new Error(`Hypothesis generation failed (${res.status}): ${body}`);
+          throw new Error(`Onboarding start failed (${res.status}): ${body}`);
         }
         return res.json();
       })
-      .then((data: { data?: { schemaId?: string }; schemaId?: string }) => {
+      .then(() => {
         clearSlowTimer();
-        // The API returns { data: hypothesis } where hypothesis includes schemaId.
-        const schemaId = data.data?.schemaId ?? data.schemaId;
-        if (!schemaId) {
-          throw new Error("Schema ID missing from hypothesis response");
-        }
-        onboardingStorage.setSchemaId(schemaId);
-        router.push("/onboarding/scanning");
+        router.push(`/onboarding/${schemaId}`);
       })
       .catch((err: unknown) => {
         clearSlowTimer();
@@ -223,8 +238,8 @@ export default function ConnectPage() {
           </>
         )}
 
-        {/* Connected / Generating */}
-        {(status === "connected" || status === "generating") && (
+        {/* Connected / Starting */}
+        {(status === "connected" || status === "starting") && (
           <div className="flex flex-col items-center gap-4">
             {status === "connected" && (
               <>
@@ -234,7 +249,7 @@ export default function ConnectPage() {
                 <p className="text-primary font-medium">Gmail connected! Preparing scan...</p>
               </>
             )}
-            {status === "generating" && (
+            {status === "starting" && (
               <>
                 <span className="material-symbols-outlined text-[40px] text-accent animate-spin">
                   progress_activity
