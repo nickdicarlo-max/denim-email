@@ -8,6 +8,7 @@ import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-me
 import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
 import { dailyStatusDecay } from "./daily-status-decay";
+import { runScan } from "./scan";
 
 const BATCH_SIZE = 20;
 
@@ -812,6 +813,7 @@ export const runSynthesis = inngest.createFunction(
 );
 
 export const functions = [
+  runScan, // Parent workflow — consumes scan.requested, emits scan.emails.discovered
   fanOutExtraction,
   extractBatch,
   checkExtractionComplete,
