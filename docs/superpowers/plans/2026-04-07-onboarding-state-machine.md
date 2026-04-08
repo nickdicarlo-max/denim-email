@@ -22,6 +22,29 @@
 
 ---
 
+## Execution Progress (as of 2026-04-08)
+
+Branch: `feature/ux-overhaul`
+
+| Phase | Task | Status | Commit | Notes |
+|-------|------|--------|--------|-------|
+| 0 | 1. Schema migration + enums + ScanFailure | ✅ done | `952d0bf` / `b92ff2e` | |
+| 1 | 2. `computeScanMetrics` / `computeSchemaMetrics` helpers | ✅ done | `8354c6e` | 8 integration tests. `Case`→`Email` is via `CaseEmail` junction (plan snippet was wrong). |
+| 1 | 3. Replace all dropped-counter reads | ✅ done | `d42de28` | Also fixed `ScanTrigger` enum casing ("manual"→"MANUAL", "onboarding"→"ONBOARDING") in 3 route handlers. `status/route.ts` returns `casesMerged: 0`, `clustersCreated: 0` for client compat. `eval-diagnose.ts` has metric helpers inlined (uses standalone Prisma client). |
+| 2 | 4. `advanceSchemaPhase` / `advanceScanPhase` CAS helpers | ✅ done | `a51cbd1` | 18 integration tests. `advanceScanPhase` uses `scan.phase` (read value) in the `where` clause so legacy IDLE rows satisfy a `from: PENDING` request — slight divergence from plan's example. |
+| 3 | 5. `derivePollingResponse` merge function | ✅ done | `daaf034` | 20 integration tests (not mocked — `CaseSchema` has too many required fields to hand-mock). Added `phase === COMPLETED` branch the plan missed. ACTIVE status takes precedence over stale FAILED phase. |
+| 4 | 6. Extract `persistSchemaRelations` from `finalizeSchema` | ⏳ next | | |
+| 5+ | 7–18 | ⏳ pending | | |
+
+**Known deferred debt** (intentionally left for later phases):
+- **ScanFailure row writes** — Phase 1 Task 3 deleted the `failedEmails` increment side effects. Nothing currently writes `ScanFailure` rows, so `computeScanMetrics.failedEmails` will read as 0 until **Phase 5 / Task 7** wires the per-email failure writes into the extraction pipeline. Accounting-invariant logs in `inngest/functions.ts` (`checkExtractionComplete`, `runSynthesis` complete-job step) will temporarily report gaps equal to `totalEmails` — comments flag this inline.
+- **`casesMerged` / `clustersCreated`** — these are permanently gone from the DB. `api/schemas/[schemaId]/status/route.ts` fabricates them as `0` for client compatibility; a future cleanup pass can remove them from the client response entirely.
+- **Stale `SchemaTag.frequency` comment** — `schema.prisma` line 211 still references `schema.emailCount` (removed in Phase 0). Cosmetic, not a bug.
+
+**Verified green after each commit:** `pnpm typecheck` + per-task integration test + `pnpm -r --filter '!web' test` (126 package unit tests).
+
+---
+
 ## Phase 0: Prisma model migration
 
 ### Task 1: Add new Prisma models and columns
