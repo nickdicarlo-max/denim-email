@@ -32,6 +32,9 @@ export const runOnboarding = inngest.createFunction(
   {
     id: "run-onboarding",
     triggers: [{ event: "onboarding.session.started" }],
+    // DELETE /api/onboarding/:schemaId emits onboarding.session.cancelled;
+    // Inngest cancels the in-flight run when data.schemaId matches.
+    cancelOn: [{ event: "onboarding.session.cancelled", match: "data.schemaId" }],
     concurrency: [
       { key: "event.data.schemaId", limit: 1 },
       { key: "event.data.userId", limit: 3 },

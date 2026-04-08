@@ -18,6 +18,19 @@ export type DenimEvents = {
       userId: string;
     };
   };
+  "onboarding.session.cancelled": {
+    /**
+     * Fired by DELETE /api/onboarding/:schemaId. runOnboarding's cancelOn
+     * binding matches on data.schemaId and cancels any in-flight run.
+     * The HTTP handler also flips CaseSchema.status = ARCHIVED so the row
+     * falls out of active-schema queries regardless of where runOnboarding
+     * was paused.
+     */
+    data: {
+      schemaId: string;
+      userId: string;
+    };
+  };
   "scan.requested": {
     /**
      * Request a scan for an existing ScanJob row. Consumed by runScan

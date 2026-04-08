@@ -178,6 +178,7 @@ enum SchemaStatus {
   ONBOARDING    // Initial scan running
   ACTIVE        // Normal operation
   PAUSED        // User paused scanning
+  ARCHIVED      // Cancelled onboarding or user-archived — excluded from active lists
 }
 
 
