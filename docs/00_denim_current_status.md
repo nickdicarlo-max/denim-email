@@ -1096,18 +1096,19 @@ Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-
 
 Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a durable, resumable, observable server-side state machine. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase for every transition, all counters computed on demand, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups.
 
-**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, Phases 0–5 are complete:
+**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, Phases 0–6 are complete:
 
 - Phase 0 — Schema migration, `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, dropped counters
 - Phase 1 — `computeScanMetrics` / `computeSchemaMetrics` helpers, replaced every denormalized-counter read
 - Phase 2 — `advanceSchemaPhase` / `advanceScanPhase` CAS helpers with idempotent skip, CAS-loss detection, and `markSchemaFailed` / `markScanFailed` terminal writers
 - Phase 3 — `derivePollingResponse` merges the two state machines into the client polling shape
 - Phase 4 — Split `finalizeSchema` into `createSchemaStub` + `persistSchemaRelations` + delegating wrapper (stub can be created early, relations populated later; orphan stubs recoverable by the state machine)
-- Phase 5 — Wired `advanceScanPhase` into every pipeline transition (`fanOutExtraction` / `runCoarseClustering` / `runSynthesis`), wrote `ScanFailure` rows on per-email + whole-batch failures, set `firstScanJobId`/`lastScanJobId` on Email create paths, dropped `failed` field from result interfaces, started emitting `scan.completed` for the Task 9 orchestrator
+- Phase 5 — Wired `advanceScanPhase` into every pipeline transition (`fanOutExtraction` / `runCoarseClustering` / `runSynthesis`), wrote `ScanFailure` rows on per-email + whole-batch failures, set `firstScanJobId`/`lastScanJobId` on Email create paths, dropped `failed` field from result interfaces, started emitting `scan.completed` for the orchestrator
+- Phase 6 — `runScan` parent Inngest workflow owns `PENDING → DISCOVERING → EXTRACTING` transitions, short-circuits empty scans to `COMPLETED` with `scan.completed` / `reason=no-emails-found`, hands off to the existing chain via `scan.emails.discovered`. `scan.requested` + `scan.completed` added to the typed `DenimEvents` contract.
 
 **Canonical progress doc + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, test counts, and a status table for all 18 tasks — I update it after each task lands. The previous `ScanFailure` writes debt is now **resolved** (Task 7); one small transitional dual-write remains in `runSynthesis` (direct `status=ONBOARDING → ACTIVE` flip alongside the new `scan.completed` emit) and will be removed in Task 9.
 
-**Next:** Phase 6 / Task 8 — `runScan` parent orchestrator that wraps the existing Inngest pipeline stages in a single workflow.
+**Next:** Phase 7 / Task 9 — `runOnboarding` parent orchestrator that consumes `scan.completed` and owns the `CaseSchema.phase` transitions, followed by Tasks 10–13 (HTTP routes that trigger `runOnboarding` / `runScan`).
 
 ## What's Next (2026-04-07)
 
