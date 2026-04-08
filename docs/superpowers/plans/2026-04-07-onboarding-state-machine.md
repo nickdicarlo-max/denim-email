@@ -33,8 +33,9 @@ Branch: `feature/ux-overhaul`
 | 1 | 3. Replace all dropped-counter reads | ✅ done | `d42de28` | Also fixed `ScanTrigger` enum casing ("manual"→"MANUAL", "onboarding"→"ONBOARDING") in 3 route handlers. `status/route.ts` returns `casesMerged: 0`, `clustersCreated: 0` for client compat. `eval-diagnose.ts` has metric helpers inlined (uses standalone Prisma client). |
 | 2 | 4. `advanceSchemaPhase` / `advanceScanPhase` CAS helpers | ✅ done | `a51cbd1` | 18 integration tests. `advanceScanPhase` uses `scan.phase` (read value) in the `where` clause so legacy IDLE rows satisfy a `from: PENDING` request — slight divergence from plan's example. |
 | 3 | 5. `derivePollingResponse` merge function | ✅ done | `daaf034` | 20 integration tests (not mocked — `CaseSchema` has too many required fields to hand-mock). Added `phase === COMPLETED` branch the plan missed. ACTIVE status takes precedence over stale FAILED phase. |
-| 4 | 6. Extract `persistSchemaRelations` from `finalizeSchema` | ⏳ next | | |
-| 5+ | 7–18 | ⏳ pending | | |
+| 4 | 6. Extract `persistSchemaRelations` from `finalizeSchema` | ✅ done | `529262d` | Split into `createSchemaStub` (stub row with placeholder JSON configs, phase=PENDING) + `persistSchemaRelations` (updates row + creates relations in one tx) + delegating `finalizeSchema` wrapper. **Behavior change:** stub create and relation writes are now in separate transactions — a failure in persistSchemaRelations leaves an orphan DRAFT/PENDING stub. Intentional (state machine can recover). Entity-groups direct-service tests 13/13 still pass. |
+| 5 | 7. Add CAS to extractBatch / clustering / synthesis | ⏳ next | | |
+| 5+ | 8–18 | ⏳ pending | | |
 
 **Known deferred debt** (intentionally left for later phases):
 - **ScanFailure row writes** — Phase 1 Task 3 deleted the `failedEmails` increment side effects. Nothing currently writes `ScanFailure` rows, so `computeScanMetrics.failedEmails` will read as 0 until **Phase 5 / Task 7** wires the per-email failure writes into the extraction pipeline. Accounting-invariant logs in `inngest/functions.ts` (`checkExtractionComplete`, `runSynthesis` complete-job step) will temporarily report gaps equal to `totalEmails` — comments flag this inline.
