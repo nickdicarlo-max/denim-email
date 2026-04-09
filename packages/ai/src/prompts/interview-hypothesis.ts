@@ -2,7 +2,7 @@
  * Hypothesis prompt builder for interview-driven schema generation.
  * Pure function — no I/O, no side effects.
  */
-import type { InterviewInput } from "@denim/types";
+import type { EntityGroupInput, InterviewInput } from "@denim/types";
 
 export interface HypothesisPromptResult {
   system: string;
@@ -553,23 +553,23 @@ Required JSON shape:
 function buildGroupsSection(input: InterviewInput): string {
   if (input.groups && input.groups.length > 0) {
     let section = `Entity groups (paired WHATs and WHOs that belong together):
-${input.groups.map((g, i) => `  Group ${i}: WHAT=${JSON.stringify(g.whats)}, WHO=${JSON.stringify(g.whos)}`).join("\n")}`;
+${input.groups.map((g: EntityGroupInput, i: number) => `  Group ${i}: WHAT=${JSON.stringify(g.whats)}, WHO=${JSON.stringify(g.whos)}`).join("\n")}`;
 
     // Shared WHOs: people who email about the domain but aren't paired to a specific group.
     // Generate from: queries for them but do NOT generate compound WHAT+WHO queries.
     if (input.sharedWhos && input.sharedWhos.length > 0) {
       section += `\n\nShared people (email about multiple/all groups — use "from:" queries only, no compound queries):
-${input.sharedWhos.map((w) => `  - "${w}"`).join("\n")}`;
+${input.sharedWhos.map((w: string) => `  - "${w}"`).join("\n")}`;
     }
 
     return section;
   }
   // Backward compat: flat whats/whos → single group
   return `Things they track (PRIMARY entities — each becomes a case boundary):
-${input.whats.map((w) => `  - "${w}"`).join("\n")}
+${input.whats.map((w: string) => `  - "${w}"`).join("\n")}
 
 People/contacts they interact with (SECONDARY entities — used for affinity scoring):
-${input.whos.map((w) => `  - "${w}"`).join("\n")}`;
+${input.whos.map((w: string) => `  - "${w}"`).join("\n")}`;
 }
 
 function buildUserPrompt(input: InterviewInput): string {
@@ -585,7 +585,7 @@ Domain: ${input.domain}
 ${buildGroupsSection(input)}
 
 Their goals:
-${input.goals.map((g) => `  - ${g}`).join("\n")}
+${input.goals.map((g: string) => `  - ${g}`).join("\n")}
 ${goalAdjustments}
 
 Requirements:

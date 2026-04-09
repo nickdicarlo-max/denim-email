@@ -1,0 +1,20 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Denim" [level=1] [ref=e4]
+    - navigation [ref=e18]:
+      - generic [ref=e19]:
+        - link "dynamic_feed Feed" [ref=e20] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e21]: dynamic_feed
+          - generic [ref=e22]: Feed
+        - button "add_circle Note" [ref=e23] [cursor=pointer]:
+          - generic [ref=e24]: add_circle
+          - generic [ref=e25]: Note
+        - link "settings Settings" [ref=e26] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e27]: settings
+          - generic [ref=e28]: Settings
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]

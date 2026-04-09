@@ -1149,12 +1149,52 @@ Not run (intentional — require live AI / Gmail): `onboarding-happy-path` (gate
 
 See the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has per-task commit SHAs, file inventory, 29 plan deviations, and the verification routine I followed for each task. The refactor is **complete** — that plan is the canonical archaeology if you need to dig into any specific task's rationale.
 
-## What's Next (2026-04-07)
+## Human Test Session — 4 Bugs Fixed (2026-04-09)
 
-### Immediate: Merge UX Overhaul to Main
-- All 3 waves committed on `feature/ux-overhaul`
-- Typecheck clean, 133 unit tests passing, E2E verified
+First real end-to-end human test of the onboarding flow. All unit tests (133/133)
+passed beforehand, but the first user interaction hit 4 blocking bugs — all in
+production wiring that tests bypassed.
+
+### Bug 1: FK constraint on `case_schemas.userId`
+- **Symptom:** `POST /api/onboarding/start` → 500
+- **Root cause:** No production code created `public.users` row from Supabase auth; test helpers masked this by doing it themselves
+- **Fix:** `withAuth` middleware now upserts user row on every authenticated request
+
+### Bug 2: Gmail tokens silently never stored
+- **Symptom:** Scan fails with "Gmail not connected" despite successful OAuth
+- **Root cause:** Auth callback discarded `exchangeCodeForSession()` response, called `getSession()` which doesn't have `provider_token`
+- **Fix:** Capture exchange response directly; use `exchangeData.session.provider_token`
+
+### Bug 3: CAS race in fan-out-extraction
+- **Symptom:** `fan-out-extraction` Inngest function fails immediately, pipeline stalls
+- **Root cause:** `runScan` emitted event inside `advanceScanPhase` `work()` callback before CAS committed; downstream function raced on same transition
+- **Fix:** Moved event emission to separate Inngest step after CAS commits; removed redundant CAS call from `fanOutExtraction`
+
+### Bug 4: `waitForEvent` match on missing field
+- **Symptom:** `runOnboarding` stuck on "Writing your cases" forever despite scan completing
+- **Root cause:** `match: "data.scanJobId"` compared against trigger event (`onboarding.session.started`) which has no `scanJobId` field — always `undefined !== value`
+- **Fix:** Changed to `match: "data.schemaId"` (both events share this field)
+
+### Other fixes
+- **`@denim/ai` implicit `any` types** — typed all callback parameters in 6 prompt files
+- **tsconfig TS6305 errors** — removed unnecessary `composite: true` and `references` from package tsconfigs
+
+### Architecture docs updated
+- `docs/01_denim_lessons_learned.md` — new doc, running log of production bugs with patterns to watch for + CAS transition ownership map
+- `docs/architecture/engineering-practices.md` — added CAS Transition Ownership section (one owner per transition, never emit inside `work()`) and Auth & Token Lifecycle section
+
+### End-to-end verified via Playwright
+- Category → Names → Connect → Hypothesis → Scan → Extract → Cluster → Synthesize → Review → Feed
+- 75 emails discovered, 3 cases created with real action items (soccer practices/games)
+- Full pipeline: ~6 minutes end-to-end
+
+## What's Next (updated 2026-04-09)
+
+### Immediate: Merge feature/ux-overhaul to Main
+- All 3 UX waves + 4 human-test bug fixes committed on `feature/ux-overhaul`
+- Typecheck clean, 133 unit tests passing, real E2E verified via Playwright
 - Ready for PR + merge to `main`
+- Note: commit the current session's fixes before merging
 
 ### After Merge: Schema Additions
 - `UserNote` model — for the "+ Note" button in bottom nav

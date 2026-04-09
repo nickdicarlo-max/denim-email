@@ -16,7 +16,7 @@ function buildTagTaxonomy(schema: SynthesisSchemaContext): string {
     return "No tags defined.";
   }
   return schema.tags
-    .map((t) => `  - "${t.name}": ${t.description}`)
+    .map((t: { name: string; description: string }) => `  - "${t.name}": ${t.description}`)
     .join("\n");
 }
 
@@ -25,7 +25,7 @@ function buildEntityList(schema: SynthesisSchemaContext): string {
     return "No entities defined.";
   }
   return schema.entities
-    .map((e) => `  - "${e.name}" (${e.type})`)
+    .map((e: { name: string; type: string }) => `  - "${e.name}" (${e.type})`)
     .join("\n");
 }
 
@@ -34,7 +34,7 @@ function buildFieldDefinitions(schema: SynthesisSchemaContext): string {
     return "No extracted fields defined.";
   }
   return schema.extractedFields
-    .map((f) => `  - "${f.name}" (${f.type}): ${f.description}`)
+    .map((f: { name: string; type: string; description: string }) => `  - "${f.name}" (${f.type}): ${f.description}`)
     .join("\n");
 }
 

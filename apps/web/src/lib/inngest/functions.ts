@@ -31,24 +31,17 @@ export const fanOutExtraction = inngest.createFunction(
   async ({ event, step }) => {
     const { schemaId, userId, scanJobId, emailIds } = event.data;
 
-    // CAS-advance ScanJob DISCOVERING → EXTRACTING. The work callback
-    // updates status / startedAt / totalEmails / statusMessage in one write
-    // before the helper atomically bumps the phase.
-    await step.run("advance-to-extracting", async () => {
-      await advanceScanPhase({
-        scanJobId,
-        from: "DISCOVERING",
-        to: "EXTRACTING",
-        work: async () => {
-          await prisma.scanJob.update({
-            where: { id: scanJobId },
-            data: {
-              status: "RUNNING",
-              totalEmails: emailIds.length,
-              startedAt: new Date(),
-              statusMessage: `Extracting ${emailIds.length} emails...`,
-            },
-          });
+    // runScan already advanced the scan phase from DISCOVERING → EXTRACTING
+    // before emitting scan.emails.discovered. We just update the status
+    // fields here — no CAS needed (and a CAS would race with runScan's).
+    await step.run("update-extracting-status", async () => {
+      await prisma.scanJob.update({
+        where: { id: scanJobId },
+        data: {
+          status: "RUNNING",
+          totalEmails: emailIds.length,
+          startedAt: new Date(),
+          statusMessage: `Extracting ${emailIds.length} emails...`,
         },
       });
     });

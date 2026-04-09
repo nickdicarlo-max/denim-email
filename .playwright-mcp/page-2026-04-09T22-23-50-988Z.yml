@@ -1,0 +1,30 @@
+- generic [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]
+  - generic [ref=e103]:
+    - button "arrow_back child_care Parent / Family" [ref=e105] [cursor=pointer]:
+      - generic [ref=e106]: arrow_back
+      - generic [ref=e107]: child_care
+      - text: Parent / Family
+    - heading "Name the things you track" [level=1] [ref=e108]
+    - paragraph [ref=e109]: Each one becomes a separate organized group in your feed.
+    - generic [ref=e110]:
+      - textbox "e.g. \"Vail Mountain School\"" [ref=e111]
+      - button "Add" [disabled] [ref=e112]
+    - generic [ref=e115]:
+      - text: Vail Mountain School
+      - button "Remove Vail Mountain School" [ref=e116] [cursor=pointer]:
+        - generic [ref=e117]: close
+    - generic [ref=e118]:
+      - heading "Who emails you about these?" [level=2] [ref=e119]
+      - paragraph [ref=e120]: Optional. Just a few names to help us find the rest.
+      - generic [ref=e121]:
+        - textbox "e.g. \"Coach Martinez\" or \"Mrs. Patterson\"" [active] [ref=e122]
+        - button "Add" [disabled] [ref=e123]
+      - generic [ref=e127]:
+        - text: Mrs. Patterson
+        - button "Remove Mrs. Patterson" [ref=e128] [cursor=pointer]:
+          - generic [ref=e129]: close
+    - button "Continue" [ref=e125] [cursor=pointer]
+    - paragraph [ref=e113]: Step 2 of 5

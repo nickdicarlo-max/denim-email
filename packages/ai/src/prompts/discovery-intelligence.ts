@@ -44,8 +44,8 @@ export interface DiscoveryIntelligenceInput {
 
 function buildSystemPrompt(input: DiscoveryIntelligenceInput): string {
   const groupLines = input.entityGroups.map((g, i) => {
-    const whats = g.whats.map((w) => `"${w}"`).join(", ");
-    const whos = g.whos.map((w) => `"${w}"`).join(", ");
+    const whats = g.whats.map((w: string) => `"${w}"`).join(", ");
+    const whos = g.whos.map((w: string) => `"${w}"`).join(", ");
     return `  Group ${i + 1}: ${[whats, whos].filter(Boolean).join(" + ")}`;
   });
 

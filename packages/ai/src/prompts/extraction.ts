@@ -14,7 +14,7 @@ function buildTagTaxonomy(schema: ExtractionSchemaContext): string {
     return "No tags defined.";
   }
   return schema.tags
-    .map((t) => `  - "${t.name}": ${t.description}`)
+    .map((t: { name: string; description: string }) => `  - "${t.name}": ${t.description}`)
     .join("\n");
 }
 
@@ -24,7 +24,7 @@ function buildEntityList(schema: ExtractionSchemaContext): string {
   }
   return schema.entities
     .map(
-      (e) =>
+      (e: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[]; isUserInput: boolean }) =>
         `  - "${e.name}" (${e.type}) [${e.isUserInput ? "USER-INPUT" : "DISCOVERED"}]${e.aliases.length > 0 ? ` — aliases: ${e.aliases.join(", ")}` : ""}`,
     )
     .join("\n");
@@ -35,8 +35,8 @@ function buildEntityGroups(groups: EntityGroupInput[] | undefined, domain: strin
     return "";
   }
   const lines = groups.map((g, i) => {
-    const whats = g.whats.map((w) => `"${w}" (PRIMARY)`).join(", ");
-    const whos = g.whos.map((w) => `"${w}" (SECONDARY)`).join(", ");
+    const whats = g.whats.map((w: string) => `"${w}" (PRIMARY)`).join(", ");
+    const whos = g.whos.map((w: string) => `"${w}" (SECONDARY)`).join(", ");
     const parts = [whats, whos].filter(Boolean).join(" + ");
     return `  Group ${i + 1}: ${parts}`;
   });
@@ -69,7 +69,7 @@ function buildFieldDefinitions(schema: ExtractionSchemaContext): string {
     return "No extracted fields defined.";
   }
   return schema.extractedFields
-    .map((f) => `  - "${f.name}" (${f.type}): ${f.description} [source: ${f.source}]`)
+    .map((f: { name: string; type: string; description: string; source: string }) => `  - "${f.name}" (${f.type}): ${f.description} [source: ${f.source}]`)
     .join("\n");
 }
 
@@ -110,7 +110,7 @@ EXTRACTED FIELDS (extract values for these if present):
 ${buildFieldDefinitions(schema)}
 
 EXCLUSION PATTERNS (sender domains/addresses considered internal/noise):
-${schema.exclusionPatterns.length > 0 ? schema.exclusionPatterns.map((p) => `  - ${p}`).join("\n") : "  None defined."}
+${schema.exclusionPatterns.length > 0 ? schema.exclusionPatterns.map((p: string) => `  - ${p}`).join("\n") : "  None defined."}
 
 CRITICAL RULES:
 1. Return ONLY valid JSON matching the required schema exactly. No explanations, no markdown, no extra text.
@@ -136,7 +136,7 @@ Required JSON shape:
 
 function buildUserPrompt(email: ExtractionInput): string {
   const attachmentSection = email.attachments && email.attachments.length > 0
-    ? `\n--- ATTACHMENTS ---\n${email.attachments.map((a, i) => `${i + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}\n--- END ATTACHMENTS ---`
+    ? `\n--- ATTACHMENTS ---\n${email.attachments.map((a: { filename: string; mimeType: string; sizeBytes: number; extractionSummary?: string }, i: number) => `${i + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}\n--- END ATTACHMENTS ---`
     : "";
 
   return `Extract structured data from this email:

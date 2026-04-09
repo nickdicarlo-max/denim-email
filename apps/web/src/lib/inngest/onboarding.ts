@@ -155,12 +155,15 @@ export const runOnboarding = inngest.createFunction(
       // ---- Step 5: wait for scan.completed ------------------------------
       //
       // Inngest waitForEvent returns null on timeout. The `match` clause
-      // filters to the specific scanJobId so a parallel scan for another
-      // schema doesn't unblock this workflow.
+      // filters to the specific schemaId so a parallel scan for another
+      // schema doesn't unblock this workflow. We match on schemaId (not
+      // scanJobId) because the trigger event (onboarding.session.started)
+      // has schemaId but not scanJobId — matching on a field absent from
+      // the trigger always fails (see docs/01_denim_lessons_learned.md).
       const completion = await step.waitForEvent("wait-for-scan", {
         event: "scan.completed",
         timeout: SCAN_WAIT_TIMEOUT,
-        match: "data.scanJobId",
+        match: "data.schemaId",
       });
 
       if (!completion) {

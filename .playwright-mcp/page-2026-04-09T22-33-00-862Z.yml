@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e106]:
+    - generic [ref=e107]: progress_activity
+    - heading "Saving your schema" [level=1] [ref=e108]
+    - paragraph [ref=e109]: Almost ready to start scanning…
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]

@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
   if (code) {
     try {
       const { supabase, redirect } = createCallbackSupabaseClient(request);
-      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      const { data: exchangeData, error } = await supabase.auth.exchangeCodeForSession(code);
 
       if (error) {
         logger.error({
@@ -71,19 +71,18 @@ export async function GET(request: NextRequest) {
         return redirect(`${origin}/?auth_error=true`);
       }
 
-      // Attempt to store provider tokens in the database
+      // Store provider tokens from the exchange response. provider_token
+      // is only available in the exchangeCodeForSession result — a
+      // subsequent getSession() does NOT include it (Supabase does not
+      // persist provider tokens in session storage).
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        const exchangeSession = exchangeData?.session;
+        const exchangeUser = exchangeData?.user;
 
-        if (session?.provider_token && user) {
-          await storeGmailTokens(user.id, user.email ?? "", {
-            access_token: session.provider_token,
-            refresh_token: session.provider_refresh_token ?? "",
+        if (exchangeSession?.provider_token && exchangeUser) {
+          await storeGmailTokens(exchangeUser.id, exchangeUser.email ?? "", {
+            access_token: exchangeSession.provider_token,
+            refresh_token: exchangeSession.provider_refresh_token ?? "",
             expiry_date: Date.now() + 3600 * 1000,
             scope: "https://www.googleapis.com/auth/gmail.readonly",
           });
@@ -91,14 +90,14 @@ export async function GET(request: NextRequest) {
           logger.info({
             service: "auth",
             operation: "callback.storeTokens",
-            userId: user.id,
-            hasRefreshToken: !!session.provider_refresh_token,
+            userId: exchangeUser.id,
+            hasRefreshToken: !!exchangeSession.provider_refresh_token,
           });
         } else {
           logger.warn({
             service: "auth",
             operation: "callback.storeTokens.skipped",
-            userId: user?.id,
+            userId: exchangeUser?.id,
             reason: "missing_provider_token",
           });
         }
@@ -116,18 +115,16 @@ export async function GET(request: NextRequest) {
       }
 
       // Otherwise, dynamically route based on whether the user has existing schemas.
+      // Use exchangeUser from the exchange response (already available above).
       try {
-        const {
-          data: { user: authedUser },
-        } = await supabase.auth.getUser();
-        if (authedUser) {
+        if (exchangeData?.user) {
           const schemaCount = await prisma.caseSchema.count({
-            where: { userId: authedUser.id },
+            where: { userId: exchangeData.user.id },
           });
           logger.info({
             service: "auth",
             operation: "callback.dynamicRoute",
-            userId: authedUser.id,
+            userId: exchangeData.user.id,
             schemaCount,
             destination: schemaCount > 0 ? "/feed" : "/onboarding/category",
           });

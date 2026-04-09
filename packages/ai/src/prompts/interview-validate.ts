@@ -86,7 +86,7 @@ Return ONLY valid JSON, no markdown fences, no explanation.`;
 
   // Build entity list, with group annotations if groups are available
   const entityList = hypothesis.entities
-    .map((e) => {
+    .map((e: { name: string; type: string }) => {
       if (entityGroups && entityGroups.length > 0) {
         const groupIdx = entityGroups.findIndex(
           (g) => g.primaryNames.includes(e.name) || g.secondaryNames.includes(e.name),
@@ -98,7 +98,7 @@ Return ONLY valid JSON, no markdown fences, no explanation.`;
     })
     .join("\n");
 
-  const tagList = hypothesis.tags.map((t) => `- ${t.name}: ${t.description}`).join("\n");
+  const tagList = hypothesis.tags.map((t: { name: string; description: string }) => `- ${t.name}: ${t.description}`).join("\n");
 
   const sampleList = emailSamples
     .slice(0, 100)

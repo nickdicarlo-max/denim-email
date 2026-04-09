@@ -1,0 +1,7 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e114]:
+    - heading "Reading your emails" [level=1] [ref=e115]
+    - paragraph [ref=e118]: 35 of 75 emails
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]

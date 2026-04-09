@@ -124,7 +124,10 @@
       "Bash(DATABASE_URL=\"dummy\" npx prisma generate)",
       "Bash(DATABASE_URL=\"dummy\" pnpm typecheck)",
       "Bash(rmdir:*)",
-      "Bash(echo \"status: $?\")"
+      "Bash(echo \"status: $?\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(list\\(d.keys\\(\\)\\)\\)\\); p=d.get\\('payload',{}\\); print\\('payload keys:', list\\(p.keys\\(\\)\\)\\); print\\('headers sample:', p.get\\('headers',[]\\)[0:3]\\)\")",
+      "Bash(rm src/test-import.ts)",
+      "mcp__plugin_playwright_playwright__browser_fill_form"
     ]
   }
 }

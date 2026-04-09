@@ -1,4 +1,5 @@
 import { logger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
 import { AuthError } from "@denim/types";
 import { createClient } from "@supabase/supabase-js";
 import { type NextRequest, NextResponse } from "next/server";
@@ -71,6 +72,20 @@ export function withAuth(handler: AuthenticatedHandler) {
         { status: 401 },
       );
     }
+
+    // Ensure the user row exists in public.users (Supabase auth.users
+    // is created by OAuth, but the app-level row must also exist for FK
+    // constraints on CaseSchema, etc.).
+    await prisma.user.upsert({
+      where: { id: user.id },
+      create: {
+        id: user.id,
+        email: user.email ?? "",
+        displayName: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
+        avatarUrl: user.user_metadata?.avatar_url ?? null,
+      },
+      update: {},
+    });
 
     const response = await handler({ userId: user.id, request });
     logger.info({

@@ -171,21 +171,28 @@ export const runScan = inngest.createFunction(
       }
 
       // ---- Step 3: DISCOVERING → EXTRACTING, hand off to pipeline --------
-      await step.run("hand-off-extraction", async () => {
+      // CAS advance and event emission are separate operations. Emitting
+      // inside work() races with downstream functions that read the phase
+      // before the CAS commits (see docs/01_denim_lessons_learned.md, Bug 3).
+      await step.run("advance-to-extracting", async () => {
         await advanceScanPhase({
           scanJobId,
           from: "DISCOVERING",
           to: "EXTRACTING",
           work: async () => {
-            await inngest.send({
-              name: "scan.emails.discovered",
-              data: {
-                schemaId,
-                userId,
-                scanJobId,
-                emailIds: actualEmailIds,
-              },
-            });
+            // Phase-only transition — no side effects inside work().
+          },
+        });
+      });
+
+      await step.run("emit-discovered", async () => {
+        await inngest.send({
+          name: "scan.emails.discovered",
+          data: {
+            schemaId,
+            userId,
+            scanJobId,
+            emailIds: actualEmailIds,
           },
         });
       });

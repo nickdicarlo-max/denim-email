@@ -184,6 +184,23 @@ Critical failures (user CANNOT proceed):
 - Database unreachable: show error page
 - Interview hypothesis generation fails after retries: show error, let user retry
 
+## Auth & Token Lifecycle
+
+Supabase Auth creates users in `auth.users`. The app maintains a parallel `users`
+table for FK constraints and app-level fields (tokens, timezone, display name).
+
+Rules:
+- **`withAuth` middleware upserts the app-level user row.** Every authenticated
+  request ensures the `public.users` row exists. This is the sole production path
+  for user creation — no other code should create user rows except test helpers.
+- **`provider_token` is ephemeral.** Supabase only returns Google's
+  `provider_token` and `provider_refresh_token` in the `exchangeCodeForSession()`
+  response. Calling `getSession()` afterward does NOT include them. Always capture
+  the exchange response directly.
+- **Silent token failures must be errors.** If `provider_token` is missing after
+  OAuth, the user's core feature (Gmail access) is broken. Log an error and
+  surface the failure to the user — do not log a warning and continue.
+
 ## No Side Effects in Pure Functions
 
 Functions in `@denim/engine` and `@denim/ai` must not:

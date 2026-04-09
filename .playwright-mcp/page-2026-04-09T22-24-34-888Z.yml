@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]
+  - generic [ref=e157]:
+    - generic [ref=e158]: progress_activity
+    - heading "Getting started" [level=1] [ref=e159]
+    - paragraph [ref=e160]: Claiming your onboarding session…
