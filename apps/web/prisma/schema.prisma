@@ -165,6 +165,7 @@ model CaseSchema {
   scanFailures      ScanFailure[]
   exclusionRules    ExclusionRule[]
   pipelineIntelligence PipelineIntelligence[]
+  outbox            OnboardingOutbox?
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -1112,4 +1113,51 @@ model ExtractionCost {
   @@index([emailId])
   @@index([createdAt])
   @@map("extraction_costs")
+}
+
+
+// =============================================================================
+// ONBOARDING OUTBOX (#33 — transactional outbox pattern)
+// =============================================================================
+//
+// Durable record of "onboarding.session.started" events that need to be emitted
+// to Inngest. Written atomically with the CaseSchema stub inside a single
+// Prisma transaction by POST /api/onboarding/start. The route then does a
+// best-effort fire-and-forget emit for happy-path latency; the
+// `drainOnboardingOutbox` cron function is the guaranteed recovery path when
+// the optimistic emit fails (Inngest outage, network blip, etc.).
+//
+// This single unique-constraint (schemaId as PK) is the sole idempotency guard
+// for the start route — it replaces the prior fragile dual-path P2002 handling
+// across CaseSchema.id + (nothing), and fixes the Inngest-outage stranding
+// deferred debt from the onboarding state machine refactor (#30, Task 16).
+// =============================================================================
+
+model OnboardingOutbox {
+  // schemaId is the PK because outbox rows are 1:1 with CaseSchema stubs
+  // and this is the constraint that serves as the idempotency guard.
+  schemaId       String         @id
+  userId         String
+  eventName      String                                    // e.g. "onboarding.session.started"
+  payload        Json                                      // { schemaId, userId }
+
+  status         OutboxStatus   @default(PENDING_EMIT)
+  attempts       Int            @default(0)
+  lastError      String?        @db.Text
+  lastAttemptAt  DateTime?
+  nextAttemptAt  DateTime       @default(now())
+  createdAt      DateTime       @default(now())
+  emittedAt      DateTime?
+
+  schema         CaseSchema     @relation(fields: [schemaId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])   // drain worker hot path
+  @@index([userId])
+  @@map("onboarding_outbox")
+}
+
+enum OutboxStatus {
+  PENDING_EMIT      // awaiting first successful send
+  EMITTED           // runOnboarding was triggered; terminal happy state
+  DEAD_LETTER       // exceeded MAX_ATTEMPTS; needs human attention
 }

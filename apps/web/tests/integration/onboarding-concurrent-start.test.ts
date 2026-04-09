@@ -115,6 +115,21 @@ describe("POST /api/onboarding/start — concurrent idempotency", () => {
       select: { userId: true, phase: true },
     });
     expect(row.userId).toBe(testUser.userId);
+
+    // #33 outbox pattern: exactly one OnboardingOutbox row must also exist
+    // for this schemaId. The outbox.schemaId PK is the sole idempotency
+    // guard in the new route flow — if concurrent losers had slipped past
+    // the unique constraint, we'd see 2+ rows here. We don't assert on
+    // status because the optimistic emit is fire-and-forget and may or
+    // may not have flipped PENDING_EMIT → EMITTED by the time this runs.
+    const outboxRows = await prisma.onboardingOutbox.count({ where: { schemaId } });
+    expect(outboxRows).toBe(1);
+    const outbox = await prisma.onboardingOutbox.findUniqueOrThrow({
+      where: { schemaId },
+      select: { userId: true, eventName: true },
+    });
+    expect(outbox.userId).toBe(testUser.userId);
+    expect(outbox.eventName).toBe("onboarding.session.started");
   }, 30_000);
 
   it("sequential retry with the same ULID is idempotent (second call returns idempotent=true)", async () => {

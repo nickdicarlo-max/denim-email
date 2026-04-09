@@ -119,7 +119,12 @@
       "mcp__plugin_playwright_playwright__browser_network_requests",
       "mcp__plugin_playwright_playwright__browser_evaluate",
       "Bash(tee /tmp/dropped-fields.txt)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(ps -W)",
+      "Bash(DATABASE_URL=\"dummy\" npx prisma generate)",
+      "Bash(DATABASE_URL=\"dummy\" pnpm typecheck)",
+      "Bash(rmdir:*)",
+      "Bash(echo \"status: $?\")"
     ]
   }
 }

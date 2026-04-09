@@ -202,12 +202,20 @@ interface FinalizeConfirmations {
  * responsible for advancing both via the state-machine helpers.
  */
 export async function createSchemaStub(opts: {
+  /**
+   * Optional Prisma transaction client. When provided, the stub INSERT runs
+   * inside the caller's transaction — used by POST /api/onboarding/start to
+   * atomically write the stub + OnboardingOutbox row together (see #33). When
+   * omitted, the call uses the singleton Prisma client directly.
+   */
+  tx?: Prisma.TransactionClient;
   /** Optional client-supplied ULID/cuid. When omitted, Prisma generates one. */
   schemaId?: string;
   userId: string;
   inputs?: InterviewInput;
 }): Promise<string> {
-  const schema = await prisma.caseSchema.create({
+  const client = opts.tx ?? prisma;
+  const schema = await client.caseSchema.create({
     data: {
       ...(opts.schemaId ? { id: opts.schemaId } : {}),
       userId: opts.userId,

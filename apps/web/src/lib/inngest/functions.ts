@@ -10,6 +10,7 @@ import { inngest } from "./client";
 import { cronDailyScans } from "./cron";
 import { dailyStatusDecay } from "./daily-status-decay";
 import { runOnboarding } from "./onboarding";
+import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runScan } from "./scan";
 
 const BATCH_SIZE = 20;
@@ -834,4 +835,5 @@ export const functions = [
   dailyQualitySnapshot,
   dailyStatusDecay,
   cronDailyScans, // Task 17 — periodic re-scan emitter (event-triggered for v1)
+  drainOnboardingOutbox, // #33 — transactional outbox drain for POST /api/onboarding/start
 ];
