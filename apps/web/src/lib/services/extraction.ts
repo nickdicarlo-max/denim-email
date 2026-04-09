@@ -45,7 +45,7 @@ interface ProcessBatchResult {
 /**
  * Build ExtractionSchemaContext from a loaded schema with relations.
  */
-function buildSchemaContext(schema: {
+export function buildSchemaContext(schema: {
   domain: string | null;
   tags: { name: string; description: string | null; isActive: boolean }[];
   entities: {
@@ -397,7 +397,6 @@ export async function extractEmail(
           ? (senderEntity.associatedPrimaryIds as string[])
           : [];
         if (primaryIds.length === 1) {
-          // 1:1 pairing (e.g., Ziad→Soccer) — safe to use
           entityId = primaryIds[0];
           routeMethod = "sender";
           routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" → single primary`;
@@ -469,6 +468,8 @@ export async function extractEmail(
         detectedEntities: parsed.detectedEntities as any,
         isInternal: parsed.isInternal,
         language: parsed.language,
+        isExcluded: false,
+        excludeReason: null,
         bodyLength: gmailMessage.body.length,
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
@@ -549,8 +550,10 @@ export async function processEmailBatch(
   entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[] }[],
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[],
   options: ExtractEmailOptions,
+  /** Optional pre-built client (e.g., FixtureGmailClient for eval). */
+  injectedClient?: { getEmailFullWithPacing(id: string, delayMs?: number): Promise<GmailMessageFull> },
 ): Promise<ProcessBatchResult> {
-  const gmailClient = new GmailClient(accessToken);
+  const gmailClient = injectedClient ?? new GmailClient(accessToken);
   let processed = 0;
   let excluded = 0;
 

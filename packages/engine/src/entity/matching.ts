@@ -78,10 +78,48 @@ export function jaroWinkler(s1: string, s2: string): number {
   return jaroScore + prefixLength * p * (1 - jaroScore);
 }
 
+// Generic words that inflate JW scores when they appear in both candidate
+// and target (e.g., "Claude Team" vs "dance team" → 0.87 from "team" alone).
+const GENERIC_TOKENS = new Set([
+  "team", "class", "school", "club", "group", "org", "inc", "llc",
+  "academy", "studio", "center", "lesson", "practice", "program",
+  "mr", "mrs", "ms", "dr", "the", "a", "an", "of", "for",
+]);
+
+/**
+ * Check that a JW match has real word overlap, not just generic suffix similarity.
+ * At least one significant token from the candidate must fuzzy-match (JW ≥ 0.85)
+ * a significant token in the target. Skips the check for single-word comparisons
+ * or when one side has no significant tokens (e.g., pure name like "Ziad").
+ */
+function hasSignificantTokenOverlap(candidate: string, target: string): boolean {
+  const candTokens = candidate.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+  const targetTokens = target.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+
+  // Single-word on both sides — JW score alone is sufficient
+  if (candTokens.length <= 1 && targetTokens.length <= 1) return true;
+
+  const sigCand = candTokens.filter((t) => !GENERIC_TOKENS.has(t));
+  const sigTarget = targetTokens.filter((t) => !GENERIC_TOKENS.has(t));
+
+  // If either side has no significant tokens, let JW decide
+  if (sigCand.length === 0 || sigTarget.length === 0) return true;
+
+  // At least one significant candidate token must match a significant target token
+  for (const ct of sigCand) {
+    for (const tt of sigTarget) {
+      if (jaroWinkler(ct, tt) >= 0.85) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Find the best fuzzy match for a candidate string against a list of targets.
  * Each target has a name and aliases. The candidate is compared against
  * the name AND all aliases, returning the best match above threshold.
+ * Includes a token overlap guard to prevent matches driven by generic words
+ * like "team", "class", "school" (e.g., "Claude Team" ≠ "dance team").
  */
 export function fuzzyMatch(
   candidate: string,
@@ -93,14 +131,22 @@ export function fuzzyMatch(
   for (const target of targets) {
     // Compare against the target name
     const nameScore = jaroWinkler(candidate, target.name);
-    if (nameScore >= threshold && (bestMatch === null || nameScore > bestMatch.score)) {
+    if (
+      nameScore >= threshold &&
+      hasSignificantTokenOverlap(candidate, target.name) &&
+      (bestMatch === null || nameScore > bestMatch.score)
+    ) {
       bestMatch = { name: target.name, score: nameScore };
     }
 
     // Compare against each alias
     for (const alias of target.aliases) {
       const aliasScore = jaroWinkler(candidate, alias);
-      if (aliasScore >= threshold && (bestMatch === null || aliasScore > bestMatch.score)) {
+      if (
+        aliasScore >= threshold &&
+        hasSignificantTokenOverlap(candidate, alias) &&
+        (bestMatch === null || aliasScore > bestMatch.score)
+      ) {
         bestMatch = { name: target.name, score: aliasScore };
       }
     }
