@@ -1092,40 +1092,61 @@ Screenshots: `feed-page.png`, `feed-filtered.png`, `case-detail.png`, `settings-
 ### Assessment
 **The core stack is good enough for real user testing.** The remaining clustering gaps are the kind that can only be discovered and fixed with real user feedback — which is exactly what the calibration loop is designed for. Spending more time tuning the gravity model in isolation has diminishing returns (proven by the clustering intelligence experiment). The next quality signal needs to come from users correcting cases.
 
-## In Progress: Onboarding State Machine Refactor (2026-04-07 → ongoing)
+## Done: Onboarding State Machine Refactor (2026-04-07 → 2026-04-08)
 
-Structural response to Eval Session 1 (#12, #14–#18): rebuilds onboarding as a durable, resumable, observable server-side state machine. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase for every transition, all counters computed on demand, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups.
+Structural response to Eval Session 1 (#12, #14–#18): rebuilt onboarding as a durable, resumable, observable server-side state machine on `feature/ux-overhaul`. `CaseSchema.phase` owns onboarding phases, `ScanJob.phase` owns scan phases, CAS-on-phase guards every transition, all counters computed on demand from authoritative row sources, and a flat polling contract between server and client. Replaces the band-aid fixes that were previously listed as P0 follow-ups. **18 of 18 tasks shipped across 11 phases over two days.**
 
-**Working on `feature/ux-overhaul` (refactor is intentionally coupled to the UX work).** As of 2026-04-08, **18 of 18 tasks are code-complete. Phases 0–11 are done.** Only the Task 18 verification sweep remains — that's typecheck + test run + a doc flip of this section from "In Progress" to "Done", not a code change.
+### Eval-issue resolutions
 
-**Done (Phases 0–7):**
-- Phase 0 — Schema migration, `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, `ARCHIVED` added to `SchemaStatus` (Task 11), dropped denormalized counters
-- Phase 1 — `computeScanMetrics` / `computeSchemaMetrics` helpers, replaced every denormalized-counter read
-- Phase 2 — `advanceSchemaPhase` / `advanceScanPhase` CAS helpers with idempotent skip, CAS-loss detection, `markSchemaFailed` / `markScanFailed` terminal writers
-- Phase 3 — `derivePollingResponse` merges the two state machines into the client polling shape
-- Phase 4 — Split `finalizeSchema` into `createSchemaStub` + `persistSchemaRelations` + delegating wrapper
-- Phase 5 — Wired `advanceScanPhase` into every pipeline transition, `ScanFailure` rows on per-email + whole-batch failures, `firstScanJobId` / `lastScanJobId` on Email create paths, `failed` field dropped from result interfaces
-- Phase 6 — `runScan` parent Inngest workflow (Task 8) owns `PENDING → DISCOVERING → EXTRACTING`, short-circuits empty scans, hands off via `scan.emails.discovered`
-- Phase 7 (complete) — `runOnboarding` parent workflow (Task 9) drives schema phases end-to-end with CAS, and the HTTP surface area is fully wired:
-  - `POST /api/onboarding/start` (Task 10) — idempotent session claim on a client-supplied ULID
-  - `GET /api/onboarding/:schemaId` (Task 11) — polling through `derivePollingResponse`
-  - `POST /api/onboarding/:schemaId` (Task 11) — review confirm, single CAS `updateMany` flips `phase=COMPLETED` + `status=ACTIVE` + rename in one hop (**resolves the `status=ACTIVE` deferred debt**)
-  - `DELETE /api/onboarding/:schemaId` (Task 11) — emits `onboarding.session.cancelled`, matched by `runOnboarding.cancelOn`, then flips `status=ARCHIVED`
-  - `POST /api/onboarding/:schemaId/retry` (Task 12) — resumes a FAILED run by parsing the failed phase out of `phaseError` and resetting to that phase, so pre-failure steps skip via the CAS index check and only the failed step re-runs. Avoids `persistSchemaRelations` duplicates
-  - `GET /api/schemas/:schemaId/scans` (Task 13) — audit-log listing with compute-on-demand metrics
-  - `POST /api/schemas/:schemaId/scans` (Task 13) — manual rescan, 409 conflict guard if an active scan exists
-  - `GET /api/schemas/:schemaId/scans/:scanJobId` (Task 13) — per-scan detail with the 50 most recent ScanFailure rows and computed metrics
-- Phase 8 (complete) — client flow collapse. Task 14 landed the single `<OnboardingFlow>` switch component + 10 per-phase subcomponents + the 2s-polling observer page at `apps/web/src/app/onboarding/[schemaId]/page.tsx`. The connect page now POSTs to `/api/onboarding/start` with a client-generated ULID and navigates to the observer page — no more `/api/interview/hypothesis`. `phase-review.tsx` is lifted from the old review page with its submit target pointed at Task 11's confirm handler.
-- Phase 9 (complete) — dead code deleted. Task 15 removed the 8 files from the plan's delete list: the 4 interview routes (`hypothesis`, `finalize`, `validate`, `review-finalize`), `api/schemas/[schemaId]/status/route.ts`, the `onboarding/scanning` and `onboarding/review` pages, and `components/onboarding/scan-stream.tsx`, plus the empty parent dirs. Also deleted the standalone `interview.test.ts` (all 9 tests were HTTP against the deleted routes) and trimmed the HTTP-Finalize describe block from `entity-groups.test.ts` (17→13 tests). Net diff: −1429 / +127, about 1300 lines removed.
-- Phase 10 (complete) — e2e test suite + two production bug fixes the tests surfaced. Task 16 landed four new test files (`onboarding-scan-accounting` 6 tests pure-Prisma, `onboarding-concurrent-start` 4 tests, `onboarding-routes` 18 tests, `onboarding-happy-path` 1 test gated on `RUN_E2E_HAPPY=1`). **Full suite: 28/28 green against live Next + Inngest dev servers.** The tests caught two real bugs that got fixed in a separate commit: (a) `handleApiError` returned 500 instead of 400 on raw `ZodError` — affected every route that used `Schema.parse()` instead of the `validateInput()` helper; (b) Task 10's `POST /api/onboarding/start` had a TOCTOU race where concurrent POSTs with the same ULID raced into `createSchemaStub` and losers hit `P2002 Unique constraint failed` → 500 instead of the idempotent 202. Fixed by catching P2002, re-resolving the winner, and applying the ownership check. The fragile P2002 pattern was captured as GitHub issue #33 for a follow-up structural fix (transactional outbox pattern — also fixes the Inngest-outage stranding).
-- Phase 11 (code complete) — cron stub landed in Task 17 (`9a1f9e0`). The plan's minimal sketch was expanded into a functional cron: `runSynthesis` now stamps `CaseSchema.lastScannedAt` on scan completion (the column was previously dead code — nothing wrote it), and `cronDailyScans` filters ACTIVE schemas by `lastScannedAt IS NULL OR < now - 23h`. Triggered by event (`cron.daily.scans.trigger`) rather than a real cron schedule for v1 so the team can validate the wiring manually before enabling a schedule. Per-schema last-mile conflict check for already-active ScanJobs handles the "manual rescan already running" / "previous cron tick still in flight" / "onboarding mid-flight on just-flipped-ACTIVE schema" races. Deferred from Task 17: per-schema `scanFrequency` enum handling, timezone awareness, function-level retry strategy.
+- **#14 — Topic creation idempotency.** Replaced with client-supplied ULID on `POST /api/onboarding/start` + `findUnique` fast-path + `P2002 Unique constraint` slow-path catch + ownership re-resolve. Concurrent duplicate POSTs now land exactly one row. (Follow-up: the P2002 pattern is fragile — captured as #33 for the outbox-pattern structural fix.)
+- **#15 — Onboarding loading screens hang indefinitely.** Replaced the slow-timer spinner approach with a 2s-polling observer page at `apps/web/src/app/onboarding/[schemaId]/page.tsx` that drives off `GET /api/onboarding/:schemaId` and navigates to `/feed` on `phase=COMPLETED`. The polling response carries live `progress` counters so users see `N of M emails` tick up during extraction.
+- **#16 — Scan jobs silently dropping 60–85% of emails.** Phase 0 dropped every denormalized counter column on `ScanJob`; Phase 1's `computeScanMetrics` derives `processedEmails + excludedEmails + failedEmails` directly from `Email.firstScanJobId + isExcluded` and `ScanFailure.scanJobId`. The `onboarding-scan-accounting.test.ts` suite pins the `processed + excluded + failed === totalEmails` invariant across 6 edge cases.
+- **#17 — Response-shape mismatch between server and client.** `derivePollingResponse` flattens the two-row state machine (CaseSchema + ScanJob) into a single `OnboardingPollingResponse` — one `phase` enum, one `progress` object, one `nextHref` — and the observer page switch-renders off that shape.
+- **#18 — Review screen has no schema context when visited directly.** The observer page lives at `/onboarding/[schemaId]`, so the schemaId is in the URL from millisecond zero. Review (`phase=AWAITING_REVIEW`) reads schema details via a one-shot `GET /api/schemas/:schemaId` on mount — same as the old standalone review page but now embedded in the phase-driven flow.
 
-**Remaining (Task 18 only — verification sweep, not a code change):**
-- Phase 11 — Task 18: typecheck + package unit tests (126) + integration tests that don't need live AI, optionally an eval rerun, then flip this section from "In Progress" to "Done — 2026-04-08" with the five eval-issue resolutions listed (#14 idempotency, #15 polling, #16 accounting, #17 flat shape, #18 schemaId-in-URL). After Task 18 the `feature/ux-overhaul` branch is merge-ready.
+### What shipped
 
-**Canonical progress doc + architecture snapshot + file inventory + deferred-debt list + plan deviations:** see the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has commit SHAs, a status table for all 18 tasks, a file inventory, and verification routine. Three of the four original deferred-debt items are now **resolved** (`ScanFailure` writes, the transitional `runSynthesis` status flip, and the `status=ACTIVE` flip on review confirmation). One new deferred-debt item was added in Phase 7 and is **still open**: scan-stage retry doesn't actually recover — a `PROCESSING_SCAN` failure re-enters `waitForEvent` on the same FAILED scanJobId and hits the 20m timeout, and Task 13's manual rescan creates a new scanJobId that the waiting workflow ignores. Deferring until a scan-stage failure actually bites in practice (none have in testing so far).
+- **Phase 0** — Schema migration: `SchemaPhase` / `ScanTrigger` enums, `ScanFailure` table, `ARCHIVED` added to `SchemaStatus`, dropped denormalized counter columns.
+- **Phase 1** — `computeScanMetrics` / `computeSchemaMetrics` on-demand helpers; replaced every denormalized-counter read site.
+- **Phase 2** — `advanceSchemaPhase` / `advanceScanPhase` CAS helpers with idempotent skip semantics and `markSchemaFailed` / `markScanFailed` terminal writers.
+- **Phase 3** — `derivePollingResponse` flattens the two-row state into the client polling shape (20 integration tests).
+- **Phase 4** — Split `finalizeSchema` into `createSchemaStub` + `persistSchemaRelations` + delegating wrapper.
+- **Phase 5** — Wired `advanceScanPhase` into every pipeline transition, wrote `ScanFailure` rows per-email and per-batch, added `firstScanJobId` / `lastScanJobId` to Email.
+- **Phase 6** — `runScan` parent Inngest workflow (Task 8) owns `PENDING → DISCOVERING → EXTRACTING`, short-circuits empty scans.
+- **Phase 7** — `runOnboarding` parent workflow (Task 9) + eight HTTP routes (Tasks 10/11/12/13): `POST /api/onboarding/start`, `GET/POST/DELETE /api/onboarding/:schemaId`, `POST /api/onboarding/:schemaId/retry`, `GET/POST /api/schemas/:schemaId/scans`, `GET /api/schemas/:schemaId/scans/:scanJobId`.
+- **Phase 8** — Client flow collapse (Task 14): `<OnboardingFlow>` switch component + 10 per-phase subcomponents + the 2s-polling observer page. `connect/page.tsx` rewired to POST `/api/onboarding/start` with a client ULID.
+- **Phase 9** — Dead code deleted (Task 15): 8 files (4 interview routes, status route, scanning page, review page, scan-stream component) + empty parent dirs + `interview.test.ts` + trimmed HTTP describe block from `entity-groups.test.ts`. Net −1300 lines.
+- **Phase 10** — E2E test suite (Task 16): 4 new test files, 28/28 green against live Next + Inngest dev servers. Caught and fixed two production bugs along the way (ZodError → 500, TOCTOU race on concurrent POSTs).
+- **Phase 11** — Cron stub (Task 17): `cronDailyScans` Inngest function + `stamp-last-scanned-at` step in `runSynthesis` (makes the previously-dead `lastScannedAt` column functional end-to-end). Event-triggered for v1, one-line swap to a real cron trigger when ready. (Task 18: final verification sweep + this doc flip.)
 
-**Next:** Task 18 — final verification sweep. Run `pnpm typecheck` in `apps/web`, full package unit suite (126 tests), integration tests that don't need live AI (scan-accounting, onboarding-state, onboarding-polling, entity-groups, scan-metrics, the Task 16 HTTP suite against running dev servers), optionally the eval rerun against the new flow, then flip this doc's "In Progress" section to "Done — 2026-04-08" with the eval resolutions listed (#14 idempotency via client ULID + CAS, #15 polling observer page replaces the slow timer, #16 scan accounting is structural now, #17 flat polling response shape, #18 schemaId in URL from millisecond zero). After Task 18 the `feature/ux-overhaul` branch is merge-ready.
+### Final verification (Task 18, 2026-04-08)
+
+| Layer | Result |
+|---|---|
+| `pnpm typecheck` (apps/web) | clean |
+| `@denim/types` unit | 2/2 |
+| `@denim/engine` unit | 92/92 |
+| `@denim/ai` unit | 32/32 |
+| `onboarding-scan-accounting` integration | 6/6 |
+| `scan-metrics` integration | 8/8 |
+| `onboarding-state` integration | 18/18 |
+| `onboarding-polling` integration | 20/20 |
+| `entity-groups` integration | 13/13 |
+| `onboarding-concurrent-start` integration | 4/4 |
+| `onboarding-routes` integration | 18/18 |
+| **Total** | **213/213** |
+
+Not run (intentional — require live AI / Gmail): `onboarding-happy-path` (gated on `RUN_E2E_HAPPY=1`), `extraction` (live Gemini), `inngest-pipeline` Test 2B.
+
+### Deferred debt
+
+- **Scan-stage retry doesn't actually recover a `PROCESSING_SCAN` failure.** Task 12's retry route handles pre-scan failures (`PENDING` / `GENERATING_HYPOTHESIS` / `FINALIZING_SCHEMA`) cleanly, but a scan-stage failure leaves the ScanJob in `phase=FAILED` and the resumed `runOnboarding.waitForEvent` hits its 20m timeout. Task 13's manual-rescan route creates a new scanJobId that the waiting workflow ignores. Deferred until a scan-stage failure actually bites in practice (none observed in testing).
+- **Inngest-outage stranding in `POST /api/onboarding/start`** (captured as **issue #33**). If `createSchemaStub` commits but `inngest.send()` throws, the stub is stranded in `phase=PENDING` with no workflow ever starting. The recommended fix is a transactional outbox pattern that also subsumes the fragile TOCTOU P2002-catch pattern. See #33 for the full tradeoff discussion (Option A `createMany skipDuplicates`, Option B Stripe-style Idempotency-Key middleware, Option C outbox — Option C recommended).
+- **`casesMerged` / `clustersCreated` fabricated as 0** in clients for backward compat; cleanup can remove them from the client response in a future pass. Cosmetic.
+
+### Canonical progress doc + deeper detail
+
+See the "Execution Progress" header inside `docs/superpowers/plans/2026-04-07-onboarding-state-machine.md`. It has per-task commit SHAs, file inventory, 29 plan deviations, and the verification routine I followed for each task. The refactor is **complete** — that plan is the canonical archaeology if you need to dig into any specific task's rationale.
 
 ## What's Next (2026-04-07)
 
