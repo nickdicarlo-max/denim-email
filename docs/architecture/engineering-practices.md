@@ -25,12 +25,49 @@ Each database table has ONE service that owns write operations to it. Other serv
 | FeedbackEvent | FeedbackService | Append-only, never updated |
 | QualitySnapshot | QualityService | Created daily, never updated |
 | ScanJob | ScanService | Created and updated during scan lifecycle |
+| OnboardingOutbox | POST /api/onboarding/start + drainOnboardingOutbox | Created atomically with CaseSchema stub; drained by cron. See #33. |
 | ExtractionCost | ExtractionService + SynthesisService | Append-only cost log |
 
 ### Exceptions that cross boundaries
 
 - FeedbackService updates `Email.isExcluded` and `CaseEmail.wasReassigned` because these are direct consequences of user corrections. It does NOT re-run synthesis or recompute case fields. Instead, it emits an Inngest event that triggers SynthesisService to update the affected cases.
 - ScanService discovers entities and creates Entity rows, even though InterviewService is the primary owner. This is acceptable because scan-discovered entities have `autoDetected=true` and are clearly distinguishable from interview-created ones.
+
+## CAS Transition Ownership
+
+Phase transitions on `CaseSchema.phase` and `ScanJob.phase` use compare-and-swap
+helpers (`advanceSchemaPhase`, `advanceScanPhase`). Each `from → to` pair must be
+owned by **exactly one Inngest function**. If two functions attempt the same
+transition, the CAS becomes a race, not a guard.
+
+Rules:
+- **One owner per transition.** See the transition ownership map in
+  `docs/01_denim_lessons_learned.md` for the authoritative list.
+- **Never emit events inside `work()`.** The `work()` callback runs before the
+  CAS `updateMany` commits. If the event triggers a downstream function that
+  attempts the same transition, both functions race on the CAS. Emit events
+  **after** the `advanceScanPhase` / `advanceSchemaPhase` call returns.
+- **Downstream functions must not re-advance.** If `runScan` advances
+  DISCOVERING → EXTRACTING and emits `scan.emails.discovered`, the triggered
+  function (`fanOutExtraction`) must NOT call `advanceScanPhase` for the same
+  transition — the phase is already advanced.
+
+```typescript
+// Bad: event emitted inside work(), races with downstream CAS
+await advanceScanPhase({
+  scanJobId, from: "DISCOVERING", to: "EXTRACTING",
+  work: async () => {
+    await inngest.send({ name: "scan.emails.discovered", data: { ... } });
+  },
+});
+
+// Good: emit after CAS commits
+await advanceScanPhase({
+  scanJobId, from: "DISCOVERING", to: "EXTRACTING",
+  work: async () => { /* DB writes only */ },
+});
+await inngest.send({ name: "scan.emails.discovered", data: { ... } });
+```
 
 ## Idempotency
 

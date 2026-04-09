@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-07 (Eval Session 1 — FAIL — 15 follow-up issues filed against #12)
+Last updated: 2026-04-09 (Transactional outbox refactor #33 landed on feature/ux-overhaul)
 
 ## Completed
 
@@ -1098,7 +1098,7 @@ Structural response to Eval Session 1 (#12, #14–#18): rebuilt onboarding as a 
 
 ### Eval-issue resolutions
 
-- **#14 — Topic creation idempotency.** Replaced with client-supplied ULID on `POST /api/onboarding/start` + `findUnique` fast-path + `P2002 Unique constraint` slow-path catch + ownership re-resolve. Concurrent duplicate POSTs now land exactly one row. (Follow-up: the P2002 pattern is fragile — captured as #33 for the outbox-pattern structural fix.)
+- **#14 — Topic creation idempotency.** Replaced with client-supplied ULID on `POST /api/onboarding/start`. Originally used `findUnique` fast-path + `P2002 Unique constraint` slow-path catch, but this was structurally fragile. **Resolved by #33** (2026-04-09): transactional outbox pattern writes `{CaseSchema stub, OnboardingOutbox row}` atomically in one Prisma `$transaction`, with the `onboarding_outbox.schemaId` PK as the sole idempotency guard. One catch site, one constraint, one code path.
 - **#15 — Onboarding loading screens hang indefinitely.** Replaced the slow-timer spinner approach with a 2s-polling observer page at `apps/web/src/app/onboarding/[schemaId]/page.tsx` that drives off `GET /api/onboarding/:schemaId` and navigates to `/feed` on `phase=COMPLETED`. The polling response carries live `progress` counters so users see `N of M emails` tick up during extraction.
 - **#16 — Scan jobs silently dropping 60–85% of emails.** Phase 0 dropped every denormalized counter column on `ScanJob`; Phase 1's `computeScanMetrics` derives `processedEmails + excludedEmails + failedEmails` directly from `Email.firstScanJobId + isExcluded` and `ScanFailure.scanJobId`. The `onboarding-scan-accounting.test.ts` suite pins the `processed + excluded + failed === totalEmails` invariant across 6 edge cases.
 - **#17 — Response-shape mismatch between server and client.** `derivePollingResponse` flattens the two-row state machine (CaseSchema + ScanJob) into a single `OnboardingPollingResponse` — one `phase` enum, one `progress` object, one `nextHref` — and the observer page switch-renders off that shape.
@@ -1117,6 +1117,7 @@ Structural response to Eval Session 1 (#12, #14–#18): rebuilt onboarding as a 
 - **Phase 8** — Client flow collapse (Task 14): `<OnboardingFlow>` switch component + 10 per-phase subcomponents + the 2s-polling observer page. `connect/page.tsx` rewired to POST `/api/onboarding/start` with a client ULID.
 - **Phase 9** — Dead code deleted (Task 15): 8 files (4 interview routes, status route, scanning page, review page, scan-stream component) + empty parent dirs + `interview.test.ts` + trimmed HTTP describe block from `entity-groups.test.ts`. Net −1300 lines.
 - **Phase 10** — E2E test suite (Task 16): 4 new test files, 28/28 green against live Next + Inngest dev servers. Caught and fixed two production bugs along the way (ZodError → 500, TOCTOU race on concurrent POSTs).
+- **Phase 10b** — Transactional outbox (#33, 2026-04-09): Replaced fragile TOCTOU P2002-catch + unfixed Inngest-outage stranding in `POST /api/onboarding/start` with Option C (transactional outbox). New `OnboardingOutbox` table, `drainOnboardingOutbox` cron function (every 1 minute, exponential backoff, dead-letter at 10 attempts), best-effort optimistic emit from the route for happy-path latency. 126/127 integration tests green (1 pre-existing AI non-determinism). Structurally closes #14 and removes the stranding mechanism from #15.
 - **Phase 11** — Cron stub (Task 17): `cronDailyScans` Inngest function + `stamp-last-scanned-at` step in `runSynthesis` (makes the previously-dead `lastScannedAt` column functional end-to-end). Event-triggered for v1, one-line swap to a real cron trigger when ready. (Task 18: final verification sweep + this doc flip.)
 
 ### Final verification (Task 18, 2026-04-08)
@@ -1141,7 +1142,7 @@ Not run (intentional — require live AI / Gmail): `onboarding-happy-path` (gate
 ### Deferred debt
 
 - **Scan-stage retry doesn't actually recover a `PROCESSING_SCAN` failure.** Task 12's retry route handles pre-scan failures (`PENDING` / `GENERATING_HYPOTHESIS` / `FINALIZING_SCHEMA`) cleanly, but a scan-stage failure leaves the ScanJob in `phase=FAILED` and the resumed `runOnboarding.waitForEvent` hits its 20m timeout. Task 13's manual-rescan route creates a new scanJobId that the waiting workflow ignores. Deferred until a scan-stage failure actually bites in practice (none observed in testing).
-- **Inngest-outage stranding in `POST /api/onboarding/start`** (captured as **issue #33**). If `createSchemaStub` commits but `inngest.send()` throws, the stub is stranded in `phase=PENDING` with no workflow ever starting. The recommended fix is a transactional outbox pattern that also subsumes the fragile TOCTOU P2002-catch pattern. See #33 for the full tradeoff discussion (Option A `createMany skipDuplicates`, Option B Stripe-style Idempotency-Key middleware, Option C outbox — Option C recommended).
+- ~~**Inngest-outage stranding in `POST /api/onboarding/start`**~~ — **resolved by #33** (2026-04-09). Transactional outbox pattern: stub + outbox row written atomically; `drainOnboardingOutbox` cron retries failed emissions. The fragile TOCTOU P2002-catch is also eliminated — `onboarding_outbox.schemaId` PK is the sole idempotency guard.
 - **`casesMerged` / `clustersCreated` fabricated as 0** in clients for backward compat; cleanup can remove them from the client response in a future pass. Cosmetic.
 
 ### Canonical progress doc + deeper detail

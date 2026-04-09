@@ -115,6 +115,7 @@ async function wipe() {
     ['SchemaTag', () => prisma.schemaTag.deleteMany()],
     ['Entity', () => prisma.entity.deleteMany()],
     ['EntityGroup', () => prisma.entityGroup.deleteMany()],
+    ['OnboardingOutbox', () => prisma.onboardingOutbox.deleteMany()],
     ['CaseSchema', () => prisma.caseSchema.deleteMany()],
     ['User', () => prisma.user.deleteMany()],
   ];
@@ -158,8 +159,9 @@ Delete children before parents:
 6. ExclusionRule, ExtractedFieldDef
 7. SchemaTag, Entity
 8. EntityGroup
-9. CaseSchema
-10. User
+9. OnboardingOutbox
+10. CaseSchema
+11. User
 
 ## Troubleshooting
 

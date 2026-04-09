@@ -56,7 +56,7 @@ apps/
           feedback.ts
           calendar.ts
         gmail/                  # Gmail API client
-        inngest/                # Background job definitions
+        inngest/                # Background job definitions + outbox drain
         middleware/             # Auth, rate limiting, error handling
         validation/             # Zod schemas
       components/
@@ -182,18 +182,22 @@ design-to-code workflow are documented in the same file under the "Stitch MCP" s
 - **CaseAction:** Extracted action item with lifecycle, dedup, calendar sync.
 - **Gravity Model:** Deterministic clustering engine. Pure functions, zero I/O.
 - **FeedbackEvent:** Immutable correction event. Powers the breaking-in curve.
+- **OnboardingOutbox:** Transactional outbox for `onboarding.session.started` event emission (#33). Written atomically with the `CaseSchema` stub; drained by a 1-minute cron. Sole idempotency guard for `POST /api/onboarding/start`.
 
 ## Current Status
 
 Phases 0–7 mostly complete. Major dep migration merged (2026-03-30). Pre-UX code
 fixes landed (2026-03-31): case urgency sort & decay, AI prompt quality (time-neutral
-summaries, mood, body/email caps, calibration bounds).
+summaries, mood, body/email caps, calibration bounds). Onboarding state machine
+refactor complete (2026-04-08, 18 tasks, #30). Transactional outbox refactor for
+`POST /api/onboarding/start` landed (2026-04-09, #33): fixes TOCTOU race + Inngest-
+outage stranding with a new `OnboardingOutbox` table and `drainOnboardingOutbox` cron.
 
 **Canonical status doc:** `docs/00_denim_current_status.md` — always read this before
 asking "what's done?" or "what's next?".
 
-**Next:** UX overhaul (waiting on Stitch designs for Phases 2-3), schema additions
-(UserNote, billing fields).
+**Next:** Merge `feature/ux-overhaul` to `main`, schema additions (UserNote, billing
+fields), then UX Phase 4 (notes, settings, topic edit).
 
 ---
 
