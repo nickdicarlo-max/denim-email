@@ -20,11 +20,15 @@
  * Inngest dev server isn't up, the workflow never executes and the
  * schema stays in phase=PENDING forever — fine for this test.
  *
- * Requires a running Next dev server on TEST_BASE_URL (default
- * http://localhost:3000). Start it with `pnpm --filter web dev`
- * before running this test.
+ * Requires BOTH dev servers running:
+ *   - Next dev server on TEST_BASE_URL (default http://localhost:3000):
+ *     `pnpm --filter web dev`
+ *   - Inngest dev server on :8288: `npx inngest-cli@latest dev`
  *
- * Does NOT require an Inngest dev server.
+ * The start route synchronously calls `inngest.send(...)` to emit
+ * `onboarding.session.started`, so Inngest must be reachable or the
+ * route returns 500. We don't care that the workflow actually runs
+ * for this test, only that the event was accepted by the dev server.
  *
  * Run: pnpm --filter web exec vitest run --config vitest.integration.config.ts onboarding-concurrent-start
  */
