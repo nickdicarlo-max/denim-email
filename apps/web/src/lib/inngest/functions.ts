@@ -7,6 +7,7 @@ import { advanceScanPhase, markScanFailed } from "@/lib/services/onboarding-stat
 import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-metrics";
 import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
+import { cronDailyScans } from "./cron";
 import { dailyStatusDecay } from "./daily-status-decay";
 import { runOnboarding } from "./onboarding";
 import { runScan } from "./scan";
@@ -765,6 +766,23 @@ export const runSynthesis = inngest.createFunction(
           },
         });
       });
+
+      // 5b. Stamp the schema's `lastScannedAt` watermark. This is the
+      //     signal the `cronDailyScans` function (Task 17) filters on
+      //     to decide which schemas are stale enough to re-scan. Before
+      //     this step landed, `lastScannedAt` was a dead column that
+      //     nothing ever wrote, making any cron filter a no-op.
+      //
+      //     Runs as a separate `step.run` from the CAS advance so a
+      //     race loss on the phase transition doesn't partially commit
+      //     the watermark. On Inngest replay the update is idempotent —
+      //     writing the same timestamp twice is a no-op.
+      await step.run("stamp-last-scanned-at", async () => {
+        await prisma.caseSchema.update({
+          where: { id: schemaId },
+          data: { lastScannedAt: new Date() },
+        });
+      });
     }
 
     // 6. Emit scan.completed so the runOnboarding orchestrator (Task 9)
@@ -815,4 +833,5 @@ export const functions = [
   resynthesizeOnFeedback,
   dailyQualitySnapshot,
   dailyStatusDecay,
+  cronDailyScans, // Task 17 — periodic re-scan emitter (event-triggered for v1)
 ];

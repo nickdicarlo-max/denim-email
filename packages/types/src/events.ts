@@ -134,4 +134,24 @@ export type DenimEvents = {
       toCaseId: string;
     };
   };
+  "cron.daily.scans.trigger": {
+    /**
+     * Triggers the `cronDailyScans` Inngest function which walks every
+     * ACTIVE schema whose `lastScannedAt` is stale (null or older than
+     * the cron interval) and fires a `scan.requested` event for each.
+     *
+     * Task 17 of the onboarding state machine refactor leaves this as an
+     * EVENT trigger rather than an actual `{ cron: "..." }` trigger so
+     * the team can test the wiring manually before enabling a real
+     * schedule. When ready to enable, swap the trigger in
+     * `apps/web/src/lib/inngest/cron.ts` from
+     *   `triggers: [{ event: "cron.daily.scans.trigger" }]`
+     * to
+     *   `triggers: [{ cron: "TZ=UTC 0 6 * * *" }]`
+     * and the rest of the function continues to work unchanged.
+     *
+     * No payload fields — the cron function queries its own work list.
+     */
+    data: Record<string, never>;
+  };
 };
