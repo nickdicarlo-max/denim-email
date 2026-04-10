@@ -35,7 +35,7 @@ const extractedFieldSchema = z.object({
   type: z.enum(["NUMBER", "STRING", "DATE", "BOOLEAN"]),
   description: z.string(),
   source: z.enum(["BODY", "ATTACHMENT", "ANY"]),
-  format: z.string(),
+  format: z.string().nullable().default(""),
   showOnCard: z.boolean(),
   aggregation: z.enum(["SUM", "LATEST", "MAX", "MIN", "COUNT", "FIRST"]),
 });

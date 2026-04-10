@@ -76,16 +76,26 @@ export function withAuth(handler: AuthenticatedHandler) {
     // Ensure the user row exists in public.users (Supabase auth.users
     // is created by OAuth, but the app-level row must also exist for FK
     // constraints on CaseSchema, etc.).
-    await prisma.user.upsert({
-      where: { id: user.id },
-      create: {
-        id: user.id,
-        email: user.email ?? "",
-        displayName: user.user_metadata?.full_name ?? user.user_metadata?.name ?? null,
-        avatarUrl: user.user_metadata?.avatar_url ?? null,
-      },
-      update: {},
-    });
+    // Upsert by email first (handles re-auth where Supabase assigns a new
+    // user ID for the same Google account after token revocation). Falls back
+    // to id-based upsert if no email is available.
+    const email = user.email ?? "";
+    const displayName = user.user_metadata?.full_name ?? user.user_metadata?.name ?? null;
+    const avatarUrl = user.user_metadata?.avatar_url ?? null;
+
+    if (email) {
+      await prisma.user.upsert({
+        where: { email },
+        create: { id: user.id, email, displayName, avatarUrl },
+        update: { id: user.id, displayName, avatarUrl },
+      });
+    } else {
+      await prisma.user.upsert({
+        where: { id: user.id },
+        create: { id: user.id, email, displayName, avatarUrl },
+        update: {},
+      });
+    }
 
     const response = await handler({ userId: user.id, request });
     logger.info({
