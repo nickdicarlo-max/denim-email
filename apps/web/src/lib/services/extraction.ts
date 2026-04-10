@@ -193,9 +193,30 @@ export async function extractEmail(
   // 3. Parse AI response
   const parsed: ExtractionResult = parseExtractionResponse(aiResult.content);
 
-  // 3a. Relevance gate: reject emails that don't connect to user-input entities
+  // 3a. Check if sender is a known entity (deterministic inclusion bypass)
+  const senderEntityMatch = resolveEntity(
+    gmailMessage.senderDisplayName,
+    gmailMessage.senderEmail,
+    entities,
+  );
+  const senderIsKnownEntity = senderEntityMatch !== null;
+
+  // 3b. Log when a known-entity email bypasses the relevance gate
   const RELEVANCE_THRESHOLD = 0.4;
-  if (parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+  if (senderIsKnownEntity && parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+    logger.info({
+      service: "extraction",
+      operation: "relevanceGateBypass",
+      schemaId,
+      senderName: senderEntityMatch?.entityName,
+      relevanceScore: parsed.relevanceScore,
+      subject: gmailMessage.subject.slice(0, 60),
+    });
+  }
+
+  // 3c. Relevance gate: reject emails that don't connect to user-input entities
+  // Known entities bypass — their emails are always relevant by definition.
+  if (!senderIsKnownEntity && parsed.relevanceScore < RELEVANCE_THRESHOLD) {
     const email = await prisma.email.upsert({
       where: {
         schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
@@ -216,6 +237,12 @@ export async function extractEmail(
         isExcluded: true,
         excludeReason: `relevance:low`,
         bodyLength: gmailMessage.body.length,
+        routingDecision: {
+          relevanceScore: parsed.relevanceScore,
+          relevanceEntity: parsed.relevanceEntity,
+          senderMatch: null,
+          bypassReason: null,
+        } as any,
         firstScanJobId: scanJobId ?? null,
         lastScanJobId: scanJobId ?? null,
       },
@@ -223,6 +250,12 @@ export async function extractEmail(
         isExcluded: true,
         excludeReason: `relevance:low`,
         summary: parsed.summary,
+        routingDecision: {
+          relevanceScore: parsed.relevanceScore,
+          relevanceEntity: parsed.relevanceEntity,
+          senderMatch: null,
+          bypassReason: null,
+        } as any,
         lastScanJobId: scanJobId ?? undefined,
       },
     });
@@ -258,17 +291,13 @@ export async function extractEmail(
   let routeDetail: string | null = null;
 
   // Resolve sender entity for senderEntityId (always, regardless of routing)
-  const entityMatch = resolveEntity(
-    gmailMessage.senderDisplayName,
-    gmailMessage.senderEmail,
-    entities,
-  );
-  if (entityMatch) {
+  // senderEntityMatch was already computed above (step 3a) for the relevance gate bypass.
+  if (senderEntityMatch) {
     const senderEntity = await prisma.entity.findFirst({
       where: {
         schemaId,
-        name: entityMatch.entityName,
-        type: entityMatch.entityType,
+        name: senderEntityMatch.entityName,
+        type: senderEntityMatch.entityType,
         isActive: true,
       },
       select: { id: true },
@@ -376,12 +405,12 @@ export async function extractEmail(
   }
 
   // Stage 4: Sender match (last resort) — only when no WHAT found in content
-  if (!entityId && entityMatch) {
+  if (!entityId && senderEntityMatch) {
     const senderEntity = await prisma.entity.findFirst({
       where: {
         schemaId,
-        name: entityMatch.entityName,
-        type: entityMatch.entityType,
+        name: senderEntityMatch.entityName,
+        type: senderEntityMatch.entityType,
         isActive: true,
       },
       select: { id: true, type: true, associatedPrimaryIds: true },
@@ -391,7 +420,7 @@ export async function extractEmail(
       if (senderEntity.type === "PRIMARY") {
         entityId = senderEntity.id;
         routeMethod = "sender";
-        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${entityMatch.entityName}"`;
+        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${senderEntityMatch.entityName}"`;
       } else {
         const primaryIds = Array.isArray(senderEntity.associatedPrimaryIds)
           ? (senderEntity.associatedPrimaryIds as string[])
@@ -399,11 +428,11 @@ export async function extractEmail(
         if (primaryIds.length === 1) {
           entityId = primaryIds[0];
           routeMethod = "sender";
-          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" → single primary`;
+          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" → single primary`;
         } else if (primaryIds.length > 1) {
           // Multiple associated primaries — ambiguous, leave null
           routeMethod = null;
-          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" but has ${primaryIds.length} associated primaries — ambiguous, skipping`;
+          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" but has ${primaryIds.length} associated primaries — ambiguous, skipping`;
         }
         // primaryIds.length === 0 → shared WHO, leave entityId null
       }
@@ -417,7 +446,7 @@ export async function extractEmail(
     relevanceScore: parsed.relevanceScore,
     relevanceEntity: parsed.relevanceEntity,
     detectedEntities: parsed.detectedEntities.map((d) => d.name),
-    senderMatch: entityMatch ? entityMatch.entityName : null,
+    senderMatch: senderEntityMatch ? senderEntityMatch.entityName : null,
   };
 
   // 5. Check if email already exists (to decide whether to increment counts)
