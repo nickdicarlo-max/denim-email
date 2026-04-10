@@ -301,6 +301,11 @@ export async function persistSchemaRelations(
         aliases: [] as string[],
         confidence: e.confidence,
         autoDetected: true,
+        emailCount: e.emailCount ?? 0,
+        validationEmailIndices: e.emailIndices ?? [],
+        likelyAliasOf: e.likelyAliasOf ?? null,
+        aliasConfidence: e.aliasConfidence ?? null,
+        aliasReason: e.aliasReason ?? null,
       })),
     ...(effectiveConfirmations.addedEntities ?? []).map((name) => ({
       name,
@@ -358,6 +363,14 @@ export async function persistSchemaRelations(
       },
     });
 
+    // Store validation confidence score
+    if (effectiveValidation.confidenceScore != null) {
+      await tx.caseSchema.update({
+        where: { id: schemaId },
+        data: { validationConfidenceScore: effectiveValidation.confidenceScore },
+      });
+    }
+
     // Create entities
     if (finalEntities.length > 0) {
       await tx.entity.createMany({
@@ -369,6 +382,21 @@ export async function persistSchemaRelations(
           aliases: e.aliases,
           confidence: e.confidence,
           autoDetected: e.autoDetected,
+          emailCount: "emailCount" in e ? (e as { emailCount: number }).emailCount : 0,
+          validationEmailIndices:
+            "validationEmailIndices" in e
+              ? (e as { validationEmailIndices: number[] }).validationEmailIndices
+              : undefined,
+          likelyAliasOf:
+            "likelyAliasOf" in e
+              ? (e as { likelyAliasOf: string | null }).likelyAliasOf
+              : undefined,
+          aliasConfidence:
+            "aliasConfidence" in e
+              ? (e as { aliasConfidence: number | null }).aliasConfidence
+              : undefined,
+          aliasReason:
+            "aliasReason" in e ? (e as { aliasReason: string | null }).aliasReason : undefined,
         })),
       });
 
@@ -515,6 +543,25 @@ export async function persistSchemaRelations(
           showOnCard: f.showOnCard,
           aggregation: f.aggregation,
         })),
+      });
+    }
+
+    // Persist noise patterns as exclusion rules
+    if (effectiveValidation.noisePatterns?.length > 0) {
+      const noiseRules = effectiveValidation.noisePatterns.map((pattern) => ({
+        schemaId,
+        ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
+        pattern,
+        source: "interview",
+        isActive: true,
+        matchCount: 0,
+      }));
+      await tx.exclusionRule.createMany({ data: noiseRules });
+      logger.info({
+        service: "interview",
+        operation: "persistSchemaRelations.exclusionRules",
+        schemaId,
+        rulesCreated: noiseRules.length,
       });
     }
   });

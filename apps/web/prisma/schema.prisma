@@ -138,6 +138,9 @@ model CaseSchema {
   // --- CO-PILOT CONFIG (Phase 2) ---
   copilotConfig     Json?              // { enabled, startedAt, expiresAt, adjustmentsApplied }
 
+  // --- VALIDATION ---
+  validationConfidenceScore  Float?     // Overall validation confidence 0-1
+
   // --- ONBOARDING WORKFLOW STATE MACHINE ---
   // Null after AWAITING_REVIEW is confirmed and the schema goes live.
   phase           SchemaPhase?
@@ -340,7 +343,11 @@ model Entity {
   confidence    Float    @default(1.0)  // How confident the auto-detection was
   isActive      Boolean  @default(true) // User can disable on Card 4 without deleting
   emailCount    Int      @default(0)    // How many emails reference this entity
-  
+  validationEmailIndices  Json?         // 1-based indices into validation email sample
+  likelyAliasOf           String?       // Name of entity this may be an alias of
+  aliasConfidence          Float?       // 0-1 confidence this is an alias
+  aliasReason              String?      // Why this is considered an alias
+
   // Relationships
   emails        Email[]                 // Emails assigned to this entity (primary only)
   cases         Case[]                  // Cases scoped to this entity (primary only)

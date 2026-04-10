@@ -8,6 +8,10 @@ export interface EntityData {
   emailCount: number;
   aliases: string[];
   isActive: boolean;
+  confidence: number;
+  likelyAliasOf: string | null;
+  aliasConfidence: number | null;
+  aliasReason: string | null;
 }
 
 interface ReviewEntitiesProps {
@@ -46,18 +50,21 @@ export function ReviewEntities({ userThings, entities, onToggleEntity }: ReviewE
   });
 
   // Section 2: New discoveries -- auto-detected primary entities not matching any user thing
-  const discoveries = entities.filter((e) => {
-    if (e.type !== "PRIMARY" || !e.autoDetected) return false;
-    const nameLower = e.name.toLowerCase();
-    // Skip if entity name matches a user thing
-    if (userThingsLower.includes(nameLower)) return false;
-    // Skip if entity is an alias of a user thing
-    const isAliasOfUserThing = userThings.some((t) =>
-      e.aliases.some((a) => a.toLowerCase() === t.toLowerCase()),
-    );
-    if (isAliasOfUserThing) return false;
-    return true;
-  });
+  // Sorted by confidence DESC (highest first)
+  const discoveries = entities
+    .filter((e) => {
+      if (e.type !== "PRIMARY" || !e.autoDetected) return false;
+      const nameLower = e.name.toLowerCase();
+      // Skip if entity name matches a user thing
+      if (userThingsLower.includes(nameLower)) return false;
+      // Skip if entity is an alias of a user thing
+      const isAliasOfUserThing = userThings.some((t) =>
+        e.aliases.some((a) => a.toLowerCase() === t.toLowerCase()),
+      );
+      if (isAliasOfUserThing) return false;
+      return true;
+    })
+    .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
 
   return (
     <div className="space-y-6">
@@ -110,11 +117,20 @@ export function ReviewEntities({ userThings, entities, onToggleEntity }: ReviewE
           <div className="space-y-3">
             {discoveries.map((entity) => (
               <div key={entity.id} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-primary font-medium">{entity.name}</span>
-                  <span className="text-xs text-muted">
-                    {entity.emailCount} {entity.emailCount === 1 ? "email" : "emails"}
-                  </span>
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-primary font-medium">{entity.name}</span>
+                    <span className="text-xs text-muted">
+                      {entity.emailCount} {entity.emailCount === 1 ? "email" : "emails"}
+                    </span>
+                  </div>
+                  {entity.likelyAliasOf && (
+                    <span className="text-xs text-muted">
+                      May be related to {entity.likelyAliasOf}
+                      {entity.aliasConfidence != null &&
+                        ` (${Math.round(entity.aliasConfidence * 100)}%)`}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   {entity.isActive ? (

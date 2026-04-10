@@ -39,6 +39,10 @@ interface RawEntity {
   emailCount: number;
   aliases: unknown;
   isActive: boolean;
+  confidence: number;
+  likelyAliasOf: string | null;
+  aliasConfidence: number | null;
+  aliasReason: string | null;
 }
 
 export function PhaseReview({ response }: { response: OnboardingPollingResponse }) {
@@ -85,6 +89,10 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
             emailCount: e.emailCount,
             aliases: parseAliases(e.aliases),
             isActive: e.isActive,
+            confidence: e.confidence ?? 1.0,
+            likelyAliasOf: e.likelyAliasOf ?? null,
+            aliasConfidence: e.aliasConfidence ?? null,
+            aliasReason: e.aliasReason ?? null,
           })),
         );
         setStatus("ready");
