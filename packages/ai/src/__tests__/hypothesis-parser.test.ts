@@ -107,7 +107,7 @@ const VALID_FIXTURE: SchemaHypothesis = {
       source: "BODY",
       format: "USD",
       showOnCard: false,
-      aggregation: "SUM",
+      aggregation: "LATEST",
     },
   ],
   summaryLabels: {

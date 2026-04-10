@@ -110,6 +110,14 @@ RECURRING EVENTS:
 - Identify the NEXT upcoming event date and location as the primary action item. Past events should not appear as actions.
 - Set status to IN_PROGRESS if upcoming events exist, RESOLVED if all events have passed.
 
+FINANCIAL AMOUNTS:
+When multiple emails discuss the same charge (quote, invoice, payment), report the
+FINAL or CONFIRMED amount ONCE, not the sum of every mention. Email threads typically
+reference the same dollar figure repeatedly (original quote, approval, confirmation,
+invoice) -- these are the SAME charge, not separate charges.
+
+For the "cost" extracted field, report the single most recent/authoritative amount.
+
 CRITICAL RULES:
 1. Return ONLY valid JSON matching the required schema exactly. No explanations, no markdown, no extra text.
 2. Title must be under 60 characters.

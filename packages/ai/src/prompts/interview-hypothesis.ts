@@ -92,7 +92,7 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     fields: [
       { name: "eventDate", type: "DATE", showOnCard: true, aggregation: "LATEST" },
       { name: "eventLocation", type: "STRING", showOnCard: false, aggregation: "LATEST" },
-      { name: "amount", type: "NUMBER", showOnCard: false, aggregation: "SUM" },
+      { name: "amount", type: "NUMBER", showOnCard: false, aggregation: "LATEST" },
     ],
     summaryLabels: { beginning: "What", middle: "Details", end: "Action Needed" },
     secondaryEntityTypes: ["Coach", "Teacher", "Administrator", "Parent", "Organization"],
@@ -155,7 +155,7 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
       },
     ],
     fields: [
-      { name: "cost", type: "NUMBER", showOnCard: true, aggregation: "SUM" },
+      { name: "cost", type: "NUMBER", showOnCard: true, aggregation: "LATEST" },
       { name: "deadline", type: "DATE", showOnCard: false, aggregation: "LATEST" },
     ],
     summaryLabels: { beginning: "Issue", middle: "Activity", end: "Status" },
@@ -219,7 +219,7 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
       },
     ],
     fields: [
-      { name: "cost", type: "NUMBER", showOnCard: true, aggregation: "SUM" },
+      { name: "cost", type: "NUMBER", showOnCard: true, aggregation: "LATEST" },
       { name: "deadline", type: "DATE", showOnCard: true, aggregation: "LATEST" },
       { name: "percentComplete", type: "NUMBER", showOnCard: false, aggregation: "LATEST" },
     ],
@@ -355,7 +355,7 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     ],
     fields: [
       { name: "deadline", type: "DATE", showOnCard: true, aggregation: "LATEST" },
-      { name: "budget", type: "NUMBER", showOnCard: false, aggregation: "SUM" },
+      { name: "budget", type: "NUMBER", showOnCard: false, aggregation: "LATEST" },
     ],
     summaryLabels: { beginning: "Brief", middle: "Progress", end: "Status" },
     secondaryEntityTypes: [
@@ -425,7 +425,7 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     ],
     fields: [
       { name: "deadline", type: "DATE", showOnCard: true, aggregation: "LATEST" },
-      { name: "amount", type: "NUMBER", showOnCard: false, aggregation: "SUM" },
+      { name: "amount", type: "NUMBER", showOnCard: false, aggregation: "LATEST" },
     ],
     summaryLabels: { beginning: "Topic", middle: "Details", end: "Status" },
     secondaryEntityTypes: ["Contact", "Organization", "Vendor", "Manager", "Team Member"],
