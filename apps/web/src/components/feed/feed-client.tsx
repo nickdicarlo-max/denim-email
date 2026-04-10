@@ -7,7 +7,6 @@ import { createBrowserClient } from "@/lib/supabase/client";
 import { FeedEmptyState } from "./empty-state";
 import { FeedHeader } from "./feed-header";
 import { TopicChips } from "./topic-chips";
-import { UrgencySection } from "./urgency-section";
 
 interface FeedSchema {
   id: string;
@@ -22,20 +21,13 @@ interface FeedCaseData extends CaseCardData {
   schemaDomain: string;
 }
 
-const URGENCY_TIERS = [
-  { key: "IMMINENT", title: "Focus Now", icon: "priority_high" },
-  { key: "THIS_WEEK", title: "This Week", icon: "date_range" },
-  { key: "UPCOMING", title: "Upcoming", icon: "upcoming" },
-  { key: "NO_ACTION", title: "No Action Needed", icon: "check_circle" },
-] as const;
-
 export function FeedClient({ avatarUrl }: { avatarUrl?: string | null }) {
   const searchParams = useSearchParams();
   const [cases, setCases] = useState<FeedCaseData[]>([]);
   const [schemas, setSchemas] = useState<FeedSchema[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeSchemaId, setActiveSchemaId] = useState<string | null>(
-    () => searchParams.get("schema"),
+  const [activeSchemaId, setActiveSchemaId] = useState<string | null>(() =>
+    searchParams.get("schema"),
   );
   const [activeEntityId, setActiveEntityId] = useState<string | null>(null);
 
@@ -68,14 +60,6 @@ export function FeedClient({ avatarUrl }: { avatarUrl?: string | null }) {
     if (activeEntityId && c.entityId !== activeEntityId) return false;
     return true;
   });
-
-  // Group by urgency
-  const grouped: Record<string, FeedCaseData[]> = {};
-  for (const c of filtered) {
-    const tier = c.urgency ?? "UPCOMING";
-    if (!grouped[tier]) grouped[tier] = [];
-    grouped[tier].push(c);
-  }
 
   if (loading) {
     return (
@@ -120,23 +104,10 @@ export function FeedClient({ avatarUrl }: { avatarUrl?: string | null }) {
       {filtered.length === 0 ? (
         <FeedEmptyState variant="caught-up" />
       ) : (
-        <div className="space-y-8 mt-2 pb-4">
-          {URGENCY_TIERS.map(({ key, title, icon }) => {
-            const tierCases = grouped[key];
-            if (!tierCases?.length) return null;
-            return (
-              <UrgencySection key={key} title={title} icon={icon}>
-                {tierCases.map((c) => (
-                  <CaseCard
-                    key={c.id}
-                    caseData={c}
-                    schemaId={c.schemaId}
-                    schemaDomain={c.schemaDomain}
-                  />
-                ))}
-              </UrgencySection>
-            );
-          })}
+        <div className="space-y-3 mt-2 pb-4 px-6">
+          {filtered.map((c) => (
+            <CaseCard key={c.id} caseData={c} schemaId={c.schemaId} schemaDomain={c.schemaDomain} />
+          ))}
         </div>
       )}
     </>

@@ -50,14 +50,6 @@ const MOOD_ICONS: Record<string, string> = {
   negative: "\uD83D\uDE1F",
 };
 
-const URGENCY_BORDER: Record<string, string> = {
-  IMMINENT: "border-l-imminent",
-  THIS_WEEK: "border-l-accent",
-  UPCOMING: "border-l-upcoming",
-  NO_ACTION: "border-l-surface-highest",
-  IRRELEVANT: "border-l-surface-highest",
-};
-
 function getMoodBorderOverride(mood: string | null | undefined): string | null {
   if (mood === "celebratory") return "border-l-[#D4A373]";
   return null;
@@ -84,10 +76,9 @@ interface CaseCardProps {
 }
 
 export function CaseCard({ caseData, schemaDomain }: CaseCardProps) {
-  const isMuted = caseData.urgency === "NO_ACTION" || caseData.urgency === "IRRELEVANT";
+  const isMuted = caseData.status === "RESOLVED";
   const moodBorder = getMoodBorderOverride(caseData.mood);
-  const borderColor =
-    moodBorder ?? URGENCY_BORDER[caseData.urgency ?? "UPCOMING"] ?? "border-l-accent";
+  const borderColor = moodBorder ?? "border-l-accent";
   const isUnread = caseData.viewedAt === null;
   const moodIcon = caseData.mood ? (MOOD_ICONS[caseData.mood] ?? "") : "";
   const pendingActions = caseData.actions.filter((a) => a.status === "PENDING");

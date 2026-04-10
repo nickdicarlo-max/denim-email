@@ -4,13 +4,6 @@ import { withAuth } from "@/lib/middleware/auth";
 import { handleApiError } from "@/lib/middleware/error-handler";
 import { prisma } from "@/lib/prisma";
 
-const URGENCY_ORDER: Record<string, number> = {
-  IMMINENT: 0,
-  THIS_WEEK: 1,
-  UPCOMING: 2,
-  NO_ACTION: 3,
-};
-
 export const GET = withAuth(async ({ userId, request }) => {
   try {
     const url = new URL(request.url);
@@ -140,6 +133,7 @@ export const GET = withAuth(async ({ userId, request }) => {
         lastSenderEntity: c.lastSenderEntity,
         viewedAt: c.viewedAt?.toISOString() ?? null,
         feedbackRating: c.feedbackRating,
+        nextActionDate: c.nextActionDate?.toISOString() ?? null,
         emailCount: c.caseEmails.length,
         actions: c.actions.map((a) => ({
           ...a,
@@ -151,10 +145,16 @@ export const GET = withAuth(async ({ userId, request }) => {
     });
 
     feedCases.sort((a, b) => {
-      const aUrgency = URGENCY_ORDER[a.urgency ?? "UPCOMING"] ?? 2;
-      const bUrgency = URGENCY_ORDER[b.urgency ?? "UPCOMING"] ?? 2;
-      if (aUrgency !== bUrgency) return aUrgency - bUrgency;
+      // Primary: nextActionDate ASC, nulls last
+      const aAction = a.nextActionDate
+        ? new Date(a.nextActionDate).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      const bAction = b.nextActionDate
+        ? new Date(b.nextActionDate).getTime()
+        : Number.MAX_SAFE_INTEGER;
+      if (aAction !== bAction) return aAction - bAction;
 
+      // Secondary: lastEmailDate DESC (most recent first)
       const aDate = a.lastEmailDate ? new Date(a.lastEmailDate).getTime() : 0;
       const bDate = b.lastEmailDate ? new Date(b.lastEmailDate).getTime() : 0;
       return bDate - aDate;
