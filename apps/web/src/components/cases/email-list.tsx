@@ -48,16 +48,11 @@ function EmailItem({ email, schemaId }: { email: EmailWithAssignment; schemaId: 
   async function handleExclude() {
     setExcluding(true);
     try {
-      const { createBrowserClient } = await import("@/lib/supabase/client");
-      const supabase = createBrowserClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { authenticatedFetch } = await import("@/lib/supabase/authenticated-fetch");
 
-      const res = await fetch("/api/feedback", {
+      const res = await authenticatedFetch("/api/feedback", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${session?.access_token ?? ""}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({

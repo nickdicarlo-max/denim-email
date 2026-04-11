@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { Button } from "../ui/button";
 import { CaseCard, type CaseCardData } from "./case-card";
+import { CaseCardSkeleton } from "./case-card-skeleton";
 import { FilterTabs } from "./filter-tabs";
 
 import { ScopeHeaders } from "./scope-headers";
@@ -60,17 +61,9 @@ export function CaseFeed({
         if (entityFilter) params.set("entityId", entityFilter);
         if (cursor) params.set("cursor", cursor);
 
-        const { createBrowserClient } = await import("@/lib/supabase/client");
-        const supabase = createBrowserClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        const { authenticatedFetch } = await import("@/lib/supabase/authenticated-fetch");
 
-        const res = await fetch(`/api/cases?${params}`, {
-          headers: {
-            Authorization: `Bearer ${session?.access_token ?? ""}`,
-          },
-        });
+        const res = await authenticatedFetch(`/api/cases?${params}`);
 
         if (!res.ok) return;
 
@@ -106,21 +99,14 @@ export function CaseFeed({
       if (newEntity) p.set("entityId", newEntity);
 
       setLoading(true);
-      import("@/lib/supabase/client").then(({ createBrowserClient }) => {
-        const supabase = createBrowserClient();
-        supabase.auth.getSession().then(({ data: { session } }) => {
-          fetch(`/api/cases?${p}`, {
-            headers: {
-              Authorization: `Bearer ${session?.access_token ?? ""}`,
-            },
+      import("@/lib/supabase/authenticated-fetch").then(({ authenticatedFetch }) => {
+        authenticatedFetch(`/api/cases?${p}`)
+          .then((res) => res.json())
+          .then((body) => {
+            setCases(body.data.cases);
+            setNextCursor(body.data.nextCursor);
           })
-            .then((res) => res.json())
-            .then((body) => {
-              setCases(body.data.cases);
-              setNextCursor(body.data.nextCursor);
-            })
-            .finally(() => setLoading(false));
-        });
+          .finally(() => setLoading(false));
       });
     }, 0);
   }
@@ -149,7 +135,7 @@ export function CaseFeed({
 
       {/* Content */}
       {loading && cases.length === 0 ? (
-        <LoadingSkeleton />
+        <CaseCardSkeleton />
       ) : !hasAnyCases ? (
         <EmptyState />
       ) : (
@@ -204,20 +190,6 @@ function EmptyState() {
       <p className="text-sm text-secondary max-w-sm mx-auto leading-relaxed">
         You've managed all your immediate tasks. Enjoy the quiet moments before the next big thing.
       </p>
-    </div>
-  );
-}
-
-function LoadingSkeleton() {
-  return (
-    <div className="space-y-4 animate-pulse">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="bg-white rounded-lg p-6 border-l-4 border-l-surface-highest">
-          <div className="h-4 bg-surface-mid rounded w-3/4 mb-3" />
-          <div className="h-3 bg-surface-mid rounded w-1/2 mb-2" />
-          <div className="h-3 bg-surface-mid rounded w-full" />
-        </div>
-      ))}
     </div>
   );
 }

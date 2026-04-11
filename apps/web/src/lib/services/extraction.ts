@@ -11,6 +11,7 @@ import { buildExtractionPrompt, parseExtractionResponse } from "@denim/ai";
 import { resolveEntity } from "@denim/engine";
 import type { ExtractionInput, ExtractionResult, ExtractionSchemaContext } from "@denim/types";
 import { callGemini } from "@/lib/ai/client";
+import { logAICost } from "@/lib/ai/cost-tracker";
 import { GmailClient } from "@/lib/gmail/client";
 import type { GmailMessageFull } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
@@ -18,10 +19,6 @@ import { prisma } from "@/lib/prisma";
 import { matchesExclusionRule } from "./exclusion";
 
 const GEMINI_MODEL = "gemini-2.5-flash";
-
-// Gemini Flash 2.5 pricing (per token)
-const GEMINI_INPUT_COST = 0.00000015;
-const GEMINI_OUTPUT_COST = 0.0000006;
 
 interface ExtractEmailOptions {
   schemaId: string;
@@ -261,20 +258,19 @@ export async function extractEmail(
     });
 
     // Still log the extraction cost
-    const estimatedCost =
-      aiResult.inputTokens * GEMINI_INPUT_COST + aiResult.outputTokens * GEMINI_OUTPUT_COST;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: email.id,
         scanJobId,
         model: GEMINI_MODEL,
         operation: "extraction",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
     return { emailId: email.id, excluded: true };
   }
@@ -549,21 +545,19 @@ export async function extractEmail(
   });
 
   // 7. Write ExtractionCost row (outside transaction — non-critical)
-  const estimatedCost =
-    aiResult.inputTokens * GEMINI_INPUT_COST + aiResult.outputTokens * GEMINI_OUTPUT_COST;
-
-  await prisma.extractionCost.create({
-    data: {
+  await logAICost(
+    {
+      inputTokens: aiResult.inputTokens,
+      outputTokens: aiResult.outputTokens,
+      latencyMs: aiResult.latencyMs,
+    },
+    {
       emailId: email.id,
       scanJobId,
       model: GEMINI_MODEL,
       operation: "extraction",
-      inputTokens: aiResult.inputTokens,
-      outputTokens: aiResult.outputTokens,
-      estimatedCostUsd: estimatedCost,
-      latencyMs: aiResult.latencyMs,
     },
-  });
+  );
 
   return { emailId: email.id, excluded: false };
 }
@@ -580,7 +574,9 @@ export async function processEmailBatch(
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[],
   options: ExtractEmailOptions,
   /** Optional pre-built client (e.g., FixtureGmailClient for eval). */
-  injectedClient?: { getEmailFullWithPacing(id: string, delayMs?: number): Promise<GmailMessageFull> },
+  injectedClient?: {
+    getEmailFullWithPacing(id: string, delayMs?: number): Promise<GmailMessageFull>;
+  },
 ): Promise<ProcessBatchResult> {
   const gmailClient = injectedClient ?? new GmailClient(accessToken);
   let processed = 0;

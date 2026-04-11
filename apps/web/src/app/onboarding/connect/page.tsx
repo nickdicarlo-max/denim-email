@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ulid } from "ulid";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import { Button } from "@/components/ui/button";
+import { signInWithGmail } from "@/lib/gmail/oauth-config";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import { createBrowserClient } from "@/lib/supabase/client";
 
@@ -132,12 +133,27 @@ export default function ConnectPage() {
       })
       .then(async (res) => {
         if (!res.ok) {
+          // Gmail tokens missing or revoked — show Connect Gmail button
+          // instead of an error. The start endpoint returns 422 with
+          // type=GMAIL_NOT_CONNECTED when the user has a Supabase session
+          // but no valid Gmail tokens.
+          if (res.status === 422) {
+            const body = await res.json().catch(() => null);
+            if (body?.type === "GMAIL_NOT_CONNECTED") {
+              clearSlowTimer();
+              hypothesisCalledRef.current = false;
+              onboardingStorage.clearSchemaId();
+              setStatus("idle");
+              return null;
+            }
+          }
           const body = await res.text();
           throw new Error(`Onboarding start failed (${res.status}): ${body}`);
         }
         return res.json();
       })
-      .then(() => {
+      .then((json) => {
+        if (!json) return; // 422 GMAIL_NOT_CONNECTED — already handled above
         clearSlowTimer();
         router.push(`/onboarding/${schemaId}`);
       })
@@ -158,17 +174,7 @@ export default function ConnectPage() {
     const supabase = createBrowserClient();
     const redirectTo = `${window.location.origin}/auth/callback?next=/onboarding/connect`;
 
-    supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo,
-        scopes: "https://www.googleapis.com/auth/gmail.readonly",
-        queryParams: {
-          access_type: "offline",
-          prompt: "consent",
-        },
-      },
-    });
+    signInWithGmail(supabase, redirectTo);
   }, []);
 
   const handleRetry = useCallback(() => {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
-import { createBrowserClient } from "@/lib/supabase/client";
+import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 
 /**
  * AWAITING_REVIEW — the human checkpoint. Lifted from the previous
@@ -64,15 +64,7 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
 
     const run = async () => {
       try {
-        const supabase = createBrowserClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session) throw new Error("Not authenticated");
-
-        const res = await fetch(`/api/schemas/${response.schemaId}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const res = await authenticatedFetch(`/api/schemas/${response.schemaId}`);
         if (!res.ok) throw new Error(`Failed to load schema (${res.status})`);
 
         const json = (await res.json()) as {
@@ -113,19 +105,12 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
     setStatus("finalizing");
     setErrorMessage("");
     try {
-      const supabase = createBrowserClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Not authenticated");
-
       const entityToggles = entities.map((e) => ({ id: e.id, isActive: e.isActive }));
 
-      const res = await fetch(`/api/onboarding/${response.schemaId}`, {
+      const res = await authenticatedFetch(`/api/onboarding/${response.schemaId}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ topicName: topicName.trim(), entityToggles }),
       });

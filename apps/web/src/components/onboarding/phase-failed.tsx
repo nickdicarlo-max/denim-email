@@ -3,8 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
+import { signInWithGmail } from "@/lib/gmail/oauth-config";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
+import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 import { createBrowserClient } from "@/lib/supabase/client";
 
 /**
@@ -13,28 +16,37 @@ import { createBrowserClient } from "@/lib/supabase/client";
  * onboarding.session.started. The observer page's next poll tick will
  * pick up the new non-FAILED phase and swap the rendered component.
  *
+ * Auth errors (expired/revoked Google tokens) get special treatment:
+ * instead of "Try again" (which would fail identically), the user sees
+ * a "Reconnect Google" button that re-triggers the OAuth flow. After
+ * re-auth, they land back here and can retry with a fresh token.
+ *
  * Users can also start over, which clears the sessionStorage draft so
  * the category page doesn't resume against a dead schemaId. The failed
  * schema row itself is left behind for debugging — it isn't archived.
  */
+
 export function PhaseFailed({ response }: { response: OnboardingPollingResponse }) {
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
 
+  const errorPhase = response.error?.phase ?? "UNKNOWN";
+  const errorMessage = response.error?.message ?? "Something went wrong during setup.";
+  const authError = matchesGmailAuthError(errorMessage);
+
+  const handleReconnect = useCallback(() => {
+    const supabase = createBrowserClient();
+    const redirectTo = `${window.location.origin}/auth/callback?next=/onboarding/${response.schemaId}`;
+    signInWithGmail(supabase, redirectTo);
+  }, [response.schemaId]);
+
   const handleRetry = useCallback(async () => {
     setRetrying(true);
     setRetryError(null);
     try {
-      const supabase = createBrowserClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session) throw new Error("Not authenticated");
-
-      const res = await fetch(`/api/onboarding/${response.schemaId}/retry`, {
+      const res = await authenticatedFetch(`/api/onboarding/${response.schemaId}/retry`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -53,22 +65,41 @@ export function PhaseFailed({ response }: { response: OnboardingPollingResponse 
     router.push("/onboarding/category");
   }, [router]);
 
-  const errorPhase = response.error?.phase ?? "UNKNOWN";
-  const errorMessage = response.error?.message ?? "Something went wrong during setup.";
-
   return (
     <div className="flex flex-col items-center gap-6 text-center max-w-sm">
-      <span className="material-symbols-outlined text-[40px] text-overdue">error</span>
-      <h1 className="font-serif text-2xl text-primary">Setup failed</h1>
+      <span className="material-symbols-outlined text-[40px] text-overdue">
+        {authError ? "link_off" : "error"}
+      </span>
+      <h1 className="font-serif text-2xl text-primary">
+        {authError ? "Google connection lost" : "Setup failed"}
+      </h1>
       <div className="flex flex-col gap-1">
-        <p className="text-sm text-muted">Failed during: {errorPhase}</p>
-        <p className="text-sm text-muted break-words">{errorMessage}</p>
+        {authError ? (
+          <p className="text-sm text-muted">
+            Your Google account needs to be reconnected. This can happen when permissions expire or
+            are revoked.
+          </p>
+        ) : (
+          <>
+            <p className="text-sm text-muted">Failed during: {errorPhase}</p>
+            <p className="text-sm text-muted break-words">{errorMessage}</p>
+          </>
+        )}
       </div>
       {retryError && <p className="text-sm text-overdue">{retryError}</p>}
       <div className="flex flex-col gap-3 w-full">
-        <Button onClick={handleRetry} disabled={retrying}>
-          {retrying ? "Retrying…" : "Try again"}
-        </Button>
+        {authError ? (
+          <>
+            <Button onClick={handleReconnect}>Reconnect Google</Button>
+            <Button onClick={handleRetry} variant="secondary" disabled={retrying}>
+              {retrying ? "Retrying…" : "Try again anyway"}
+            </Button>
+          </>
+        ) : (
+          <Button onClick={handleRetry} disabled={retrying}>
+            {retrying ? "Retrying…" : "Try again"}
+          </Button>
+        )}
         <Button onClick={handleStartOver} variant="secondary" disabled={retrying}>
           Start over
         </Button>

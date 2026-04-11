@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
+import { GMAIL_SCOPES } from "@/lib/gmail/oauth-config";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { storeGmailTokens } from "@/lib/services/gmail-tokens";
@@ -84,7 +85,7 @@ export async function GET(request: NextRequest) {
             access_token: exchangeSession.provider_token,
             refresh_token: exchangeSession.provider_refresh_token ?? "",
             expiry_date: Date.now() + 3600 * 1000,
-            scope: "https://www.googleapis.com/auth/gmail.readonly",
+            scope: GMAIL_SCOPES,
           });
 
           logger.info({

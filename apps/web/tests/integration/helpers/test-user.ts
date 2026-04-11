@@ -4,6 +4,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
+import { ensureUserRow } from "@/lib/services/user";
 
 const TEST_EMAIL = "integration-test@denim-email.test";
 const TEST_PASSWORD = "test-integration-password-2026";
@@ -12,9 +13,7 @@ function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) {
-    throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env",
-    );
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env");
   }
   return createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -46,45 +45,32 @@ export async function createTestUser(): Promise<TestUser> {
     userId = existing.id;
   } else {
     // Create user via admin API (bypasses email validation, auto-confirms)
-    const { data: created, error: createError } =
-      await admin.auth.admin.createUser({
-        email: TEST_EMAIL,
-        password: TEST_PASSWORD,
-        email_confirm: true,
-      });
+    const { data: created, error: createError } = await admin.auth.admin.createUser({
+      email: TEST_EMAIL,
+      password: TEST_PASSWORD,
+      email_confirm: true,
+    });
     if (createError || !created.user) {
-      throw new Error(
-        `Failed to create test user: ${createError?.message}`,
-      );
+      throw new Error(`Failed to create test user: ${createError?.message}`);
     }
     userId = created.user.id;
   }
 
   // Sign in to get an access token
-  const { data: signIn, error: signInError } =
-    await admin.auth.signInWithPassword({
-      email: TEST_EMAIL,
-      password: TEST_PASSWORD,
-    });
+  const { data: signIn, error: signInError } = await admin.auth.signInWithPassword({
+    email: TEST_EMAIL,
+    password: TEST_PASSWORD,
+  });
   if (signInError || !signIn.user || !signIn.session) {
-    throw new Error(
-      `Failed to sign in test user: ${signInError?.message}`,
-    );
+    throw new Error(`Failed to sign in test user: ${signInError?.message}`);
   }
   accessToken = signIn.session.access_token;
 
-  // Upsert the User row in Prisma
-  await prisma.user.upsert({
-    where: { id: userId },
-    create: {
-      id: userId,
-      email: TEST_EMAIL,
-      displayName: "Integration Test User",
-    },
-    update: {
-      email: TEST_EMAIL,
-      displayName: "Integration Test User",
-    },
+  // Upsert the User row via shared service (same code path as withAuth middleware)
+  await ensureUserRow({
+    userId,
+    email: TEST_EMAIL,
+    displayName: "Integration Test User",
   });
 
   return { userId, accessToken };

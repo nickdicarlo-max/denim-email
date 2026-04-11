@@ -3,7 +3,8 @@
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CaseCard, type CaseCardData } from "@/components/cases/case-card";
-import { createBrowserClient } from "@/lib/supabase/client";
+import { CaseCardSkeleton } from "@/components/cases/case-card-skeleton";
+import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 import { FeedEmptyState } from "./empty-state";
 import { FeedHeader } from "./feed-header";
 import { TopicChips } from "./topic-chips";
@@ -33,21 +34,17 @@ export function FeedClient({ avatarUrl }: { avatarUrl?: string | null }) {
 
   const loadFeed = useCallback(async () => {
     setLoading(true);
-    const supabase = createBrowserClient();
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return;
+    try {
+      const res = await authenticatedFetch("/api/feed");
+      if (!res.ok) return;
 
-    const res = await fetch("/api/feed", {
-      headers: { Authorization: `Bearer ${session.access_token}` },
-    });
-    if (!res.ok) return;
-
-    const { data } = await res.json();
-    setCases(data.cases);
-    setSchemas(data.schemas);
-    setLoading(false);
+      const { data } = await res.json();
+      setCases(data.cases);
+      setSchemas(data.schemas);
+      setLoading(false);
+    } catch {
+      // Not authenticated — silent bail
+    }
   }, []);
 
   useEffect(() => {
@@ -65,14 +62,8 @@ export function FeedClient({ avatarUrl }: { avatarUrl?: string | null }) {
     return (
       <>
         <FeedHeader avatarUrl={avatarUrl} />
-        <div className="space-y-4 px-6 animate-pulse mt-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="bg-white rounded-lg p-6 border-l-4 border-l-surface-highest">
-              <div className="h-4 bg-surface-mid rounded w-3/4 mb-3" />
-              <div className="h-3 bg-surface-mid rounded w-1/2 mb-2" />
-              <div className="h-3 bg-surface-mid rounded w-full" />
-            </div>
-          ))}
+        <div className="px-6 mt-4">
+          <CaseCardSkeleton />
         </div>
       </>
     );

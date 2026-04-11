@@ -148,11 +148,15 @@ model CaseSchema {
   phaseErrorAt    DateTime?
   phaseUpdatedAt  DateTime?
 
-  // Raw onboarding inputs + intermediate hypothesis (only meaningful during onboarding).
-  // Note: distinct from interviewResponses/rawHypothesis above — those are kept for
-  // debugging/analytics; these are the workflow handles read by the state machine.
+  // Raw onboarding inputs + intermediate hypothesis + validation (only meaningful
+  // during onboarding). Note: distinct from interviewResponses/rawHypothesis above —
+  // those are kept for debugging/analytics; these are the workflow handles read by
+  // the state machine. `validation` holds the HypothesisValidation result from
+  // sampleScan(200) + validateHypothesis so discovered entities can be persisted
+  // by persistSchemaRelations during FINALIZING_SCHEMA.
   inputs          Json?
   hypothesis      Json?
+  validation      Json?
 
   // Relationships
   tags              SchemaTag[]

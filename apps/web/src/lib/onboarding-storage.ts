@@ -35,6 +35,7 @@ export const onboardingStorage = {
 
   getSchemaId: () => get<string>(KEYS.schemaId),
   setSchemaId: (id: string) => set(KEYS.schemaId, id),
+  clearSchemaId: () => sessionStorage.removeItem(KEYS.schemaId),
 
   clearAll: () => {
     sessionStorage.removeItem(KEYS.category);

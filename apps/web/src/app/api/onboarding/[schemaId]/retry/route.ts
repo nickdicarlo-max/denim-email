@@ -22,12 +22,9 @@ import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
 import { handleApiError } from "@/lib/middleware/error-handler";
+import { assertResourceOwnership } from "@/lib/middleware/ownership";
+import { extractOnboardingSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
-
-function extractSchemaId(url: string): string | null {
-  const m = url.match(/\/api\/onboarding\/([^/?]+)\/retry/);
-  return m?.[1] ?? null;
-}
 
 /**
  * Resumable pre-scan phases. We never rewind past PROCESSING_SCAN because
@@ -54,13 +51,7 @@ function parseFailurePhase(phaseError: string | null): SchemaPhase {
 
 export const POST = withAuth(async ({ userId, request }) => {
   try {
-    const schemaId = extractSchemaId(request.url);
-    if (!schemaId) {
-      return NextResponse.json(
-        { error: "schemaId required", code: 400, type: "VALIDATION_ERROR" },
-        { status: 400 },
-      );
-    }
+    const schemaId = extractOnboardingSchemaId(request);
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
@@ -71,28 +62,47 @@ export const POST = withAuth(async ({ userId, request }) => {
         phaseError: true,
       },
     });
-    if (!schema) {
-      return NextResponse.json(
-        { error: "Not found", code: 404, type: "NOT_FOUND" },
-        { status: 404 },
-      );
-    }
-    if (schema.userId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden", code: 403, type: "FORBIDDEN" },
-        { status: 403 },
-      );
-    }
+    assertResourceOwnership(schema, userId, "Schema");
 
+    // Accept FAILED (normal case) or PROCESSING_SCAN when the underlying
+    // scan has failed. The latter happens when runScan marks the ScanJob as
+    // FAILED but runOnboarding hasn't yet received the scan.completed event
+    // to mark the schema as FAILED — the user sees the error in the UI
+    // (polling reads ScanJob.phase) and clicks retry before the schema
+    // catches up.
     if (schema.phase !== "FAILED") {
-      return NextResponse.json(
-        {
-          error: `Cannot retry from phase ${schema.phase ?? "null"} — retry requires phase=FAILED`,
-          code: 409,
-          type: "CONFLICT",
-        },
-        { status: 409 },
-      );
+      if (schema.phase === "PROCESSING_SCAN") {
+        const failedScan = await prisma.scanJob.findFirst({
+          where: { schemaId, status: "FAILED" },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, errorMessage: true },
+        });
+        if (!failedScan) {
+          return NextResponse.json(
+            {
+              error: "Scan is still running — please wait for it to finish",
+              code: 409,
+              type: "CONFLICT",
+            },
+            { status: 409 },
+          );
+        }
+        // Scan is FAILED but schema hasn't caught up. Cancel the stuck
+        // runOnboarding workflow so it doesn't race with the retry.
+        await inngest.send({
+          name: "onboarding.session.cancelled",
+          data: { schemaId },
+        });
+      } else {
+        return NextResponse.json(
+          {
+            error: `Cannot retry from phase ${schema.phase ?? "null"} — retry requires phase=FAILED`,
+            code: 409,
+            type: "CONFLICT",
+          },
+          { status: 409 },
+        );
+      }
     }
 
     // Resume from the phase that originally failed. advanceSchemaPhase

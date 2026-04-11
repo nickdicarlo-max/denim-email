@@ -1,8 +1,8 @@
-import { logger } from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
 import { AuthError } from "@denim/types";
 import { createClient } from "@supabase/supabase-js";
 import { type NextRequest, NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
+import { ensureUserRow } from "@/lib/services/user";
 
 interface AuthenticatedContext {
   userId: string;
@@ -83,19 +83,12 @@ export function withAuth(handler: AuthenticatedHandler) {
     const displayName = user.user_metadata?.full_name ?? user.user_metadata?.name ?? null;
     const avatarUrl = user.user_metadata?.avatar_url ?? null;
 
-    if (email) {
-      await prisma.user.upsert({
-        where: { email },
-        create: { id: user.id, email, displayName, avatarUrl },
-        update: { id: user.id, displayName, avatarUrl },
-      });
-    } else {
-      await prisma.user.upsert({
-        where: { id: user.id },
-        create: { id: user.id, email, displayName, avatarUrl },
-        update: {},
-      });
-    }
+    await ensureUserRow({
+      userId: user.id,
+      email,
+      displayName,
+      avatarUrl,
+    });
 
     const response = await handler({ userId: user.id, request });
     logger.info({

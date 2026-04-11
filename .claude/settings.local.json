@@ -128,7 +128,8 @@
       "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(list\\(d.keys\\(\\)\\)\\)\\); p=d.get\\('payload',{}\\); print\\('payload keys:', list\\(p.keys\\(\\)\\)\\); print\\('headers sample:', p.get\\('headers',[]\\)[0:3]\\)\")",
       "Bash(rm src/test-import.ts)",
       "mcp__plugin_playwright_playwright__browser_fill_form",
-      "Bash(DATABASE_URL=$\\(node -e \"require\\('dotenv'\\).config\\({ path: '.env.local' }\\); process.stdout.write\\(process.env.DATABASE_URL\\)\"\\) npx prisma generate)"
+      "Bash(DATABASE_URL=$\\(node -e \"require\\('dotenv'\\).config\\({ path: '.env.local' }\\); process.stdout.write\\(process.env.DATABASE_URL\\)\"\\) npx prisma generate)",
+      "Bash(git show:*)"
     ]
   }
 }

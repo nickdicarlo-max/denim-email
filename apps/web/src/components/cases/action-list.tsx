@@ -54,17 +54,12 @@ export function ActionList({ actions, schemaId }: ActionListProps) {
     );
 
     try {
-      const { createBrowserClient } = await import("@/lib/supabase/client");
-      const supabase = createBrowserClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { authenticatedFetch } = await import("@/lib/supabase/authenticated-fetch");
 
-      const res = await fetch(`/api/actions/${actionId}`, {
+      const res = await authenticatedFetch(`/api/actions/${actionId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token ?? ""}`,
         },
         body: JSON.stringify({ status: newStatus }),
       });

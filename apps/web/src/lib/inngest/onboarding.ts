@@ -18,13 +18,36 @@
  * emits scan.requested, and waits for scan.completed. runScan (Task 8)
  * owns the scan-phase transitions.
  */
-import type { InterviewInput, SchemaHypothesis } from "@denim/types";
+import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
+import type { Prisma } from "@prisma/client";
 import { NonRetriableError } from "inngest";
+import { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { generateHypothesis, persistSchemaRelations } from "@/lib/services/interview";
+import { getValidGmailToken } from "@/lib/services/gmail-tokens";
+import {
+  extractTrustedDomains,
+  generateHypothesis,
+  persistSchemaRelations,
+  resolveWhoEmails,
+  validateHypothesis,
+} from "@/lib/services/interview";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
+
+/**
+ * Maximum emails to pull per trusted-domain expansion query. Cap per domain
+ * keeps the total validation cost bounded: N_domains * DOMAIN_EXPANSION_CAP
+ * is the upper bound on extra emails the second validateHypothesis pass sees.
+ */
+const DOMAIN_EXPANSION_CAP = 50;
+
+/**
+ * Maximum number of trusted domains to expand. Protects against
+ * pathological hypotheses that resolve to dozens of WHO email addresses
+ * at distinct domains.
+ */
+const MAX_DOMAINS_TO_EXPAND = 5;
 
 const SCAN_WAIT_TIMEOUT = "20m";
 
@@ -75,11 +98,188 @@ export const runOnboarding = inngest.createFunction(
         });
       });
 
+      // ---- Step 1b: validate hypothesis against real email samples -------
+      //
+      // Runs two validation passes against Gmail so discovered entities
+      // from the user's inbox can be surfaced on the review screen. This
+      // restores the behavior of the pre-refactor /api/interview/validate
+      // route (deleted in b5b42a9 -- see GitHub #56).
+      //
+      // Pass 1 (broad): sampleScan(200) -> resolveWhoEmails (enrich WHO
+      //   aliases with real email addresses) -> validateHypothesis. Captures
+      //   discovered entities in whatever topics Claude finds across a
+      //   random sample of 200 messages.
+      //
+      // Pass 2 (domain expansion): for each trusted (non-generic) domain
+      //   that Pass 1 resolved for a WHO entity, query Gmail for ALL emails
+      //   from that domain (capped at DOMAIN_EXPANSION_CAP per domain) and
+      //   run validateHypothesis again on those. Catches entities that
+      //   didn't happen to make the initial random sample -- critical for
+      //   org-based discovery (e.g., "Timothy Bishop" -> judgefite.com ->
+      //   every other @judgefite.com sender).
+      //
+      // The merged validation result is stored on the schema row, read by
+      // the next step (finalize-schema) which auto-confirms all discovered
+      // entities into Entity rows with autoDetected=true. Users can then
+      // deselect on the review screen.
+      //
+      // Runs OUTSIDE an advanceSchemaPhase CAS -- stays within the
+      // GENERATING_HYPOTHESIS phase for polling purposes. The phase advance
+      // happens in the next step (finalize-schema) after validation has
+      // written its result back.
+      await step.run("validate-hypothesis", async () => {
+        const schema = await prisma.caseSchema.findUniqueOrThrow({
+          where: { id: schemaId },
+          select: { hypothesis: true, validation: true, inputs: true },
+        });
+
+        // Idempotency guard: on Inngest retry, if validation already ran,
+        // skip it rather than spending two more Claude calls.
+        if (schema.validation) {
+          logger.info({
+            service: "runOnboarding",
+            operation: "validate-hypothesis.skip",
+            schemaId,
+            reason: "already-validated",
+          });
+          return;
+        }
+
+        const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
+        if (!hypothesis) {
+          throw new NonRetriableError(
+            `runOnboarding: CaseSchema ${schemaId} has no hypothesis after GENERATING_HYPOTHESIS`,
+          );
+        }
+
+        // --- Pass 1: broad 200-email sample ----------------------------
+        const accessToken = await getValidGmailToken(userId);
+        const gmail = new GmailClient(accessToken);
+        const { messages } = await gmail.sampleScan(200);
+
+        // Enrich hypothesis WHO aliases with resolved sender email
+        // addresses (mutates the hypothesis object in place).
+        resolveWhoEmails(hypothesis, messages);
+
+        const pass1Samples = messages.map((m) => ({
+          subject: m.subject,
+          senderDomain: m.senderDomain,
+          senderName: m.senderDisplayName || m.senderEmail,
+          snippet: m.snippet,
+        }));
+
+        // entityGroups come from the raw InterviewInput (user's original
+        // topic groupings), not from the AI-generated hypothesis. Map to
+        // the EntityGroupContext shape validateHypothesis expects.
+        const inputs = schema.inputs as unknown as InterviewInput | null;
+        const entityGroups = inputs?.groups?.map((g, idx) => ({
+          index: idx,
+          primaryNames: g.whats,
+          secondaryNames: g.whos,
+        }));
+
+        const pass1 = await validateHypothesis(hypothesis, pass1Samples, {
+          userId,
+          entityGroups,
+        });
+
+        // --- Pass 2: domain expansion ----------------------------------
+        // After resolveWhoEmails, hypothesis.entities contains WHO entries
+        // with real email addresses in their aliases. Extract the specific
+        // org domains (skipping gmail.com, outlook.com, etc.) and query
+        // Gmail for all senders at each domain. Run validateHypothesis
+        // again on those expanded samples.
+        const trustedDomains = extractTrustedDomains(hypothesis).slice(0, MAX_DOMAINS_TO_EXPAND);
+
+        const domainDiscoveries: HypothesisValidation["discoveredEntities"] = [];
+
+        for (const domain of trustedDomains) {
+          try {
+            const domainMessages = await gmail.searchEmails(
+              `from:${domain} newer_than:56d`,
+              DOMAIN_EXPANSION_CAP,
+            );
+            if (domainMessages.length === 0) continue;
+
+            const domainSamples = domainMessages.map((m) => ({
+              subject: m.subject,
+              senderDomain: m.senderDomain,
+              senderName: m.senderDisplayName || m.senderEmail,
+              snippet: m.snippet,
+            }));
+
+            const pass2 = await validateHypothesis(hypothesis, domainSamples, {
+              userId,
+              entityGroups,
+            });
+
+            // Merge discoveries from this domain into the running set.
+            // validateHypothesis may return already-confirmed entities too;
+            // we only accumulate new discoveries here.
+            for (const discovered of pass2.discoveredEntities) {
+              if (
+                !pass1.discoveredEntities.some((e) => e.name === discovered.name) &&
+                !domainDiscoveries.some((e) => e.name === discovered.name)
+              ) {
+                domainDiscoveries.push(discovered);
+              }
+            }
+
+            logger.info({
+              service: "runOnboarding",
+              operation: "domain-expansion",
+              schemaId,
+              domain,
+              emailsQueried: domainMessages.length,
+              newDiscoveriesFromDomain: pass2.discoveredEntities.length,
+            });
+          } catch (err) {
+            // Non-fatal: if one domain expansion fails (e.g., Gmail
+            // quota), log it and continue with the others.
+            logger.warn({
+              service: "runOnboarding",
+              operation: "domain-expansion.failed",
+              schemaId,
+              domain,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        // --- Merge passes into single validation result ----------------
+        const mergedValidation: HypothesisValidation = {
+          ...pass1,
+          discoveredEntities: [...pass1.discoveredEntities, ...domainDiscoveries],
+        };
+
+        await prisma.caseSchema.update({
+          where: { id: schemaId },
+          data: {
+            // Write back the (possibly mutated) hypothesis with enriched
+            // WHO aliases so finalize-schema sees the resolved email
+            // addresses.
+            hypothesis: hypothesis as unknown as Prisma.InputJsonValue,
+            validation: mergedValidation as unknown as Prisma.InputJsonValue,
+          },
+        });
+
+        logger.info({
+          service: "runOnboarding",
+          operation: "validate-hypothesis.complete",
+          schemaId,
+          pass1Discovered: pass1.discoveredEntities.length,
+          pass2DomainsExpanded: trustedDomains.length,
+          pass2AdditionalDiscovered: domainDiscoveries.length,
+          totalDiscovered: mergedValidation.discoveredEntities.length,
+        });
+      });
+
       // ---- Step 2: GENERATING_HYPOTHESIS → FINALIZING_SCHEMA -----------
       //
-      // Read the stored hypothesis back and hand it to persistSchemaRelations.
-      // The auto-onboarding path has no human-in-the-loop validation step,
-      // so validation + confirmations are omitted (defaults apply).
+      // Read the stored hypothesis + validation back and hand them to
+      // persistSchemaRelations. Auto-confirms all discovered entities
+      // (the review screen is now the user's deselection UI, not the
+      // old card-based confirmation step).
       await step.run("finalize-schema", async () => {
         return advanceSchemaPhase({
           schemaId,
@@ -88,7 +288,7 @@ export const runOnboarding = inngest.createFunction(
           work: async () => {
             const schema = await prisma.caseSchema.findUniqueOrThrow({
               where: { id: schemaId },
-              select: { hypothesis: true },
+              select: { hypothesis: true, validation: true },
             });
             const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
             if (!hypothesis) {
@@ -96,7 +296,29 @@ export const runOnboarding = inngest.createFunction(
                 `runOnboarding: CaseSchema ${schemaId} has no hypothesis column after GENERATING_HYPOTHESIS`,
               );
             }
-            await persistSchemaRelations(schemaId, hypothesis);
+            const validation = schema.validation as unknown as HypothesisValidation | null;
+
+            // When validation exists (normal path post-Task-18), auto-confirm
+            // all discovered entities and suggested tags -- the review screen
+            // lets the user deselect any they don't want. When validation is
+            // absent (e.g., the validate-hypothesis step was skipped on an
+            // already-partial run), persistSchemaRelations uses its own
+            // defaults.
+            const confirmations = validation
+              ? {
+                  confirmedEntities: validation.discoveredEntities.map((e) => e.name),
+                  confirmedTags: validation.suggestedTags.map((t) => t.name),
+                  removedEntities: [],
+                  removedTags: [],
+                }
+              : undefined;
+
+            await persistSchemaRelations(
+              schemaId,
+              hypothesis,
+              validation ?? undefined,
+              confirmations,
+            );
           },
         });
       });
@@ -174,10 +396,16 @@ export const runOnboarding = inngest.createFunction(
 
       // ---- Step 6: advance to terminal state ----------------------------
       //
-      // Two outcomes from the scan:
+      // Three outcomes from the scan:
+      //   - reason="failed"          → FAILED (scan died, surface the error)
       //   - reason="no-emails-found" → NO_EMAILS_FOUND (terminal, no review)
-      //   - happy path → quality gate then AWAITING_REVIEW
+      //   - happy path               → quality gate then AWAITING_REVIEW
       const reason = completion.data.reason;
+
+      if (reason === "failed") {
+        const scanError = completion.data.errorMessage ?? "Scan failed";
+        throw new NonRetriableError(`runOnboarding: scan failed — ${scanError}`);
+      }
 
       if (reason === "no-emails-found") {
         await step.run("advance-to-no-emails-found", async () => {

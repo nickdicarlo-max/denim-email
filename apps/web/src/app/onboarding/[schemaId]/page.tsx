@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { OnboardingFlow } from "@/components/onboarding/flow";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
-import { createBrowserClient } from "@/lib/supabase/client";
+import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 
 /**
  * OnboardingObserverPage — single polling page that drives the whole
@@ -47,19 +47,7 @@ export default function OnboardingObserverPage() {
     const poll = async () => {
       if (cancelled) return;
       try {
-        const supabase = createBrowserClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (cancelled) return;
-        if (!session) {
-          setError("Not authenticated");
-          return;
-        }
-
-        const res = await fetch(`/api/onboarding/${schemaId}`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
+        const res = await authenticatedFetch(`/api/onboarding/${schemaId}`);
         if (cancelled) return;
 
         if (res.status === 404) {
@@ -86,7 +74,11 @@ export default function OnboardingObserverPage() {
           navigatedRef.current = true;
           router.push(json.data.nextHref);
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.message === "Not authenticated") {
+          setError("Not authenticated");
+          return;
+        }
         // Silent retry on next tick.
       }
     };

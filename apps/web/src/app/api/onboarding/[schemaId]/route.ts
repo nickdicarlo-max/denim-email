@@ -22,38 +22,18 @@ import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
 import { handleApiError } from "@/lib/middleware/error-handler";
+import { assertResourceOwnership } from "@/lib/middleware/ownership";
+import { extractOnboardingSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
 import { derivePollingResponse } from "@/lib/services/onboarding-polling";
-
-function extractSchemaId(url: string): string | null {
-  const m = url.match(/\/api\/onboarding\/([^/?]+)/);
-  return m?.[1] ?? null;
-}
 
 // GET — polling endpoint -----------------------------------------------------
 export const GET = withAuth(async ({ userId, request }) => {
   try {
-    const schemaId = extractSchemaId(request.url);
-    if (!schemaId) {
-      return NextResponse.json(
-        { error: "schemaId required", code: 400, type: "VALIDATION_ERROR" },
-        { status: 400 },
-      );
-    }
+    const schemaId = extractOnboardingSchemaId(request);
 
     const schema = await prisma.caseSchema.findUnique({ where: { id: schemaId } });
-    if (!schema) {
-      return NextResponse.json(
-        { error: "Not found", code: 404, type: "NOT_FOUND" },
-        { status: 404 },
-      );
-    }
-    if (schema.userId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden", code: 403, type: "FORBIDDEN" },
-        { status: 403 },
-      );
-    }
+    assertResourceOwnership(schema, userId, "Schema");
 
     // Grab the latest onboarding scan. runOnboarding creates exactly one,
     // but a retry (Task 12) or failure-recovery could create more, so
@@ -82,31 +62,14 @@ const ConfirmSchema = z.object({
 
 export const POST = withAuth(async ({ userId, request }) => {
   try {
-    const schemaId = extractSchemaId(request.url);
-    if (!schemaId) {
-      return NextResponse.json(
-        { error: "schemaId required", code: 400, type: "VALIDATION_ERROR" },
-        { status: 400 },
-      );
-    }
+    const schemaId = extractOnboardingSchemaId(request);
     const body = ConfirmSchema.parse(await request.json());
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
       select: { id: true, userId: true, phase: true, status: true },
     });
-    if (!schema) {
-      return NextResponse.json(
-        { error: "Not found", code: 404, type: "NOT_FOUND" },
-        { status: 404 },
-      );
-    }
-    if (schema.userId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden", code: 403, type: "FORBIDDEN" },
-        { status: 403 },
-      );
-    }
+    assertResourceOwnership(schema, userId, "Schema");
 
     // CAS: only advance from AWAITING_REVIEW. Concurrent confirms from two
     // tabs will see updated.count === 0 on the loser and fall through to
@@ -177,30 +140,13 @@ export const POST = withAuth(async ({ userId, request }) => {
 // DELETE — cancel an in-flight onboarding ------------------------------------
 export const DELETE = withAuth(async ({ userId, request }) => {
   try {
-    const schemaId = extractSchemaId(request.url);
-    if (!schemaId) {
-      return NextResponse.json(
-        { error: "schemaId required", code: 400, type: "VALIDATION_ERROR" },
-        { status: 400 },
-      );
-    }
+    const schemaId = extractOnboardingSchemaId(request);
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
       select: { id: true, userId: true, status: true },
     });
-    if (!schema) {
-      return NextResponse.json(
-        { error: "Not found", code: 404, type: "NOT_FOUND" },
-        { status: 404 },
-      );
-    }
-    if (schema.userId !== userId) {
-      return NextResponse.json(
-        { error: "Forbidden", code: 403, type: "FORBIDDEN" },
-        { status: 403 },
-      );
-    }
+    assertResourceOwnership(schema, userId, "Schema");
 
     // Idempotent: if the schema is already archived, don't re-emit the
     // cancellation event.

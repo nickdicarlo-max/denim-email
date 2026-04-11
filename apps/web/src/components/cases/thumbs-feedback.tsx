@@ -25,16 +25,11 @@ export function ThumbsFeedback({ schemaId, caseId, initialRating }: ThumbsFeedba
   ) {
     setSending(true);
     try {
-      const { createBrowserClient } = await import("@/lib/supabase/client");
-      const supabase = createBrowserClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
+      const { authenticatedFetch } = await import("@/lib/supabase/authenticated-fetch");
 
-      await fetch("/api/feedback", {
+      await authenticatedFetch("/api/feedback", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${session?.access_token ?? ""}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ schemaId, type, caseId, payload }),

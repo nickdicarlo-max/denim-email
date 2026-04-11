@@ -1,9 +1,10 @@
-import type { Prisma } from "@prisma/client";
-import { logger } from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
-import { inngest } from "@/lib/inngest/client";
-import type { FeedbackInput } from "@/lib/validation/feedback";
 import { NotFoundError, ValidationError } from "@denim/types";
+import type { Prisma } from "@prisma/client";
+import { inngest } from "@/lib/inngest/client";
+import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
+import { prisma } from "@/lib/prisma";
+import type { FeedbackInput } from "@/lib/validation/feedback";
 
 interface FeedbackResult {
   eventId: string;
@@ -20,73 +21,74 @@ export async function recordFeedback(
   input: FeedbackInput,
   userId: string,
 ): Promise<FeedbackResult> {
-  const start = Date.now();
-
-  // Verify the schema belongs to this user
-  const schema = await prisma.caseSchema.findFirst({
-    where: { id: input.schemaId, userId },
-    select: { id: true },
-  });
-
-  if (!schema) {
-    throw new NotFoundError("Schema not found");
-  }
-
-  // Create the FeedbackEvent (append-only)
-  const event = await prisma.feedbackEvent.create({
-    data: {
-      schemaId: input.schemaId,
-      eventType: input.type,
-      caseId: input.caseId ?? null,
-      emailId: input.emailId ?? null,
-      payload: (input.payload ?? {}) as Prisma.InputJsonValue,
+  return withLogging<FeedbackResult>(
+    {
+      service: "feedback",
+      operation: "recordFeedback",
+      context: { userId, schemaId: input.schemaId, type: input.type },
     },
-  });
+    async () => {
+      // Verify the schema belongs to this user
+      const schema = await prisma.caseSchema.findFirst({
+        where: { id: input.schemaId, userId },
+        select: { id: true },
+      });
 
-  // Side effects by event type
-  if (input.type === "EMAIL_EXCLUDE" && input.emailId) {
-    await prisma.email.update({
-      where: { id: input.emailId },
-      data: {
-        isExcluded: true,
-        excludeReason: "user:manual",
-      },
-    });
+      if (!schema) {
+        throw new NotFoundError("Schema not found");
+      }
 
-    // Auto-create domain ExclusionRule after 3+ excludes from same domain
-    const senderDomain = (input.payload as Record<string, unknown>)?.senderDomain as string | undefined;
-    if (senderDomain) {
-      await maybeCreateDomainExclusionRule(input.schemaId, senderDomain);
-    }
-  }
+      // Create the FeedbackEvent (append-only)
+      const event = await prisma.feedbackEvent.create({
+        data: {
+          schemaId: input.schemaId,
+          eventType: input.type,
+          caseId: input.caseId ?? null,
+          emailId: input.emailId ?? null,
+          payload: (input.payload ?? {}) as Prisma.InputJsonValue,
+        },
+      });
 
-  if ((input.type === "THUMBS_UP" || input.type === "THUMBS_DOWN") && input.caseId) {
-    await prisma.case.update({
-      where: { id: input.caseId },
-      data: { feedbackRating: input.type === "THUMBS_UP" ? "up" : "down" },
-    });
-  }
+      // Side effects by event type
+      if (input.type === "EMAIL_EXCLUDE" && input.emailId) {
+        await prisma.email.update({
+          where: { id: input.emailId },
+          data: {
+            isExcluded: true,
+            excludeReason: "user:manual",
+          },
+        });
 
-  if (input.type === "EMAIL_MOVE" && input.emailId && input.caseId) {
-    const targetCaseId = (input.payload as Record<string, unknown>)?.targetCaseId as string | undefined;
-    if (!targetCaseId) {
-      throw new ValidationError("EMAIL_MOVE requires payload.targetCaseId");
-    }
-    await processEmailMove(input.schemaId, input.emailId, input.caseId, targetCaseId);
-  }
+        // Auto-create domain ExclusionRule after 3+ excludes from same domain
+        const senderDomain = (input.payload as Record<string, unknown>)?.senderDomain as
+          | string
+          | undefined;
+        if (senderDomain) {
+          await maybeCreateDomainExclusionRule(input.schemaId, senderDomain);
+        }
+      }
 
-  const durationMs = Date.now() - start;
-  logger.info({
-    service: "feedback",
-    operation: "recordFeedback",
-    userId,
-    schemaId: input.schemaId,
-    type: input.type,
-    eventId: event.id,
-    durationMs,
-  });
+      if ((input.type === "THUMBS_UP" || input.type === "THUMBS_DOWN") && input.caseId) {
+        await prisma.case.update({
+          where: { id: input.caseId },
+          data: { feedbackRating: input.type === "THUMBS_UP" ? "up" : "down" },
+        });
+      }
 
-  return { eventId: event.id };
+      if (input.type === "EMAIL_MOVE" && input.emailId && input.caseId) {
+        const targetCaseId = (input.payload as Record<string, unknown>)?.targetCaseId as
+          | string
+          | undefined;
+        if (!targetCaseId) {
+          throw new ValidationError("EMAIL_MOVE requires payload.targetCaseId");
+        }
+        await processEmailMove(input.schemaId, input.emailId, input.caseId, targetCaseId);
+      }
+
+      return { eventId: event.id };
+    },
+    (result) => ({ eventId: result.eventId }),
+  );
 }
 
 /**

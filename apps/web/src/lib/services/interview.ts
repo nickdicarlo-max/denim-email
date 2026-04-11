@@ -5,6 +5,7 @@ import {
   parseHypothesisResponse,
   parseValidationResponse,
 } from "@denim/ai";
+import { resolveEntity } from "@denim/engine";
 import type {
   EntityGroupInput,
   HypothesisValidation,
@@ -15,6 +16,7 @@ import { ExternalAPIError } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
 import { InterviewInputSchema, validateInput } from "@/lib/validation/interview";
 
@@ -30,50 +32,47 @@ export async function generateHypothesis(
   input: InterviewInput,
   options?: { userId?: string },
 ): Promise<SchemaHypothesis> {
-  const start = Date.now();
   const operation = "generateHypothesis";
 
-  logger.info({ service: "interview", operation, userId: options?.userId });
+  return withLogging<SchemaHypothesis>(
+    {
+      service: "interview",
+      operation,
+      context: { userId: options?.userId },
+    },
+    async () => {
+      // Validate input
+      const validated = validateInput(InterviewInputSchema, input);
 
-  // Validate input
-  const validated = validateInput(InterviewInputSchema, input);
+      // Build prompt (pure function from @denim/ai)
+      const prompt = buildHypothesisPrompt(validated);
 
-  // Build prompt (pure function from @denim/ai)
-  const prompt = buildHypothesisPrompt(validated);
+      // Call Claude via AI client wrapper
+      const result = await callClaude({
+        model: DEFAULT_MODEL,
+        system: prompt.system,
+        user: prompt.user,
+        userId: options?.userId,
+        operation,
+      });
 
-  // Call Claude via AI client wrapper
-  const result = await callClaude({
-    model: DEFAULT_MODEL,
-    system: prompt.system,
-    user: prompt.user,
-    userId: options?.userId,
-    operation,
-  });
-
-  // Parse response (pure function from @denim/ai)
-  let hypothesis: SchemaHypothesis;
-  try {
-    hypothesis = parseHypothesisResponse(result.content);
-  } catch (error) {
-    throw new ExternalAPIError(
-      `Failed to parse hypothesis response: ${error instanceof Error ? error.message : String(error)}`,
-      "claude",
-      result.content,
-    );
-  }
-
-  const durationMs = Date.now() - start;
-  logger.info({
-    service: "interview",
-    operation: `${operation}.complete`,
-    userId: options?.userId,
-    durationMs,
-    domain: hypothesis.domain,
-    entityCount: hypothesis.entities.length,
-    tagCount: hypothesis.tags.length,
-  });
-
-  return hypothesis;
+      // Parse response (pure function from @denim/ai)
+      try {
+        return parseHypothesisResponse(result.content);
+      } catch (error) {
+        throw new ExternalAPIError(
+          `Failed to parse hypothesis response: ${error instanceof Error ? error.message : String(error)}`,
+          "claude",
+          result.content,
+        );
+      }
+    },
+    (hypothesis) => ({
+      domain: hypothesis.domain,
+      entityCount: hypothesis.entities.length,
+      tagCount: hypothesis.tags.length,
+    }),
+  );
 }
 
 interface EmailSampleForValidation {
@@ -92,88 +91,194 @@ export async function validateHypothesis(
   emailSamples: EmailSampleForValidation[],
   options?: { userId?: string; entityGroups?: EntityGroupContext[] },
 ): Promise<HypothesisValidation> {
-  const start = Date.now();
   const operation = "validateHypothesis";
+  const start = Date.now();
+  let filteredHallucinations = 0;
 
-  logger.info({
-    service: "interview",
-    operation,
-    userId: options?.userId,
-    sampleCount: emailSamples.length,
-    entityGroupCount: options?.entityGroups?.length ?? 0,
-  });
+  return withLogging<HypothesisValidation>(
+    {
+      service: "interview",
+      operation,
+      context: {
+        userId: options?.userId,
+        sampleCount: emailSamples.length,
+        entityGroupCount: options?.entityGroups?.length ?? 0,
+      },
+    },
+    async () => {
+      const prompt = buildValidationPrompt(hypothesis, emailSamples, options?.entityGroups);
 
-  const prompt = buildValidationPrompt(hypothesis, emailSamples, options?.entityGroups);
+      const result = await callClaude({
+        model: DEFAULT_MODEL,
+        system: prompt.system,
+        user: prompt.user,
+        userId: options?.userId,
+        operation,
+      });
 
-  const result = await callClaude({
-    model: DEFAULT_MODEL,
-    system: prompt.system,
-    user: prompt.user,
-    userId: options?.userId,
-    operation,
-  });
+      let validation: ReturnType<typeof parseValidationResponse>;
+      try {
+        validation = parseValidationResponse(result.content);
+      } catch (error) {
+        throw new ExternalAPIError(
+          `Failed to parse validation response: ${error instanceof Error ? error.message : String(error)}`,
+          "claude",
+          result.content,
+        );
+      }
 
-  let validation: ReturnType<typeof parseValidationResponse>;
-  try {
-    validation = parseValidationResponse(result.content);
-  } catch (error) {
-    throw new ExternalAPIError(
-      `Failed to parse validation response: ${error instanceof Error ? error.message : String(error)}`,
-      "claude",
-      result.content,
-    );
+      // Post-parse grounding filter: remove entities with no email evidence
+      const totalSamples = emailSamples.length;
+      const preFilterCount = validation.discoveredEntities.length;
+      validation.discoveredEntities = validation.discoveredEntities.filter((entity) => {
+        if (entity.emailIndices.length === 0) {
+          logger.warn({
+            service: "interview",
+            operation: `${operation}.groundingFilter`,
+            entityName: entity.name,
+            claimedEmailCount: entity.emailCount,
+            reason: "no_email_indices",
+          });
+          return false;
+        }
+        const validIndices = entity.emailIndices.filter((idx) => idx >= 1 && idx <= totalSamples);
+        if (validIndices.length === 0) {
+          logger.warn({
+            service: "interview",
+            operation: `${operation}.groundingFilter`,
+            entityName: entity.name,
+            indices: entity.emailIndices,
+            maxValid: totalSamples,
+            reason: "all_indices_invalid",
+          });
+          return false;
+        }
+        entity.emailIndices = validIndices;
+        entity.emailCount = validIndices.length;
+        return true;
+      });
+
+      filteredHallucinations = preFilterCount - validation.discoveredEntities.length;
+
+      return {
+        ...validation,
+        sampleEmailCount: emailSamples.length,
+        scanDurationMs: Date.now() - start,
+      };
+    },
+    (validation) => ({
+      confirmedEntities: validation.confirmedEntities.length,
+      discoveredEntities: validation.discoveredEntities.length,
+      filteredHallucinations,
+      confidenceScore: validation.confidenceScore,
+    }),
+  );
+}
+
+/**
+ * Domains that represent generic email providers, not specific orgs.
+ * Sender addresses at these domains should NOT be used for domain expansion
+ * (querying Gmail for other senders at the same domain) because doing so
+ * would flood discovery with unrelated emails.
+ *
+ * Extracted from the pre-refactor validate route (b5b42a9) -- that flow
+ * implicitly avoided expansion because it only ran once. Re-centralized
+ * here now that runOnboarding performs the domain-expansion second pass.
+ */
+const GENERIC_SENDER_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "yahoo.co.uk",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "icloud.com",
+  "me.com",
+  "mac.com",
+  "aol.com",
+  "protonmail.com",
+  "proton.me",
+  "yandex.com",
+  "yandex.ru",
+  "gmx.com",
+  "gmx.net",
+  "mail.com",
+  "fastmail.com",
+  "zoho.com",
+]);
+
+/**
+ * Resolve WHO entity names (SECONDARY hypothesis entities) to actual sender
+ * email addresses by fuzzy-matching against a sample of real messages.
+ * Enriches entity.aliases in-place so downstream persistence captures the
+ * mapping.
+ *
+ * Restored from the pre-refactor /api/interview/validate route (b5b42a9).
+ * Called by runOnboarding during the validate-hypothesis step.
+ */
+export function resolveWhoEmails(
+  hypothesis: SchemaHypothesis,
+  messages: { senderDisplayName: string; senderEmail: string }[],
+): void {
+  const whoEntities = hypothesis.entities.filter((e) => e.type === "SECONDARY");
+  if (whoEntities.length === 0) return;
+
+  const entityList = whoEntities.map((e) => ({
+    name: e.name,
+    type: e.type as "PRIMARY" | "SECONDARY",
+    aliases: e.aliases,
+  }));
+
+  const resolvedEmails = new Map<string, Set<string>>();
+  for (const e of whoEntities) {
+    resolvedEmails.set(e.name, new Set(e.aliases));
   }
 
-  // Post-parse grounding filter: remove entities with no email evidence
-  const totalSamples = emailSamples.length;
-  const preFilterCount = validation.discoveredEntities.length;
-  validation.discoveredEntities = validation.discoveredEntities.filter((entity) => {
-    if (entity.emailIndices.length === 0) {
-      logger.warn({
-        service: "interview",
-        operation: `${operation}.groundingFilter`,
-        entityName: entity.name,
-        claimedEmailCount: entity.emailCount,
-        reason: "no_email_indices",
-      });
-      return false;
+  for (const msg of messages) {
+    if (!msg.senderDisplayName) continue;
+    const match = resolveEntity(msg.senderDisplayName, msg.senderEmail, entityList, 0.8);
+    if (match) {
+      const aliasSet = resolvedEmails.get(match.entityName);
+      if (aliasSet && !aliasSet.has(msg.senderEmail)) {
+        aliasSet.add(msg.senderEmail);
+        const entity = whoEntities.find((e) => e.name === match.entityName);
+        if (entity) {
+          entity.aliases.push(msg.senderEmail);
+        }
+      }
     }
-    const validIndices = entity.emailIndices.filter((idx) => idx >= 1 && idx <= totalSamples);
-    if (validIndices.length === 0) {
-      logger.warn({
-        service: "interview",
-        operation: `${operation}.groundingFilter`,
-        entityName: entity.name,
-        indices: entity.emailIndices,
-        maxValid: totalSamples,
-        reason: "all_indices_invalid",
-      });
-      return false;
+  }
+}
+
+/**
+ * Extract unique, non-generic sender domains from an enriched hypothesis.
+ * After `resolveWhoEmails` runs, SECONDARY entities have email addresses in
+ * their alias list. This helper returns the set of specific org domains
+ * worth expanding (e.g., "judgefite.com" -- but not "gmail.com").
+ *
+ * Used by runOnboarding's domain-expansion second pass: for each returned
+ * domain, query Gmail for ALL senders at that domain, then run a second
+ * validateHypothesis pass on the expanded samples. This catches entities
+ * that didn't happen to make it into the initial 200-email random sample.
+ */
+export function extractTrustedDomains(hypothesis: SchemaHypothesis): string[] {
+  const domains = new Set<string>();
+  for (const entity of hypothesis.entities) {
+    if (entity.type !== "SECONDARY") continue;
+    for (const alias of entity.aliases) {
+      const atIdx = alias.lastIndexOf("@");
+      if (atIdx < 0) continue;
+      const domain = alias
+        .slice(atIdx + 1)
+        .toLowerCase()
+        .trim();
+      if (!domain || domain.includes(" ")) continue;
+      if (GENERIC_SENDER_DOMAINS.has(domain)) continue;
+      domains.add(domain);
     }
-    entity.emailIndices = validIndices;
-    entity.emailCount = validIndices.length;
-    return true;
-  });
-
-  const scanDurationMs = Date.now() - start;
-  const filteredCount = preFilterCount - validation.discoveredEntities.length;
-
-  logger.info({
-    service: "interview",
-    operation: `${operation}.complete`,
-    userId: options?.userId,
-    durationMs: scanDurationMs,
-    confirmedEntities: validation.confirmedEntities.length,
-    discoveredEntities: validation.discoveredEntities.length,
-    filteredHallucinations: filteredCount,
-    confidenceScore: validation.confidenceScore,
-  });
-
-  return {
-    ...validation,
-    sampleEmailCount: emailSamples.length,
-    scanDurationMs,
-  };
+  }
+  return Array.from(domains);
 }
 
 interface FinalizeConfirmations {
@@ -597,28 +702,24 @@ export async function finalizeSchema(
   confirmations: FinalizeConfirmations,
   options: { userId: string },
 ): Promise<string> {
-  const start = Date.now();
-  const operation = "finalizeSchema";
+  return withLogging<string>(
+    {
+      service: "interview",
+      operation: "finalizeSchema",
+      context: { userId: options.userId },
+    },
+    async () => {
+      const schemaId = await createSchemaStub({ userId: options.userId });
+      await persistSchemaRelations(schemaId, hypothesis, validation, confirmations);
 
-  logger.info({ service: "interview", operation, userId: options.userId });
+      // Preserve existing contract: finalizeSchema callers expect status=ONBOARDING.
+      await prisma.caseSchema.update({
+        where: { id: schemaId },
+        data: { status: "ONBOARDING" },
+      });
 
-  const schemaId = await createSchemaStub({ userId: options.userId });
-  await persistSchemaRelations(schemaId, hypothesis, validation, confirmations);
-
-  // Preserve existing contract: finalizeSchema callers expect status=ONBOARDING.
-  await prisma.caseSchema.update({
-    where: { id: schemaId },
-    data: { status: "ONBOARDING" },
-  });
-
-  const durationMs = Date.now() - start;
-  logger.info({
-    service: "interview",
-    operation: `${operation}.complete`,
-    userId: options.userId,
-    durationMs,
-    schemaId,
-  });
-
-  return schemaId;
+      return schemaId;
+    },
+    (schemaId) => ({ schemaId }),
+  );
 }

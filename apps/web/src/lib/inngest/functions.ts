@@ -1,3 +1,6 @@
+import { AuthError } from "@denim/types";
+import { NonRetriableError } from "inngest";
+import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { applyCalibration, coarseCluster, splitCoarseClusters } from "@/lib/services/cluster";
@@ -14,6 +17,80 @@ import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runScan } from "./scan";
 
 const BATCH_SIZE = 20;
+
+/**
+ * Shared onFailure handler for downstream scan-pipeline functions
+ * (runCoarseClustering, runCaseSplitting, runSynthesis).
+ *
+ * When Inngest exhausts retries on one of these functions, we need to:
+ *   1. Mark the ScanJob as FAILED with the phase where it died, so the
+ *      polling response surfaces the error to the observer page.
+ *   2. Emit scan.completed with reason="failed" so runOnboarding's
+ *      waitForEvent unblocks immediately instead of hanging for the
+ *      full 20-minute timeout.
+ *
+ * Without this, a crash during clustering or synthesis silently stalls
+ * the pipeline: the ScanJob stays in EXTRACTING/CLUSTERING/SYNTHESIZING
+ * forever, runOnboarding waits the full 20 minutes, and the user stares
+ * at a spinner.
+ *
+ * Both writes happen inside step.run so Inngest makes them durable.
+ */
+type ScanPhaseAtFailure = "EXTRACTING" | "CLUSTERING" | "SYNTHESIZING";
+
+/**
+ * Minimal step shape we use inside handleDownstreamScanFailure. We only
+ * call `step.run` with void-returning operations, so the return type of
+ * step.run is intentionally `unknown` here — matches Inngest's runtime
+ * `Jsonify<T>` serialization without forcing us to import Inngest types.
+ */
+type StepLike = {
+  run: (id: string, fn: () => Promise<unknown>) => Promise<unknown>;
+};
+
+async function handleDownstreamScanFailure({
+  step,
+  schemaId,
+  scanJobId,
+  phase,
+  error,
+}: {
+  step: StepLike;
+  schemaId: string;
+  scanJobId: string;
+  phase: ScanPhaseAtFailure;
+  error: { message?: string } | Error | unknown;
+}): Promise<void> {
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error && "message" in error
+        ? String((error as { message?: unknown }).message ?? error)
+        : String(error);
+
+  await step.run("mark-scan-failed-downstream", async () => {
+    await markScanFailed(scanJobId, phase, error);
+  });
+  await step.run("emit-scan-failed-downstream", async () => {
+    await inngest.send({
+      name: "scan.completed",
+      data: {
+        schemaId,
+        scanJobId,
+        reason: "failed",
+        errorMessage,
+      },
+    });
+  });
+  logger.error({
+    service: "inngest",
+    operation: "downstreamScanFailure",
+    schemaId,
+    scanJobId,
+    phase,
+    error: errorMessage,
+  });
+}
 
 /**
  * Fan out extraction: split discovered email IDs into batches
@@ -107,13 +184,17 @@ export const extractBatch = inngest.createFunction(
       };
       const { schemaId, scanJobId, emailIds, batchIndex, totalBatches } = original;
 
+      const errorMessage = error?.message ?? String(error);
+      const authFailure =
+        error instanceof AuthError ||
+        matchesGmailAuthError(error instanceof Error ? error.message : String(error));
+
       await step.run("record-batch-failure", async () => {
         // Whole-batch failure: processEmailBatch threw before any individual
         // email could be caught (Gmail token expired, schema load failed, etc).
         // Write a ScanFailure row for every email in the batch so
         // computeScanMetrics.failedEmails stays accurate and the pipeline
         // can't silently drop emails (#16).
-        const errorMessage = error?.message ?? String(error);
         const errorStack = error?.stack ?? null;
         await prisma.scanFailure.createMany({
           data: emailIds.map((gmailMessageId) => ({
@@ -129,12 +210,14 @@ export const extractBatch = inngest.createFunction(
         await prisma.scanJob.update({
           where: { id: scanJobId },
           data: {
-            statusMessage: `Batch ${batchIndex + 1}/${totalBatches} failed after retries`,
+            statusMessage: authFailure
+              ? "Google connection lost — please reconnect"
+              : `Batch ${batchIndex + 1}/${totalBatches} failed after retries`,
           },
         });
         logger.error({
           service: "inngest",
-          operation: "extractBatch.exhaustedRetries",
+          operation: authFailure ? "extractBatch.authFailure" : "extractBatch.exhaustedRetries",
           schemaId,
           scanJobId,
           batchIndex,
@@ -143,8 +226,31 @@ export const extractBatch = inngest.createFunction(
         });
       });
 
-      // Still emit batch.completed so checkExtractionComplete can advance;
-      // without this the pipeline hangs waiting for a batch that never finishes.
+      // Auth errors are fatal to the entire scan — every subsequent batch
+      // will fail identically. Mark the scan as failed so the polling
+      // response surfaces the error immediately, rather than waiting for
+      // all batches to exhaust retries.
+      if (authFailure) {
+        await step.run("mark-scan-failed-auth", async () => {
+          await markScanFailed(scanJobId, "EXTRACTING", error);
+          // Emit scan.completed with reason="failed" so runOnboarding
+          // unblocks immediately instead of waiting for the 20-min timeout.
+          await inngest.send({
+            name: "scan.completed",
+            data: {
+              schemaId,
+              scanJobId,
+              reason: "failed",
+              errorMessage,
+            },
+          });
+        });
+        return;
+      }
+
+      // Non-auth failure: still emit batch.completed so
+      // checkExtractionComplete can advance; without this the pipeline
+      // hangs waiting for a batch that never finishes.
       await step.run("emit-completed-after-failure", async () => {
         await inngest.send({
           name: "extraction.batch.completed",
@@ -165,94 +271,118 @@ export const extractBatch = inngest.createFunction(
     const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } = event.data;
 
     const result = await step.run("process-batch", async () => {
-      // Load schema with all needed relations
-      const schema = await prisma.caseSchema.findUniqueOrThrow({
-        where: { id: schemaId },
-        include: {
-          tags: {
-            where: { isActive: true },
-            select: { name: true, description: true, isActive: true },
-          },
-          entities: {
-            where: { isActive: true },
-            select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
-          },
-          extractedFields: { select: { name: true, type: true, description: true, source: true } },
-          exclusionRules: {
-            where: { isActive: true },
-            select: { ruleType: true, pattern: true, isActive: true },
-          },
-          entityGroups: {
-            orderBy: { index: "asc" },
-            include: {
-              entities: {
-                where: { isActive: true },
-                select: { name: true, type: true, isActive: true },
+      // Wrap the entire batch in an auth-error check. If the Gmail token
+      // is dead, convert to NonRetriableError so Inngest skips the 3
+      // retries and jumps straight to onFailure (which marks the scan
+      // as FAILED). Without this, auth errors burn through all retries
+      // and every concurrent batch does the same — wasting minutes.
+      try {
+        return await processBatchInner();
+      } catch (err) {
+        if (
+          err instanceof AuthError ||
+          matchesGmailAuthError(err instanceof Error ? err.message : String(err))
+        ) {
+          throw new NonRetriableError(
+            `Gmail auth failed: ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
+        }
+        throw err;
+      }
+
+      async function processBatchInner() {
+        // Load schema with all needed relations
+        const schema = await prisma.caseSchema.findUniqueOrThrow({
+          where: { id: schemaId },
+          include: {
+            tags: {
+              where: { isActive: true },
+              select: { name: true, description: true, isActive: true },
+            },
+            entities: {
+              where: { isActive: true },
+              select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
+            },
+            extractedFields: {
+              select: { name: true, type: true, description: true, source: true },
+            },
+            exclusionRules: {
+              where: { isActive: true },
+              select: { ruleType: true, pattern: true, isActive: true },
+            },
+            entityGroups: {
+              orderBy: { index: "asc" },
+              include: {
+                entities: {
+                  where: { isActive: true },
+                  select: { name: true, type: true, isActive: true },
+                },
               },
             },
           },
-        },
-      });
+        });
 
-      // Get valid Gmail token
-      const accessToken = await getValidGmailToken(userId);
+        // Get valid Gmail token
+        const accessToken = await getValidGmailToken(userId);
 
-      // Build contexts
-      const schemaContext = {
-        domain: schema.domain ?? "general",
-        tags: schema.tags.map((t) => ({ name: t.name, description: t.description ?? "" })),
-        entities: schema.entities.map((e) => ({
+        // Build contexts
+        const schemaContext = {
+          domain: schema.domain ?? "general",
+          tags: schema.tags.map((t) => ({ name: t.name, description: t.description ?? "" })),
+          entities: schema.entities.map((e) => ({
+            name: e.name,
+            type: e.type as "PRIMARY" | "SECONDARY",
+            aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+            isUserInput: !e.autoDetected,
+          })),
+          extractedFields: schema.extractedFields.map((f) => ({
+            name: f.name,
+            type: f.type,
+            description: f.description,
+            source: f.source,
+          })),
+          exclusionPatterns: schema.exclusionRules.map((r) => r.pattern),
+          entityGroups: schema.entityGroups.map((g) => ({
+            whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
+            whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
+          })),
+        };
+
+        const entities = schema.entities.map((e) => ({
           name: e.name,
           type: e.type as "PRIMARY" | "SECONDARY",
           aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-          isUserInput: !e.autoDetected,
-        })),
-        extractedFields: schema.extractedFields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          description: f.description,
-          source: f.source,
-        })),
-        exclusionPatterns: schema.exclusionRules.map((r) => r.pattern),
-        entityGroups: schema.entityGroups.map((g) => ({
-          whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
-          whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
-        })),
-      };
+        }));
 
-      const entities = schema.entities.map((e) => ({
-        name: e.name,
-        type: e.type as "PRIMARY" | "SECONDARY",
-        aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-      }));
+        const exclusionRules = schema.exclusionRules.map((r) => ({
+          ruleType: r.ruleType,
+          pattern: r.pattern,
+          isActive: r.isActive,
+        }));
 
-      const exclusionRules = schema.exclusionRules.map((r) => ({
-        ruleType: r.ruleType,
-        pattern: r.pattern,
-        isActive: r.isActive,
-      }));
+        // Process the batch
+        const batchResult = await processEmailBatch(
+          emailIds,
+          accessToken,
+          schemaContext,
+          entities,
+          exclusionRules,
+          { schemaId, scanJobId, userId },
+        );
 
-      // Process the batch
-      const batchResult = await processEmailBatch(
-        emailIds,
-        accessToken,
-        schemaContext,
-        entities,
-        exclusionRules,
-        { schemaId, scanJobId, userId },
-      );
+        // processedEmails / excludedEmails / failedEmails are computed on
+        // demand by computeScanMetrics from Email rows + ScanFailure rows.
+        // Only the status message is updated here.
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: {
+            statusMessage: `Batch ${batchIndex + 1}/${totalBatches} complete`,
+          },
+        });
 
-      // processedEmails / excludedEmails / failedEmails are computed on
-      // demand by computeScanMetrics from Email rows + ScanFailure rows.
-      // Only the status message is updated here.
-      await prisma.scanJob.update({
-        where: { id: scanJobId },
-        data: {
-          statusMessage: `Batch ${batchIndex + 1}/${totalBatches} complete`,
-        },
-      });
-
-      return batchResult;
+        return batchResult;
+      } // end processBatchInner
     });
 
     // Emit batch completed event. failedCount is derived (batch size minus
@@ -385,6 +515,16 @@ export const runCoarseClustering = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = event.data.event.data as { schemaId: string; scanJobId: string };
+      await handleDownstreamScanFailure({
+        step,
+        schemaId: original.schemaId,
+        scanJobId: original.scanJobId,
+        phase: "EXTRACTING",
+        error,
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, scanJobId } = event.data;
@@ -460,6 +600,16 @@ export const runCaseSplitting = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = event.data.event.data as { schemaId: string; scanJobId: string };
+      await handleDownstreamScanFailure({
+        step,
+        schemaId: original.schemaId,
+        scanJobId: original.scanJobId,
+        phase: "CLUSTERING",
+        error,
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, scanJobId, coarseClusterIds } = event.data;
@@ -637,6 +787,28 @@ export const runSynthesis = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = event.data.event.data as { schemaId: string };
+      // Unlike clustering events, clustering.completed doesn't carry scanJobId
+      // directly -- runSynthesis looks it up via findFirst. Resolve it the
+      // same way here so the failure signal references the right scan job.
+      const scanJobId = await step.run("resolve-scan-job-on-failure", async () => {
+        const scanJob = await prisma.scanJob.findFirst({
+          where: { schemaId: original.schemaId, status: "RUNNING" },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        return scanJob?.id ?? null;
+      });
+      if (!scanJobId) return;
+      await handleDownstreamScanFailure({
+        step,
+        schemaId: original.schemaId,
+        scanJobId,
+        phase: "SYNTHESIZING",
+        error,
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, clusterIds } = event.data;

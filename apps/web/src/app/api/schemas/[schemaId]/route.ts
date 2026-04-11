@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
+import { handleApiError } from "@/lib/middleware/error-handler";
+import { assertResourceOwnership } from "@/lib/middleware/ownership";
+import { extractSchemasSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -8,96 +11,78 @@ import { prisma } from "@/lib/prisma";
  * Returns schema details including entities for the review page.
  */
 export const GET = withAuth(async ({ userId, request }) => {
-  const url = new URL(request.url);
-  const schemaId = url.pathname.split("/").pop();
+  try {
+    const schemaId = extractSchemasSchemaId(request);
 
-  if (!schemaId) {
-    return NextResponse.json(
-      { error: "Schema ID is required", code: 400, type: "VALIDATION_ERROR" },
-      { status: 400 },
-    );
-  }
-
-  const schema = await prisma.caseSchema.findUnique({
-    where: { id: schemaId },
-    select: {
-      id: true,
-      name: true,
-      userId: true,
-      entities: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          autoDetected: true,
-          emailCount: true,
-          aliases: true,
-          isActive: true,
-          confidence: true,
-          likelyAliasOf: true,
-          aliasConfidence: true,
-          aliasReason: true,
+    const schema = await prisma.caseSchema.findUnique({
+      where: { id: schemaId },
+      select: {
+        id: true,
+        name: true,
+        userId: true,
+        entities: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            autoDetected: true,
+            emailCount: true,
+            aliases: true,
+            isActive: true,
+            confidence: true,
+            likelyAliasOf: true,
+            aliasConfidence: true,
+            aliasReason: true,
+          },
+          orderBy: { createdAt: "asc" },
         },
-        orderBy: { createdAt: "asc" },
       },
-    },
-  });
+    });
 
-  if (!schema) {
-    return NextResponse.json(
-      { error: "Schema not found", code: 404, type: "NOT_FOUND" },
-      { status: 404 },
-    );
+    assertResourceOwnership(schema, userId, "Schema");
+
+    return NextResponse.json({
+      data: {
+        id: schema.id,
+        name: schema.name,
+        entities: schema.entities,
+      },
+    });
+  } catch (error) {
+    return handleApiError(error, {
+      service: "schemas",
+      operation: "GET /api/schemas/[schemaId]",
+      userId,
+    });
   }
-
-  if (schema.userId !== userId) {
-    return NextResponse.json({ error: "Forbidden", code: 403, type: "FORBIDDEN" }, { status: 403 });
-  }
-
-  return NextResponse.json({
-    data: {
-      id: schema.id,
-      name: schema.name,
-      entities: schema.entities,
-    },
-  });
 });
 
 export const DELETE = withAuth(async ({ userId, request }) => {
-  const url = new URL(request.url);
-  const schemaId = url.pathname.split("/").pop();
+  try {
+    const schemaId = extractSchemasSchemaId(request);
 
-  if (!schemaId) {
-    return NextResponse.json(
-      { error: "Schema ID is required", code: 400, type: "VALIDATION_ERROR" },
-      { status: 400 },
-    );
+    const schema = await prisma.caseSchema.findUnique({
+      where: { id: schemaId },
+      select: { userId: true },
+    });
+
+    assertResourceOwnership(schema, userId, "Schema");
+
+    await prisma.caseSchema.delete({ where: { id: schemaId } });
+
+    logger.info({
+      service: "api",
+      operation: "schema.delete",
+      userId,
+      schemaId,
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return handleApiError(error, {
+      service: "schemas",
+      operation: "DELETE /api/schemas/[schemaId]",
+      userId,
+    });
   }
-
-  const schema = await prisma.caseSchema.findUnique({
-    where: { id: schemaId },
-    select: { userId: true },
-  });
-
-  if (!schema) {
-    return NextResponse.json(
-      { error: "Schema not found", code: 404, type: "NOT_FOUND" },
-      { status: 404 },
-    );
-  }
-
-  if (schema.userId !== userId) {
-    return NextResponse.json({ error: "Forbidden", code: 403, type: "FORBIDDEN" }, { status: 403 });
-  }
-
-  await prisma.caseSchema.delete({ where: { id: schemaId } });
-
-  logger.info({
-    service: "api",
-    operation: "schema.delete",
-    userId,
-    schemaId,
-  });
-
-  return NextResponse.json({ success: true });
 });

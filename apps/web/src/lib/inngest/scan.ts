@@ -226,7 +226,27 @@ export const runScan = inngest.createFunction(
       // EXTRACTING. We record DISCOVERING as the failure phase because
       // that's the only phase runScan itself advances; anything later
       // (fanOutExtraction et al) records its own phase via its own handler.
-      await markScanFailed(scanJobId, "DISCOVERING", error);
+      //
+      // CRITICAL: both markScanFailed AND the scan.completed emit happen
+      // inside step.run so Inngest makes them durable. Without step.run,
+      // a crash between the mark and the emit (or a flaky network during
+      // the emit) would leave runOnboarding hanging for the full 20-minute
+      // timeout. step.run retries the emit on failure.
+      await step.run("mark-scan-failed", async () => {
+        await markScanFailed(scanJobId, "DISCOVERING", error);
+      });
+      await step.run("emit-scan-failed-event", async () => {
+        await inngest.send({
+          name: "scan.completed",
+          data: {
+            schemaId,
+            scanJobId,
+            reason: "failed",
+            errorMessage: error instanceof Error ? error.message : String(error),
+          },
+        });
+      });
+
       throw error;
     }
   },

@@ -30,12 +30,10 @@ import type {
   QualityPhaseType,
 } from "@denim/types";
 import { callClaude } from "@/lib/ai/client";
+import { logAICost } from "@/lib/ai/cost-tracker";
 import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
-
-// Claude Sonnet pricing (per 1M tokens): $3 input, $15 output
-const CLAUDE_INPUT_COST_PER_TOKEN = 3 / 1_000_000;
-const CLAUDE_OUTPUT_COST_PER_TOKEN = 15 / 1_000_000;
 
 interface ClusterResult {
   clusterIds: string[];
@@ -53,8 +51,28 @@ interface ClusterResult {
  * No AI calls — pure computation + DB reads/writes.
  */
 export async function coarseCluster(schemaId: string, scanJobId?: string): Promise<ClusterResult> {
-  const startTime = Date.now();
+  const augmented = await withLogging<ClusterResult & { emailCount: number }>(
+    {
+      service: "cluster",
+      operation: "coarseCluster",
+      context: { schemaId },
+    },
+    () => coarseClusterImpl(schemaId, scanJobId),
+    (result) => ({
+      emailCount: result.emailCount,
+      casesCreated: result.casesCreated,
+      casesMerged: result.casesMerged,
+      clustersCreated: result.clustersCreated,
+    }),
+  );
+  const { emailCount: _emailCount, ...rest } = augmented;
+  return rest;
+}
 
+async function coarseClusterImpl(
+  schemaId: string,
+  scanJobId?: string,
+): Promise<ClusterResult & { emailCount: number }> {
   // 0. Clean up orphaned cases from failed prior clustering attempts
   const orphanedCases = await prisma.case.findMany({
     where: { schemaId, caseEmails: { none: {} } },
@@ -132,7 +150,13 @@ export async function coarseCluster(schemaId: string, scanJobId?: string): Promi
       schemaId,
       message: "No unclustered emails found",
     });
-    return { clusterIds: [], casesCreated: 0, casesMerged: 0, clustersCreated: 0 };
+    return {
+      clusterIds: [],
+      casesCreated: 0,
+      casesMerged: 0,
+      clustersCreated: 0,
+      emailCount: 0,
+    };
   }
 
   // 3. Transform to ClusterEmailInput[], filter emails without entity
@@ -379,19 +403,13 @@ export async function coarseCluster(schemaId: string, scanJobId?: string): Promi
     { timeout: 120000 },
   );
 
-  const durationMs = Date.now() - startTime;
-  logger.info({
-    service: "cluster",
-    operation: "coarseCluster",
-    schemaId,
-    durationMs,
-    emailCount: emailInputs.length,
+  return {
+    clusterIds,
     casesCreated,
     casesMerged,
     clustersCreated: clusterIds.length,
-  });
-
-  return { clusterIds, casesCreated, casesMerged, clustersCreated: clusterIds.length };
+    emailCount: emailInputs.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -406,8 +424,25 @@ export async function splitCoarseClusters(
   schemaId: string,
   scanJobId?: string,
 ): Promise<ClusterResult> {
-  const startTime = Date.now();
+  return withLogging<ClusterResult>(
+    {
+      service: "cluster",
+      operation: "splitCoarseClusters",
+      context: { schemaId },
+    },
+    () => splitCoarseClustersImpl(schemaId, scanJobId),
+    (result) => ({
+      casesCreated: result.casesCreated,
+      casesMerged: result.casesMerged,
+      clustersCreated: result.clustersCreated,
+    }),
+  );
+}
 
+async function splitCoarseClustersImpl(
+  schemaId: string,
+  scanJobId?: string,
+): Promise<ClusterResult> {
   // 1. Load schema with phase and vocabulary
   const schema = await prisma.caseSchema.findUniqueOrThrow({
     where: { id: schemaId },
@@ -708,21 +743,19 @@ async function aiCaseSplit(
     });
 
     // Log cost
-    const estimatedCost =
-      aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
-      aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: clusters[0]?.emailSamples[0]?.id ?? "unknown",
         scanJobId,
         model: "claude-sonnet-4-6",
         operation: "case-splitting",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
     // Assign ALL remaining emails to cases using discriminator word matching.
     // Claude only saw a sample — the rest must be deterministically assigned.
@@ -865,7 +898,6 @@ async function applyCaseSplitResult(
     reasoning: string;
   },
 ): Promise<ClusterResult> {
-  const startTime = Date.now();
   // Build email → entity mapping
   const emailEntityMap = new Map<string, string>();
   for (const [entityId, cluster] of entityClusters) {
@@ -1076,16 +1108,6 @@ async function applyCaseSplitResult(
     },
     { timeout: 120000 },
   );
-
-  const durationMs = Date.now() - startTime;
-  logger.info({
-    service: "cluster",
-    operation: "splitCoarseClusters",
-    schemaId,
-    durationMs,
-    casesCreated,
-    clustersCreated: clusterIds.length,
-  });
 
   return { clusterIds, casesCreated, casesMerged: 0, clustersCreated: clusterIds.length };
 }
@@ -1379,21 +1401,19 @@ export async function applyCalibration(schemaId: string, scanJobId?: string): Pr
     });
 
     // Log cost
-    const estimatedCost =
-      aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
-      aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: "calibration",
         scanJobId,
         model: "claude-sonnet-4-6",
         operation: "clustering-calibration",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
     logger.info({
       service: "cluster",

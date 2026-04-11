@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { signInWithGmail } from "@/lib/gmail/oauth-config";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { Button } from "../ui/button";
 import { CardShell } from "../ui/card-shell";
@@ -138,17 +139,8 @@ export function Card2GmailConnect({ onNext, onBack }: Card2Props) {
 
     try {
       const supabase = createBrowserClient();
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          scopes: "https://www.googleapis.com/auth/gmail.readonly",
-          redirectTo: `${window.location.origin}/auth/callback?next=/interview`,
-          queryParams: {
-            access_type: "offline",
-            prompt: "consent",
-          },
-        },
-      });
+      const redirectTo = `${window.location.origin}/auth/callback?next=/interview`;
+      const { data, error } = await signInWithGmail(supabase, redirectTo);
 
       if (error) {
         setStatus("error");

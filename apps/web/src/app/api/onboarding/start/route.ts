@@ -55,6 +55,17 @@ import { prisma } from "@/lib/prisma";
 import { createSchemaStub } from "@/lib/services/interview";
 import { InterviewInputSchema } from "@/lib/validation/interview";
 
+function gmailNotConnected(): NextResponse {
+  return NextResponse.json(
+    {
+      error: "Gmail not connected. Please connect Gmail first.",
+      code: 422,
+      type: "GMAIL_NOT_CONNECTED",
+    },
+    { status: 422 },
+  );
+}
+
 const StartBodySchema = z.object({
   // Minimum-length safety net for client-supplied ids. Real clients send a
   // ULID (26 chars) or cuid (25 chars). Anything shorter is almost certainly
@@ -92,6 +103,20 @@ export const POST = withAuth(async ({ userId, request }) => {
   try {
     const body = StartBodySchema.parse(await request.json());
     const { schemaId, inputs } = body;
+
+    // -----------------------------------------------------------------
+    // Pre-flight: verify Gmail tokens exist before creating a schema
+    // stub that will immediately fail. A single DB read — no refresh
+    // attempt, no Gmail API call. Returns 422 so the connect page can
+    // show the "Connect Gmail" button instead of a cryptic pipeline error.
+    // -----------------------------------------------------------------
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { googleTokens: true },
+    });
+    if (!user?.googleTokens) {
+      return gmailNotConnected();
+    }
 
     // -----------------------------------------------------------------
     // Fast path: sequential-retry idempotency check. Reads the outbox
