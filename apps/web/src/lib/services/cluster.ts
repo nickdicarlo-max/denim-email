@@ -256,7 +256,16 @@ async function coarseClusterImpl(
 
   await prisma.$transaction(
     async (tx) => {
-      for (const decision of decisions) {
+      // The gravity model assigns synthetic IDs ("new-case-0", "new-case-1",
+      // etc.) to newly created cases in its in-memory activeCases list. MERGE
+      // decisions reference these synthetic IDs as targetCaseId. We need to
+      // map them to real CUIDs after creating the Case rows.
+      //
+      // The synthetic ID format is `new-case-${decisionIndex}` where
+      // decisionIndex is the position of the CREATE decision in the array.
+      const syntheticToReal = new Map<string, string>();
+
+      for (const [decisionIndex, decision] of decisions.entries()) {
         if (decision.action === "CREATE") {
           const entityId = decision.entityId ?? resolveEntityFromDetected(decision.emailIds);
           if (!entityId) {
@@ -290,6 +299,10 @@ async function coarseClusterImpl(
               lastSenderName: lastEmail?.senderDisplayName,
             },
           });
+
+          // Map the synthetic ID to the real CUID so MERGE decisions can
+          // resolve their targetCaseId.
+          syntheticToReal.set(`new-case-${decisionIndex}`, newCase.id);
 
           for (const emailId of decision.emailIds) {
             await tx.caseEmail.upsert({
@@ -328,8 +341,21 @@ async function coarseClusterImpl(
           clusterIds.push(cluster.id);
           casesCreated++;
         } else {
-          // MERGE
-          const targetCaseId = decision.targetCaseId!;
+          // MERGE — resolve synthetic IDs to real CUIDs
+          let targetCaseId = decision.targetCaseId!;
+          if (targetCaseId.startsWith("new-case-")) {
+            const realId = syntheticToReal.get(targetCaseId);
+            if (!realId) {
+              logger.warn({
+                service: "cluster",
+                operation: "coarseCluster.unresolvedSyntheticId",
+                schemaId,
+                syntheticId: targetCaseId,
+              });
+              continue;
+            }
+            targetCaseId = realId;
+          }
 
           const targetExists = await tx.case.findUnique({
             where: { id: targetCaseId },
@@ -388,12 +414,17 @@ async function coarseClusterImpl(
         }
       }
 
-      // Write alternativeCaseId for emails with second-best matches
+      // Write alternativeCaseId for emails with second-best matches,
+      // resolving any synthetic IDs to real CUIDs.
       for (const decision of decisions) {
-        if (decision.alternativeCaseId && decision.emailIds.length > 0) {
+        let altCaseId = decision.alternativeCaseId;
+        if (altCaseId?.startsWith("new-case-")) {
+          altCaseId = syntheticToReal.get(altCaseId) ?? null;
+        }
+        if (altCaseId && decision.emailIds.length > 0) {
           await tx.email.updateMany({
             where: { id: { in: decision.emailIds } },
-            data: { alternativeCaseId: decision.alternativeCaseId },
+            data: { alternativeCaseId: altCaseId },
           });
         }
       }

@@ -441,6 +441,17 @@ export async function persistSchemaRelations(
     })),
   ];
 
+  // Cap mergeThreshold at the mathematically achievable ceiling.
+  // Without sender-entity match, max score = subjectMatchScore + tagMatchScore
+  // (typically 20 + 15 = 35). A threshold above 40 makes merges unreachable.
+  const clusteringConfig = hypothesis.clusteringConfig as unknown as Record<string, unknown>;
+  if (
+    typeof clusteringConfig.mergeThreshold === "number" &&
+    clusteringConfig.mergeThreshold > 40
+  ) {
+    clusteringConfig.mergeThreshold = 30;
+  }
+
   await prisma.$transaction(async (tx) => {
     // Overwrite the stub's placeholder values with the real configs.
     await tx.caseSchema.update({

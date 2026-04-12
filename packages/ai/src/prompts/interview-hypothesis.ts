@@ -99,7 +99,7 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "promotions@"],
   },
   property: {
-    mergeThreshold: 45,
+    mergeThreshold: 30,
     timeDecayFresh: 45,
     reminderCollapseEnabled: false,
     subjectMatchScore: 20,
