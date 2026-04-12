@@ -983,6 +983,10 @@ model ScanJob {
   // Status message (for UI display)
   statusMessage     String?
 
+  // Idempotency guard: prevents duplicate extraction.all.completed emissions
+  // when multiple checkExtractionComplete invocations race.
+  extractionCompleteEmitted Boolean @default(false)
+
   // Error info
   errorPhase        ScanPhase?
   errorMessage      String?  @db.Text

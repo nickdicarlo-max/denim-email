@@ -482,21 +482,37 @@ export const checkExtractionComplete = inngest.createFunction(
           }
         }
 
-        // Emit completion event for clustering stage
-        await inngest.send({
-          name: "extraction.all.completed",
-          data: { schemaId, scanJobId },
+        // CAS guard: only emit extraction.all.completed once, even if
+        // multiple checkExtractionComplete invocations race. Per lessons
+        // learned (Bug 3): each transition must have exactly one owner.
+        const marked = await prisma.scanJob.updateMany({
+          where: { id: scanJobId, extractionCompleteEmitted: false },
+          data: { extractionCompleteEmitted: true },
         });
 
-        logger.info({
-          service: "inngest",
-          operation: "extractionComplete",
-          schemaId,
-          totalEmails: metrics.totalEmails,
-          processed: metrics.processedEmails,
-          excluded: metrics.excludedEmails,
-          failed: metrics.failedEmails,
-        });
+        if (marked.count === 1) {
+          await inngest.send({
+            name: "extraction.all.completed",
+            data: { schemaId, scanJobId },
+          });
+
+          logger.info({
+            service: "inngest",
+            operation: "extractionComplete",
+            schemaId,
+            totalEmails: metrics.totalEmails,
+            processed: metrics.processedEmails,
+            excluded: metrics.excludedEmails,
+            failed: metrics.failedEmails,
+          });
+        } else {
+          logger.info({
+            service: "inngest",
+            operation: "extractionComplete.alreadyEmitted",
+            schemaId,
+            scanJobId,
+          });
+        }
       }
     });
   },

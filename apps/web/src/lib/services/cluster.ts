@@ -284,6 +284,15 @@ async function coarseClusterImpl(
               ? emailLookup.get(decision.emailIds[decision.emailIds.length - 1])
               : firstEmail;
 
+          const caseTags = [
+            ...new Set(
+              decision.emailIds.flatMap((id) => {
+                const em = emailLookup.get(id);
+                return em && Array.isArray(em.tags) ? (em.tags as string[]) : [];
+              }),
+            ),
+          ];
+
           const newCase = await tx.case.create({
             data: {
               schemaId,
@@ -291,9 +300,9 @@ async function coarseClusterImpl(
               title: firstEmail?.subject ?? "Untitled Case",
               summary: { beginning: "", middle: "", end: "" },
               status: "OPEN",
-              anchorTags: [],
-              allTags: [],
-              displayTags: [],
+              anchorTags: caseTags,
+              allTags: caseTags,
+              displayTags: caseTags.slice(0, 3),
               startDate: firstEmail?.date,
               lastEmailDate: lastEmail?.date,
               lastSenderName: lastEmail?.senderDisplayName,
@@ -799,8 +808,38 @@ async function aiCaseSplit(
       service: "cluster",
       operation: "aiCaseSplit.error",
       schemaId,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
+
+    // Write a diagnostic record so the failure is visible in PipelineIntelligence.
+    // Per lessons learned (Bug 1): failures that break functionality must not be
+    // silent warnings — they must leave a visible trace.
+    try {
+      await prisma.pipelineIntelligence.create({
+        data: {
+          schemaId,
+          scanJobId,
+          stage: "case-splitting",
+          input: { clusterCount: clusters.length, phase: qualityPhase } as any,
+          output: {
+            error: true,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorType: error instanceof Error ? error.constructor.name : "unknown",
+          } as any,
+          model: "claude-sonnet-4-6",
+          tokenCount: null,
+        },
+      });
+    } catch (dbError) {
+      // Don't mask the original error if the diagnostic write also fails
+      logger.error({
+        service: "cluster",
+        operation: "aiCaseSplit.diagnosticWriteFailed",
+        schemaId,
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
+    }
+
     // Fallback: no splitting, keep coarse clusters as-is
     return { clusterIds: [], casesCreated: 0, casesMerged: 0, clustersCreated: 0 };
   }
@@ -955,6 +994,7 @@ async function applyCaseSplitResult(
       date: true,
       senderDisplayName: true,
       entityId: true,
+      tags: true,
     },
   });
   const emailDetailMap = new Map(emailDetails.map((e) => [e.id, e]));
@@ -1002,6 +1042,15 @@ async function applyCaseSplitResult(
         const firstEmail = emailDetailMap.get(caseDef.emailIds[0]);
         const lastEmail = emailDetailMap.get(caseDef.emailIds[caseDef.emailIds.length - 1]);
 
+        const caseTags = [
+          ...new Set(
+            caseDef.emailIds.flatMap((id) => {
+              const em = emailDetailMap.get(id);
+              return em && Array.isArray(em.tags) ? (em.tags as string[]) : [];
+            }),
+          ),
+        ];
+
         const newCase = await tx.case.create({
           data: {
             schemaId,
@@ -1009,9 +1058,9 @@ async function applyCaseSplitResult(
             title: caseDef.caseTitle,
             summary: { beginning: "", middle: "", end: "" },
             status: "OPEN",
-            anchorTags: [],
-            allTags: [],
-            displayTags: [],
+            anchorTags: caseTags,
+            allTags: caseTags,
+            displayTags: caseTags.slice(0, 3),
             startDate: firstEmail?.date,
             lastEmailDate: lastEmail?.date,
             lastSenderName: lastEmail?.senderDisplayName,
@@ -1084,6 +1133,15 @@ async function applyCaseSplitResult(
           const firstEmail = emailDetailMap.get(emailIds[0]);
           const lastEmail = emailDetailMap.get(emailIds[emailIds.length - 1]);
 
+          const caseTags = [
+            ...new Set(
+              emailIds.flatMap((id) => {
+                const em = emailDetailMap.get(id);
+                return em && Array.isArray(em.tags) ? (em.tags as string[]) : [];
+              }),
+            ),
+          ];
+
           const catchAllCase = await tx.case.create({
             data: {
               schemaId,
@@ -1091,9 +1149,9 @@ async function applyCaseSplitResult(
               title: `${entityName} — General`,
               summary: { beginning: "", middle: "", end: "" },
               status: "OPEN",
-              anchorTags: [],
-              allTags: [],
-              displayTags: [],
+              anchorTags: caseTags,
+              allTags: caseTags,
+              displayTags: caseTags.slice(0, 3),
               startDate: firstEmail?.date,
               lastEmailDate: lastEmail?.date,
               lastSenderName: lastEmail?.senderDisplayName,
