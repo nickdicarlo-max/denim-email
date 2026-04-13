@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-09 (Transactional outbox refactor #33 landed on feature/ux-overhaul)
+Last updated: 2026-04-13 (Pipeline resequencing landed on feature/ux-overhaul)
 
 ## Completed
 
@@ -641,6 +641,8 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | Case Urgency & Decay | **Complete** | nextActionDate sort, computeCaseDecay, daily cron, read-time freshness (2026-03-31) |
 | Major Dep Migration | **Complete** | Merged to main 2026-03-30 (Vitest 4, Biome 2, Prisma 7, Zod 4, React 19, Next.js 16, Tailwind 4, Inngest 4) |
 | UX Overhaul | **Complete** | All 3 waves done 2026-04-07. Branch: feature/ux-overhaul. Onboarding flow, cross-topic feed, settings hub, old route cleanup. |
+| Clustering Fixes (Apr 12) | **Complete** | Synthetic ID MERGE bug (#58), PM threshold (#59), case-splitting visibility (#60), case tags (#61), extraction race (#47) |
+| Pipeline Resequencing (Apr 13) | **Pending e2e test** | Review gate moved before pipeline (#64, #65). Split runOnboarding into Function A + B. User confirms entities before extraction/clustering/synthesis. |
 | 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
@@ -769,14 +771,30 @@ First formal end-to-end eval of the new-user experience after the UX overhaul. W
 
 ## Next Steps
 
-### Immediate: Eval Session 1 P0 follow-ups (BLOCK SHIP)
-Eval Session 1 (#12) failed end-to-end. Five P0 issues block any further progress on UX or features. Fix order:
+### Immediate: Verify pipeline resequencing (2026-04-13)
+Pipeline resequencing landed (6 commits on feature/ux-overhaul). Needs manual e2e test:
+1. Wipe test data, start dev server + Inngest
+2. Run school_parent onboarding (soccer/guitar/lanier/st agnes/dance)
+3. Verify review screen appears in < 60 seconds
+4. Toggle off non-kids discoveries, confirm
+5. Verify < 15 cases created
+6. If passing: close #64, #65, #56. Merge feature/ux-overhaul to main.
 
-1. **#15 — Onboarding loading screens hang** (Gmail + topic setup). Removes the user's reason to refresh.
-2. **#14 — Topic-creation idempotency.** Defense in depth so any future hang doesn't multiply schemas.
-3. **#17 + #18 together — Auto-transition + review-screen schema context.** Same flow, fix as one.
-4. **#16 — Scans silently drop 60-85% of emails.** Highest case-quality lever in the entire eval.
-5. **Clean eval rerun.** Validate end-to-end before touching P1s.
+### Then: Schema additions + UX Phase 4
+- **Schema additions** -- UserNote, NotificationPreference, billing fields
+- **Phase 4** -- Notes, settings, topic edit
+
+### Deferred pipeline issues (not blocking merge)
+- **#63** -- Batch persistSchemaRelations round-trips (workaround: 15s timeout)
+- **#19** -- Clustering non-determinism
+- **#20** -- Topic anchors as case boundaries
+
+### Original eval P0s -- status
+- **#15** -- Loading screens: FIXED (observer page with polling)
+- **#14** -- Idempotency: FIXED (outbox pattern)
+- **#17 + #18** -- Auto-transition + schema context: FIXED (onboarding state machine)
+- **#16** -- Silent email drops: Partially addressed by smart discovery
+- **Clean eval rerun** -- Blocked until pipeline resequencing verified
 
 ### After P0s: Eval P1 case-quality fixes
 - **#19 — Clustering non-determinism.** Same input produces different output across runs.
