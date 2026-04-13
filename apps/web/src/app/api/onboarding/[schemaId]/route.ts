@@ -7,9 +7,9 @@
  *          render against.
  *
  *   POST   /api/onboarding/:schemaId — review confirmation. Flips
- *          phase=AWAITING_REVIEW → COMPLETED and status=DRAFT → ACTIVE
- *          in a single CAS `updateMany`. Resolves the "no automatic
- *          status=ACTIVE" deferred debt from Task 9.
+ *          phase=AWAITING_REVIEW → PROCESSING_SCAN, persists Entity rows
+ *          via `persistSchemaRelations`, and emits
+ *          `onboarding.review.confirmed` to kick off the pipeline.
  *
  *   DELETE /api/onboarding/:schemaId — cancellation. Emits
  *          `onboarding.session.cancelled` so `runOnboarding`'s `cancelOn`
@@ -18,6 +18,7 @@
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { SchemaHypothesis, HypothesisValidation, InterviewInput } from "@denim/types";
 import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
@@ -25,6 +26,7 @@ import { handleApiError } from "@/lib/middleware/error-handler";
 import { assertResourceOwnership } from "@/lib/middleware/ownership";
 import { extractOnboardingSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
+import { persistSchemaRelations } from "@/lib/services/interview";
 import { derivePollingResponse } from "@/lib/services/onboarding-polling";
 
 // GET — polling endpoint -----------------------------------------------------
@@ -54,10 +56,10 @@ export const GET = withAuth(async ({ userId, request }) => {
   }
 });
 
-// POST — confirm review and complete onboarding ------------------------------
+// POST — confirm review, persist entities, and trigger pipeline -------------
 const ConfirmSchema = z.object({
   topicName: z.string().min(1).max(100),
-  entityToggles: z.array(z.object({ id: z.string(), isActive: z.boolean() })).default([]),
+  entityToggles: z.array(z.object({ name: z.string(), isActive: z.boolean() })).default([]),
 });
 
 export const POST = withAuth(async ({ userId, request }) => {
@@ -67,18 +69,25 @@ export const POST = withAuth(async ({ userId, request }) => {
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
-      select: { id: true, userId: true, phase: true, status: true },
+      select: {
+        id: true,
+        userId: true,
+        phase: true,
+        status: true,
+        hypothesis: true,
+        validation: true,
+        inputs: true,
+      },
     });
     assertResourceOwnership(schema, userId, "Schema");
 
-    // CAS: only advance from AWAITING_REVIEW. Concurrent confirms from two
-    // tabs will see updated.count === 0 on the loser and fall through to
-    // the "already completed" branch.
+    // CAS: only advance from AWAITING_REVIEW → PROCESSING_SCAN.
+    // Concurrent confirms from two tabs will see updated.count === 0 on
+    // the loser and fall through to the idempotent "already-confirmed" branch.
     const updated = await prisma.caseSchema.updateMany({
       where: { id: schemaId, phase: "AWAITING_REVIEW" },
       data: {
-        phase: "COMPLETED",
-        status: "ACTIVE",
+        phase: "PROCESSING_SCAN",
         name: body.topicName.trim(),
         phaseUpdatedAt: new Date(),
       },
@@ -89,9 +98,9 @@ export const POST = withAuth(async ({ userId, request }) => {
         where: { id: schemaId },
         select: { phase: true, status: true },
       });
-      if (current?.status === "ACTIVE") {
+      if (current?.status === "ACTIVE" || current?.phase === "PROCESSING_SCAN") {
         return NextResponse.json({
-          data: { schemaId, status: "already-completed" },
+          data: { schemaId, status: "already-confirmed" },
         });
       }
       return NextResponse.json(
@@ -104,29 +113,65 @@ export const POST = withAuth(async ({ userId, request }) => {
       );
     }
 
-    // Apply user-toggled entity activations in a single transaction so
-    // partial failures don't leave the UI out of sync with the DB.
-    if (body.entityToggles.length > 0) {
-      await prisma.$transaction(
-        body.entityToggles.map((t) =>
-          prisma.entity.update({
-            where: { id: t.id },
-            data: { isActive: t.isActive },
-          }),
-        ),
+    // Build confirmations from entity toggles (names, not DB IDs — Entity
+    // rows don't exist yet at review time; persistSchemaRelations creates them).
+    const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
+    const validation = schema.validation as unknown as HypothesisValidation | null;
+
+    if (!hypothesis) {
+      return NextResponse.json(
+        { error: "Schema has no hypothesis — cannot finalize", code: 500, type: "SERVER_ERROR" },
+        { status: 500 },
       );
     }
+
+    const acceptedNames = new Set(
+      body.entityToggles.filter((t) => t.isActive).map((t) => t.name),
+    );
+    const rejectedNames = new Set(
+      body.entityToggles.filter((t) => !t.isActive).map((t) => t.name),
+    );
+
+    const confirmedEntities = validation?.discoveredEntities
+      .filter((e) => acceptedNames.has(e.name))
+      .map((e) => e.name) ?? [];
+
+    const removedEntities = [
+      ...hypothesis.entities.filter((e) => rejectedNames.has(e.name)).map((e) => e.name),
+      ...(validation?.discoveredEntities.filter((e) => rejectedNames.has(e.name)).map((e) => e.name) ?? []),
+    ];
+
+    const confirmedTags = validation?.suggestedTags.map((t) => t.name) ?? [];
+
+    const inputs = schema.inputs as unknown as InterviewInput | null;
+
+    await persistSchemaRelations(schemaId, hypothesis, validation ?? undefined, {
+      confirmedEntities,
+      removedEntities,
+      confirmedTags,
+      removedTags: [],
+      schemaName: body.topicName.trim(),
+      groups: inputs?.groups,
+      sharedWhos: inputs?.sharedWhos,
+    });
+
+    // Emit event to trigger the pipeline (Function B: scan → extract → cluster → synthesize).
+    await inngest.send({
+      name: "onboarding.review.confirmed",
+      data: { schemaId, userId },
+    });
 
     logger.info({
       service: "onboarding",
       operation: "confirm",
       userId,
       schemaId,
-      entityToggleCount: body.entityToggles.length,
+      acceptedCount: acceptedNames.size,
+      rejectedCount: rejectedNames.size,
     });
 
     return NextResponse.json({
-      data: { schemaId, status: "completed" },
+      data: { schemaId, status: "confirmed" },
     });
   } catch (error) {
     return handleApiError(error, {
