@@ -1,22 +1,24 @@
 /**
- * runOnboarding — parent workflow for the onboarding session state machine.
- * Owns CaseSchema.phase and drives it through:
+ * Onboarding Inngest functions — split into two for the review-gate flow.
  *
- *   PENDING → GENERATING_HYPOTHESIS → FINALIZING_SCHEMA
- *           → PROCESSING_SCAN (waits for scan.completed)
- *           → AWAITING_REVIEW  (happy path)
- *           or NO_EMAILS_FOUND (empty scan)
- *           or FAILED          (any thrown error)
+ * Function A: runOnboarding (triggered by onboarding.session.started)
+ *   Drives: PENDING → GENERATING_HYPOTHESIS → AWAITING_REVIEW
+ *   Generates and validates the hypothesis, then stops at the review screen.
+ *   The user sees Card 4 (review screen) and can confirm/adjust entities.
  *
- * The transitions use advanceSchemaPhase for CAS-on-phase semantics: if
- * two concurrent runOnboarding invocations raced, only one would advance
- * and the loser would throw NonRetriableError. Idempotent re-runs (Inngest
- * retry landing on an already-advanced row) return "skipped" from the
- * helper and we load the persisted state to continue.
+ * Function B: runOnboardingPipeline (triggered by onboarding.review.confirmed)
+ *   Drives: AWAITING_REVIEW → PROCESSING_SCAN → COMPLETED (or terminal states)
+ *   Creates the ScanJob, emits scan.requested, waits for scan.completed,
+ *   then advances to the terminal state.
  *
- * This function does NOT own ScanJob.phase — it creates the scan row,
- * emits scan.requested, and waits for scan.completed. runScan (Task 8)
- * owns the scan-phase transitions.
+ * Phase transitions use advanceSchemaPhase for CAS-on-phase semantics: if
+ * two concurrent invocations raced, only one would advance and the loser
+ * would throw NonRetriableError. Idempotent re-runs (Inngest retry landing
+ * on an already-advanced row) return "skipped" from the helper and we load
+ * the persisted state to continue.
+ *
+ * This file does NOT call persistSchemaRelations — that is now called by
+ * the POST /api/onboarding/:schemaId route (Task 4) when the user confirms.
  */
 import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
 import type { Prisma } from "@prisma/client";
@@ -28,7 +30,6 @@ import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import {
   extractTrustedDomains,
   generateHypothesis,
-  persistSchemaRelations,
   resolveWhoEmails,
   validateHypothesis,
 } from "@/lib/services/interview";
@@ -50,6 +51,12 @@ const DOMAIN_EXPANSION_CAP = 50;
 const MAX_DOMAINS_TO_EXPAND = 5;
 
 const SCAN_WAIT_TIMEOUT = "20m";
+
+// ---------------------------------------------------------------------------
+// Function A: runOnboarding
+// Triggered by: onboarding.session.started
+// Exits at: AWAITING_REVIEW (user sees the review screen)
+// ---------------------------------------------------------------------------
 
 export const runOnboarding = inngest.createFunction(
   {
@@ -119,14 +126,13 @@ export const runOnboarding = inngest.createFunction(
       //   every other @judgefite.com sender).
       //
       // The merged validation result is stored on the schema row, read by
-      // the next step (finalize-schema) which auto-confirms all discovered
-      // entities into Entity rows with autoDetected=true. Users can then
-      // deselect on the review screen.
+      // the POST /api/onboarding/:schemaId confirm route which calls
+      // persistSchemaRelations to auto-confirm discovered entities.
       //
       // Runs OUTSIDE an advanceSchemaPhase CAS -- stays within the
       // GENERATING_HYPOTHESIS phase for polling purposes. The phase advance
-      // happens in the next step (finalize-schema) after validation has
-      // written its result back.
+      // happens in the next step (advance-to-awaiting-review) after
+      // validation has written its result back.
       await step.run("validate-hypothesis", async () => {
         const schema = await prisma.caseSchema.findUniqueOrThrow({
           where: { id: schemaId },
@@ -256,8 +262,8 @@ export const runOnboarding = inngest.createFunction(
           where: { id: schemaId },
           data: {
             // Write back the (possibly mutated) hypothesis with enriched
-            // WHO aliases so finalize-schema sees the resolved email
-            // addresses.
+            // WHO aliases so the confirm route sees the resolved email
+            // addresses when it calls persistSchemaRelations.
             hypothesis: hypothesis as unknown as Prisma.InputJsonValue,
             validation: mergedValidation as unknown as Prisma.InputJsonValue,
           },
@@ -274,178 +280,20 @@ export const runOnboarding = inngest.createFunction(
         });
       });
 
-      // ---- Step 2: GENERATING_HYPOTHESIS → FINALIZING_SCHEMA -----------
+      // ---- Step 2: GENERATING_HYPOTHESIS → AWAITING_REVIEW ---------------
       //
-      // Read the stored hypothesis + validation back and hand them to
-      // persistSchemaRelations. Auto-confirms all discovered entities
-      // (the review screen is now the user's deselection UI, not the
-      // old card-based confirmation step).
-      await step.run("finalize-schema", async () => {
+      // Hypothesis generation and validation are done. Advance to
+      // AWAITING_REVIEW so the UI shows Card 4 (the review screen).
+      // persistSchemaRelations is NOT called here — the confirm route
+      // (POST /api/onboarding/:schemaId) calls it after the user confirms.
+      await step.run("advance-to-awaiting-review", async () => {
         return advanceSchemaPhase({
           schemaId,
           from: "GENERATING_HYPOTHESIS",
-          to: "FINALIZING_SCHEMA",
-          work: async () => {
-            const schema = await prisma.caseSchema.findUniqueOrThrow({
-              where: { id: schemaId },
-              select: { hypothesis: true, validation: true },
-            });
-            const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
-            if (!hypothesis) {
-              throw new NonRetriableError(
-                `runOnboarding: CaseSchema ${schemaId} has no hypothesis column after GENERATING_HYPOTHESIS`,
-              );
-            }
-            const validation = schema.validation as unknown as HypothesisValidation | null;
-
-            // When validation exists (normal path post-Task-18), auto-confirm
-            // all discovered entities and suggested tags -- the review screen
-            // lets the user deselect any they don't want. When validation is
-            // absent (e.g., the validate-hypothesis step was skipped on an
-            // already-partial run), persistSchemaRelations uses its own
-            // defaults.
-            const confirmations = validation
-              ? {
-                  confirmedEntities: validation.discoveredEntities.map((e) => e.name),
-                  confirmedTags: validation.suggestedTags.map((t) => t.name),
-                  removedEntities: [],
-                  removedTags: [],
-                }
-              : undefined;
-
-            await persistSchemaRelations(
-              schemaId,
-              hypothesis,
-              validation ?? undefined,
-              confirmations,
-            );
-          },
-        });
-      });
-
-      // ---- Step 3: FINALIZING_SCHEMA → PROCESSING_SCAN ------------------
-      //
-      // Create the onboarding ScanJob row in the same CAS so the scan id
-      // and the schema-phase advance commit atomically. Return the scan
-      // id through the helper; on "skipped" (re-entry) look it up.
-      const createdScanId = await step.run("create-scan-job", async () => {
-        return advanceSchemaPhase({
-          schemaId,
-          from: "FINALIZING_SCHEMA",
-          to: "PROCESSING_SCAN",
-          work: async () => {
-            const scan = await prisma.scanJob.create({
-              data: {
-                schemaId,
-                userId,
-                status: "PENDING",
-                phase: "PENDING",
-                triggeredBy: "ONBOARDING",
-                totalEmails: 0, // overwritten by runScan discovery step
-              },
-              select: { id: true },
-            });
-            return scan.id;
-          },
-        });
-      });
-
-      const scanJobId: string = await step.run("resolve-scan-job", async () => {
-        if (createdScanId !== "skipped") return createdScanId;
-        // Re-entry: find the most recent onboarding scan for this schema.
-        const existing = await prisma.scanJob.findFirst({
-          where: { schemaId, triggeredBy: "ONBOARDING" },
-          orderBy: { createdAt: "desc" },
-          select: { id: true },
-        });
-        if (!existing) {
-          throw new NonRetriableError(
-            `runOnboarding: schema ${schemaId} is past FINALIZING_SCHEMA but has no onboarding ScanJob`,
-          );
-        }
-        return existing.id;
-      });
-
-      // ---- Step 4: request scan -----------------------------------------
-      await step.run("request-scan", async () => {
-        await inngest.send({
-          name: "scan.requested",
-          data: { scanJobId, schemaId, userId },
-        });
-      });
-
-      // ---- Step 5: wait for scan.completed ------------------------------
-      //
-      // Inngest waitForEvent returns null on timeout. The `match` clause
-      // filters to the specific schemaId so a parallel scan for another
-      // schema doesn't unblock this workflow. We match on schemaId (not
-      // scanJobId) because the trigger event (onboarding.session.started)
-      // has schemaId but not scanJobId — matching on a field absent from
-      // the trigger always fails (see docs/01_denim_lessons_learned.md).
-      const completion = await step.waitForEvent("wait-for-scan", {
-        event: "scan.completed",
-        timeout: SCAN_WAIT_TIMEOUT,
-        match: "data.schemaId",
-      });
-
-      if (!completion) {
-        throw new NonRetriableError(
-          `runOnboarding: scan ${scanJobId} did not complete within ${SCAN_WAIT_TIMEOUT}`,
-        );
-      }
-
-      // ---- Step 6: advance to terminal state ----------------------------
-      //
-      // Three outcomes from the scan:
-      //   - reason="failed"          → FAILED (scan died, surface the error)
-      //   - reason="no-emails-found" → NO_EMAILS_FOUND (terminal, no review)
-      //   - happy path               → quality gate then AWAITING_REVIEW
-      const reason = completion.data.reason;
-
-      if (reason === "failed") {
-        const scanError = completion.data.errorMessage ?? "Scan failed";
-        throw new NonRetriableError(`runOnboarding: scan failed — ${scanError}`);
-      }
-
-      if (reason === "no-emails-found") {
-        await step.run("advance-to-no-emails-found", async () => {
-          await advanceSchemaPhase({
-            schemaId,
-            from: "PROCESSING_SCAN",
-            to: "NO_EMAILS_FOUND",
-            work: async () => {
-              // Terminal phase — nothing else to write.
-            },
-          });
-        });
-        logger.info({
-          service: "runOnboarding",
-          operation: "runOnboarding.noEmailsFound",
-          schemaId,
-          scanJobId,
-        });
-        return;
-      }
-
-      await step.run("advance-to-awaiting-review", async () => {
-        await advanceSchemaPhase({
-          schemaId,
-          from: "PROCESSING_SCAN",
           to: "AWAITING_REVIEW",
           work: async () => {
-            // Quality gate: make sure every OPEN case has been synthesized.
-            // runSynthesis marks cases with a timestamp as it processes them;
-            // any nulls here mean the pipeline silently dropped a case and
-            // the user shouldn't see AWAITING_REVIEW until the gap is
-            // surfaced (we throw, markSchemaFailed runs in the catch).
-            const unsynthesized = await prisma.case.count({
-              where: { schemaId, status: "OPEN", synthesizedAt: null },
-            });
-            if (unsynthesized > 0) {
-              throw new Error(
-                `runOnboarding: ${unsynthesized} OPEN case(s) still unsynthesized — refusing to advance to AWAITING_REVIEW`,
-              );
-            }
+            // No additional work needed: hypothesis and validation are already
+            // written to the schema row. The CAS just flips the phase.
           },
         });
       });
@@ -454,9 +302,6 @@ export const runOnboarding = inngest.createFunction(
         service: "runOnboarding",
         operation: "runOnboarding.awaitingReview",
         schemaId,
-        scanJobId,
-        synthesizedCount: completion.data.synthesizedCount ?? 0,
-        failedCount: completion.data.failedCount ?? 0,
       });
     } catch (error) {
       if (error instanceof NonRetriableError) {
@@ -481,6 +326,190 @@ export const runOnboarding = inngest.createFunction(
         select: { phase: true },
       });
       await markSchemaFailed(schemaId, current?.phase ?? "PENDING", error);
+      throw error;
+    }
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Function B: runOnboardingPipeline
+// Triggered by: onboarding.review.confirmed (emitted by the confirm route)
+// Drives: AWAITING_REVIEW → PROCESSING_SCAN → COMPLETED (or terminal state)
+// ---------------------------------------------------------------------------
+
+export const runOnboardingPipeline = inngest.createFunction(
+  {
+    id: "run-onboarding-pipeline",
+    triggers: [{ event: "onboarding.review.confirmed" }],
+    cancelOn: [{ event: "onboarding.session.cancelled", match: "data.schemaId" }],
+    concurrency: [
+      { key: "event.data.schemaId", limit: 1 },
+      { key: "event.data.userId", limit: 3 },
+    ],
+    retries: 0,
+  },
+  async ({ event, step }) => {
+    const { schemaId, userId } = event.data;
+
+    try {
+      // ---- Step 1: AWAITING_REVIEW → PROCESSING_SCAN --------------------
+      //
+      // Create the onboarding ScanJob row in the same CAS so the scan id
+      // and the schema-phase advance commit atomically. Return the scan
+      // id through the helper; on "skipped" (re-entry) look it up.
+      const createdScanId = await step.run("create-scan-job", async () => {
+        return advanceSchemaPhase({
+          schemaId,
+          from: "AWAITING_REVIEW",
+          to: "PROCESSING_SCAN",
+          work: async () => {
+            const scan = await prisma.scanJob.create({
+              data: {
+                schemaId,
+                userId,
+                status: "PENDING",
+                phase: "PENDING",
+                triggeredBy: "ONBOARDING",
+                totalEmails: 0, // overwritten by runScan discovery step
+              },
+              select: { id: true },
+            });
+            return scan.id;
+          },
+        });
+      });
+
+      // ---- Step 2: resolve scan job id ----------------------------------
+      //
+      // On "skipped" re-entry (Inngest retry after create-scan-job already
+      // advanced the phase), look up the most recent onboarding scan.
+      const scanJobId: string = await step.run("resolve-scan-job", async () => {
+        if (createdScanId !== "skipped") return createdScanId as string;
+        const existing = await prisma.scanJob.findFirst({
+          where: { schemaId, triggeredBy: "ONBOARDING" },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        if (!existing) {
+          throw new NonRetriableError(
+            `runOnboardingPipeline: schema ${schemaId} is past AWAITING_REVIEW but has no onboarding ScanJob`,
+          );
+        }
+        return existing.id;
+      });
+
+      // ---- Step 3: request scan -----------------------------------------
+      await step.run("request-scan", async () => {
+        await inngest.send({
+          name: "scan.requested",
+          data: { scanJobId, schemaId, userId },
+        });
+      });
+
+      // ---- Step 4: wait for scan.completed ------------------------------
+      //
+      // Inngest waitForEvent returns null on timeout. The `match` clause
+      // filters to the specific schemaId so a parallel scan for another
+      // schema doesn't unblock this workflow. We match on schemaId (not
+      // scanJobId) because the trigger event (onboarding.review.confirmed)
+      // has schemaId but not scanJobId — matching on a field absent from
+      // the trigger always fails (see docs/01_denim_lessons_learned.md).
+      const completion = await step.waitForEvent("wait-for-scan", {
+        event: "scan.completed",
+        timeout: SCAN_WAIT_TIMEOUT,
+        match: "data.schemaId",
+      });
+
+      if (!completion) {
+        throw new NonRetriableError(
+          `runOnboardingPipeline: scan ${scanJobId} did not complete within ${SCAN_WAIT_TIMEOUT}`,
+        );
+      }
+
+      // ---- Step 5: advance to terminal state ----------------------------
+      //
+      // Three outcomes from the scan:
+      //   - reason="failed"          → FAILED (scan died, surface the error)
+      //   - reason="no-emails-found" → NO_EMAILS_FOUND (terminal, no content)
+      //   - happy path               → COMPLETED with status ACTIVE
+      const reason = completion.data.reason;
+      // "failed" reason + errorMessage are set at runtime by handleDownstreamScanFailure
+      // even though the typed union only declares "no-emails-found".
+      const completionData = completion.data as typeof completion.data & {
+        reason?: string;
+        errorMessage?: string;
+      };
+      const errorMessage: string | undefined = completionData.errorMessage;
+
+      if (completionData.reason === "failed") {
+        const scanError = errorMessage ?? "Scan failed";
+        throw new NonRetriableError(`runOnboardingPipeline: scan failed — ${scanError}`);
+      }
+
+      if (reason === "no-emails-found") {
+        await step.run("advance-to-no-emails-found", async () => {
+          await advanceSchemaPhase({
+            schemaId,
+            from: "PROCESSING_SCAN",
+            to: "NO_EMAILS_FOUND",
+            work: async () => {
+              // Terminal phase — nothing else to write.
+            },
+          });
+        });
+        logger.info({
+          service: "runOnboardingPipeline",
+          operation: "runOnboardingPipeline.noEmailsFound",
+          schemaId,
+          scanJobId,
+        });
+        return;
+      }
+
+      // Happy path: advance to COMPLETED and mark schema ACTIVE.
+      await step.run("advance-to-completed", async () => {
+        await advanceSchemaPhase({
+          schemaId,
+          from: "PROCESSING_SCAN",
+          to: "COMPLETED",
+          work: async () => {
+            await prisma.caseSchema.update({
+              where: { id: schemaId },
+              data: { status: "ACTIVE" },
+            });
+          },
+        });
+      });
+
+      logger.info({
+        service: "runOnboardingPipeline",
+        operation: "runOnboardingPipeline.completed",
+        schemaId,
+        scanJobId,
+        synthesizedCount: completion.data.synthesizedCount ?? 0,
+        failedCount: completion.data.failedCount ?? 0,
+      });
+    } catch (error) {
+      if (error instanceof NonRetriableError) {
+        const current = await prisma.caseSchema.findUnique({
+          where: { id: schemaId },
+          select: { phase: true },
+        });
+        await markSchemaFailed(schemaId, current?.phase ?? "AWAITING_REVIEW", error);
+        throw error;
+      }
+
+      logger.error({
+        service: "runOnboardingPipeline",
+        operation: "runOnboardingPipeline.caught",
+        schemaId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      const current = await prisma.caseSchema.findUnique({
+        where: { id: schemaId },
+        select: { phase: true },
+      });
+      await markSchemaFailed(schemaId, current?.phase ?? "AWAITING_REVIEW", error);
       throw error;
     }
   },

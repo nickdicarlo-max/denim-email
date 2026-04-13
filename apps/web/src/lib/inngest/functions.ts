@@ -12,7 +12,7 @@ import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
 import { cronDailyScans } from "./cron";
 import { dailyStatusDecay } from "./daily-status-decay";
-import { runOnboarding } from "./onboarding";
+import { runOnboarding, runOnboardingPipeline } from "./onboarding";
 import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runScan } from "./scan";
 
@@ -1003,7 +1003,8 @@ export const runSynthesis = inngest.createFunction(
 );
 
 export const functions = [
-  runOnboarding, // Parent workflow — consumes onboarding.session.started, owns CaseSchema.phase
+  runOnboarding, // Function A — consumes onboarding.session.started, advances to AWAITING_REVIEW
+  runOnboardingPipeline, // Function B — consumes onboarding.review.confirmed, drives pipeline to COMPLETED
   runScan, // Parent workflow — consumes scan.requested, emits scan.emails.discovered
   fanOutExtraction,
   extractBatch,
