@@ -20,6 +20,9 @@ export const GET = withAuth(async ({ userId, request }) => {
         id: true,
         name: true,
         userId: true,
+        hypothesis: true,
+        validation: true,
+        inputs: true,
         entities: {
           select: {
             id: true,
@@ -45,6 +48,9 @@ export const GET = withAuth(async ({ userId, request }) => {
       data: {
         id: schema.id,
         name: schema.name,
+        hypothesis: schema.hypothesis,
+        validation: schema.validation,
+        inputs: schema.inputs,
         entities: schema.entities,
       },
     });

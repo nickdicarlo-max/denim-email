@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
 import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
+import type { SchemaHypothesis, HypothesisValidation } from "@denim/types";
 
 /**
  * AWAITING_REVIEW — the human checkpoint. Lifted from the previous
@@ -68,25 +69,79 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
         if (!res.ok) throw new Error(`Failed to load schema (${res.status})`);
 
         const json = (await res.json()) as {
-          data: { name: string; entities: RawEntity[] };
+          data: {
+            name: string;
+            entities?: RawEntity[];
+            hypothesis?: SchemaHypothesis;
+            validation?: HypothesisValidation;
+          };
         };
 
         setTopicName(json.data.name);
-        setEntities(
-          json.data.entities.map((e) => ({
-            id: e.id,
-            name: e.name,
-            type: e.type as "PRIMARY" | "SECONDARY",
-            autoDetected: e.autoDetected,
-            emailCount: e.emailCount,
-            aliases: parseAliases(e.aliases),
-            isActive: e.isActive,
-            confidence: e.confidence ?? 1.0,
-            likelyAliasOf: e.likelyAliasOf ?? null,
-            aliasConfidence: e.aliasConfidence ?? null,
-            aliasReason: e.aliasReason ?? null,
-          })),
-        );
+
+        // If Entity rows exist (post-confirm or legacy), use them.
+        if (json.data.entities && json.data.entities.length > 0) {
+          setEntities(
+            json.data.entities.map((e) => ({
+              id: e.id,
+              name: e.name,
+              type: e.type as "PRIMARY" | "SECONDARY",
+              autoDetected: e.autoDetected,
+              emailCount: e.emailCount,
+              aliases: parseAliases(e.aliases),
+              isActive: e.isActive,
+              confidence: e.confidence ?? 1.0,
+              likelyAliasOf: e.likelyAliasOf ?? null,
+              aliasConfidence: e.aliasConfidence ?? null,
+              aliasReason: e.aliasReason ?? null,
+            })),
+          );
+        } else if (json.data.hypothesis) {
+          // Pre-confirm: build entities from hypothesis + validation JSON
+          const hypothesis = json.data.hypothesis;
+          const validation = json.data.validation;
+          const entityList: EntityData[] = [];
+
+          // Hypothesis entities (user-entered WHATs and WHOs)
+          for (const e of hypothesis.entities) {
+            entityList.push({
+              id: e.name,   // use name as key — no DB id yet
+              name: e.name,
+              type: e.type as "PRIMARY" | "SECONDARY",
+              autoDetected: e.source === "email_scan",
+              emailCount: 0,
+              aliases: e.aliases ?? [],
+              isActive: true,
+              confidence: e.confidence ?? 1.0,
+              likelyAliasOf: null,
+              aliasConfidence: null,
+              aliasReason: null,
+            });
+          }
+
+          // Discovered entities from validation
+          if (validation?.discoveredEntities) {
+            for (const e of validation.discoveredEntities) {
+              if (entityList.some((existing) => existing.name === e.name)) continue;
+              entityList.push({
+                id: e.name,
+                name: e.name,
+                type: (e.type as "PRIMARY" | "SECONDARY") ?? "PRIMARY",
+                autoDetected: true,
+                emailCount: e.emailCount ?? 0,
+                aliases: [],
+                isActive: true,
+                confidence: e.confidence ?? 0.5,
+                likelyAliasOf: e.likelyAliasOf ?? null,
+                aliasConfidence: e.aliasConfidence ?? null,
+                aliasReason: e.aliasReason ?? null,
+              });
+            }
+          }
+
+          setEntities(entityList);
+        }
+
         setStatus("ready");
       } catch (err) {
         fetchCalledRef.current = false;
@@ -105,7 +160,7 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
     setStatus("finalizing");
     setErrorMessage("");
     try {
-      const entityToggles = entities.map((e) => ({ id: e.id, isActive: e.isActive }));
+      const entityToggles = entities.map((e) => ({ name: e.name, isActive: e.isActive }));
 
       const res = await authenticatedFetch(`/api/onboarding/${response.schemaId}`, {
         method: "POST",
