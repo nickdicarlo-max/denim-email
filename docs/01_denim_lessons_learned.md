@@ -296,11 +296,17 @@ exactly one Inngest function.
 
 | Transition | Owner | Notes |
 |---|---|---|
-| PENDING → GENERATING_HYPOTHESIS | `runOnboarding` | |
-| GENERATING_HYPOTHESIS → FINALIZING_SCHEMA | `runOnboarding` | |
-| FINALIZING_SCHEMA → PROCESSING_SCAN | `runOnboarding` | |
-| PROCESSING_SCAN → AWAITING_REVIEW | `runOnboarding` | |
-| PROCESSING_SCAN → NO_EMAILS_FOUND | `runOnboarding` | |
+| PENDING → GENERATING_HYPOTHESIS | `runOnboarding` (Function A) | |
+| GENERATING_HYPOTHESIS → AWAITING_REVIEW | `runOnboarding` (Function A) | Hypothesis + validation stored as JSON |
+| AWAITING_REVIEW → PROCESSING_SCAN | `POST /api/onboarding/:schemaId` | API route, CAS via updateMany |
+| PROCESSING_SCAN → COMPLETED | `runOnboardingPipeline` (Function B) | Sets status=ACTIVE in work callback |
+| PROCESSING_SCAN → NO_EMAILS_FOUND | `runOnboardingPipeline` (Function B) | |
 
-All schema-phase transitions are owned by a single function (`runOnboarding`),
-so no cross-function races are possible.
+Updated 2026-04-13: Pipeline resequenced so AWAITING_REVIEW comes before
+PROCESSING_SCAN. The user confirms entities on the review screen before the
+pipeline runs. `runOnboarding` was split into Function A (pre-review) and
+Function B (`runOnboardingPipeline`, post-review). The AWAITING_REVIEW →
+PROCESSING_SCAN transition is owned by the API route (not Inngest) because
+it requires user input. This is safe: the API route uses CAS (updateMany
+with WHERE phase=AWAITING_REVIEW) and Function B only starts after receiving
+the `onboarding.review.confirmed` event that the route emits post-CAS.
