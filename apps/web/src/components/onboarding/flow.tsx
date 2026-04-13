@@ -5,7 +5,6 @@ import { PhaseClustering } from "./phase-clustering";
 import { PhaseDiscovering } from "./phase-discovering";
 import { PhaseExtracting } from "./phase-extracting";
 import { PhaseFailed } from "./phase-failed";
-import { PhaseFinalizing } from "./phase-finalizing";
 import { PhaseGenerating } from "./phase-generating";
 import { PhaseNoEmails } from "./phase-no-emails";
 import { PhasePending } from "./phase-pending";
@@ -28,8 +27,6 @@ export function OnboardingFlow({ response }: { response: OnboardingPollingRespon
       return <PhasePending response={response} />;
     case "GENERATING_HYPOTHESIS":
       return <PhaseGenerating response={response} />;
-    case "FINALIZING_SCHEMA":
-      return <PhaseFinalizing response={response} />;
     case "DISCOVERING":
       return <PhaseDiscovering response={response} />;
     case "EXTRACTING":

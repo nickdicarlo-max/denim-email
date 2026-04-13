@@ -15,7 +15,6 @@ import { computeScanMetrics } from "./scan-metrics";
 export type OnboardingPhase =
   | "PENDING"
   | "GENERATING_HYPOTHESIS"
-  | "FINALIZING_SCHEMA"
   | "DISCOVERING"
   | "EXTRACTING"
   | "CLUSTERING"
@@ -139,7 +138,9 @@ export async function derivePollingResponse(
     return { ...base, phase: "GENERATING_HYPOTHESIS" };
   }
   if (schema.phase === "FINALIZING_SCHEMA") {
-    return { ...base, phase: "FINALIZING_SCHEMA" };
+    // Legacy: FINALIZING_SCHEMA no longer appears in the new flow.
+    // Map to GENERATING_HYPOTHESIS so existing rows don't break the UI.
+    return { ...base, phase: "GENERATING_HYPOTHESIS" };
   }
 
   // PROCESSING_SCAN: the active ScanJob owns the visible phase. Counters
