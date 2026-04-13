@@ -680,7 +680,7 @@ export async function persistSchemaRelations(
         rulesCreated: noiseRules.length,
       });
     }
-  });
+  }, { timeout: 15000 });
 
   logger.info({
     service: "interview",

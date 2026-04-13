@@ -1,0 +1,109 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e4]:
+      - link "Rung home" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - img "Rung" [ref=e6]
+      - navigation [ref=e7]:
+        - link "How It Works" [ref=e8] [cursor=pointer]:
+          - /url: /how-it-works
+        - link "Pricing" [ref=e9] [cursor=pointer]:
+          - /url: /pricing
+        - link "Log In" [ref=e10] [cursor=pointer]:
+          - /url: /login
+        - link "Sign Up" [ref=e11] [cursor=pointer]:
+          - /url: /signup
+    - generic [ref=e13]:
+      - heading "You're on a ladder. A potential customer texts you. By the time you check it, they already texted someone else." [level=1] [ref=e14]
+      - paragraph [ref=e15]: Rung answers for you. It talks to the customer, gives them a price, and texts you when they're ready to book. You just reply YES.
+      - paragraph [ref=e16]: 5 free leads every month. No monthly fees. No contracts. No credit card to start.
+      - generic [ref=e17]:
+        - link "Get Started Free" [ref=e18] [cursor=pointer]:
+          - /url: /signup
+        - link "See How It Works" [ref=e19] [cursor=pointer]:
+          - /url: "#demo"
+    - generic [ref=e21]:
+      - heading "See it in action" [level=2] [ref=e22]
+      - paragraph [ref=e23]: What the customer sees
+      - generic [ref=e24]:
+        - generic [ref=e26]:
+          - paragraph [ref=e27]: Customer
+          - paragraph [ref=e28]: Hi, do you do gutter cleaning? I'm in Danville.
+        - generic [ref=e30]:
+          - paragraph [ref=e31]: Your Business
+          - paragraph [ref=e32]: Hi! Yes, we do gutter cleaning in the Danville area. For a single-story home, it typically runs $150–$250. We have openings this Thursday or Friday. Would either work?
+        - generic [ref=e34]:
+          - paragraph [ref=e35]: Customer
+          - paragraph [ref=e36]: Thursday works. My name is Sarah.
+      - paragraph [ref=e37]: "Meanwhile, here's what you see:"
+      - generic [ref=e38]:
+        - generic [ref=e40]:
+          - paragraph [ref=e41]: Rung
+          - paragraph [ref=e42]: "New lead: Sarah, gutter cleaning, 412 Oak St, $150–$250, wants Thursday. Reply YES to confirm."
+        - generic [ref=e44]:
+          - paragraph [ref=e45]: You
+          - paragraph [ref=e46]: "YES"
+        - generic [ref=e48]:
+          - paragraph [ref=e49]: Rung
+          - paragraph [ref=e50]: Confirmed. Sarah's booked for Thursday morning. She's been notified.
+      - paragraph [ref=e51]: That's it. One text from you. Job booked.
+    - generic [ref=e54]:
+      - generic [ref=e56]:
+        - img [ref=e58]
+        - heading "More jobs on the schedule" [level=3] [ref=e60]
+        - paragraph [ref=e61]: Every text gets answered in seconds, even at 10 PM. Customers who'd have moved on are now booking with you.
+      - generic [ref=e63]:
+        - img [ref=e65]
+        - heading "Less time on the phone" [level=3] [ref=e69]
+        - paragraph [ref=e70]: Rung handles the back-and-forth. It asks the right questions, gives a price, and offers times. You just confirm.
+      - generic [ref=e72]:
+        - img [ref=e74]
+        - heading "Look professional without office staff" [level=3] [ref=e77]
+        - paragraph [ref=e78]: Customers get fast, polished responses from a business number. They don't know it's not a receptionist.
+      - generic [ref=e80]:
+        - img [ref=e82]
+        - heading "Only pay when they're ready to book" [level=3] [ref=e84]
+        - paragraph [ref=e85]: Tire-kickers, wrong numbers, people outside your area — none of that costs you anything. $9 per real lead.
+    - generic [ref=e87]:
+      - heading "Do the math" [level=2] [ref=e88]
+      - generic [ref=e90]:
+        - paragraph [ref=e91]: A gutter cleaning job pays $200. A driveway wash pays $175. A house wash pays $400+.
+        - paragraph [ref=e92]: Your cost to land that customer? $9.
+        - paragraph [ref=e93]: Google Ads charges $25–$50 per click— and most clicks don't become jobs. Thumbtack charges $15–$30 per lead.
+        - paragraph [ref=e94]: With Rung, you only pay when someone's actually ready to book. And your first 5 leads every month are free.
+    - generic [ref=e96]:
+      - heading "Up and running in 5 minutes" [level=2] [ref=e97]
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - generic [ref=e100]: "1"
+          - heading "Tell us what you do" [level=3] [ref=e101]
+          - paragraph [ref=e102]: Pick your services, set your prices and service area. Takes about 5 minutes.
+        - generic [ref=e103]:
+          - generic [ref=e104]: "2"
+          - heading "Get your business number" [level=3] [ref=e105]
+          - paragraph [ref=e106]: Customers text or call. Rung handles quotes, scheduling, and follow-ups automatically.
+        - generic [ref=e107]:
+          - generic [ref=e108]: "3"
+          - heading "Leads show up on your phone" [level=3] [ref=e109]
+          - paragraph [ref=e110]: When a customer's ready to book, you get a text. Reply YES to confirm. That's the whole workflow.
+    - generic [ref=e112]:
+      - paragraph [ref=e113]: Built for one-truck operators and small crews who are too busy doing the work to answer every text instantly. Rung does it for you.
+      - paragraph [ref=e114]: No office staff needed. No app to learn. Everything happens over text.
+    - generic [ref=e116]:
+      - heading "Stop losing jobs to missed texts." [level=2] [ref=e117]
+      - paragraph [ref=e118]: Set up in 5 minutes. Your first 5 leads every month are free.
+      - link "Get Started Free" [ref=e120] [cursor=pointer]:
+        - /url: /signup
+      - paragraph [ref=e121]:
+        - link "See pricing details" [ref=e122] [cursor=pointer]:
+          - /url: /pricing
+    - generic [ref=e124]:
+      - paragraph [ref=e125]: © 2026 Rung. All rights reserved.
+      - paragraph [ref=e126]: Rung is a product of The Control Surface, LLC
+      - generic [ref=e127]:
+        - link "Privacy Policy" [ref=e128] [cursor=pointer]:
+          - /url: /privacy
+        - link "Terms of Service" [ref=e129] [cursor=pointer]:
+          - /url: /terms
+  - button "Open Next.js Dev Tools" [ref=e135] [cursor=pointer]:
+    - img [ref=e136]

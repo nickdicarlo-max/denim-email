@@ -31,6 +31,17 @@ export type DenimEvents = {
       userId: string;
     };
   };
+  "onboarding.review.confirmed": {
+    /**
+     * User confirmed entities on the review screen. Triggers the pipeline
+     * via runOnboardingPipeline (Function B). Emitted by POST /api/onboarding/:schemaId
+     * after persistSchemaRelations succeeds.
+     */
+    data: {
+      schemaId: string;
+      userId: string;
+    };
+  };
   "scan.requested": {
     /**
      * Request a scan for an existing ScanJob row. Consumed by runScan
