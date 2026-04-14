@@ -361,15 +361,20 @@ export async function createSchemaStub(opts: {
  *
  * Writes: updates the existing CaseSchema row (name, domain, configs,
  * prompts, raw hypothesis) and creates Entity, EntityGroup, SchemaTag,
- * ExtractedFieldDef rows. All relation writes are wrapped in a single
- * transaction; the initial stub row creation is intentionally outside
- * that transaction (see finalizeSchema note below).
+ * ExtractedFieldDef rows.
+ *
+ * Transaction handling: when `opts.tx` is provided, the caller owns the
+ * outer transaction (e.g. the POST confirm route atomically writes
+ * entities + an OnboardingOutbox row — see #67). When omitted, this
+ * function opens its own transaction. Either way all relation writes
+ * commit as a single unit.
  */
 export async function persistSchemaRelations(
   schemaId: string,
   hypothesis: SchemaHypothesis,
   validation?: HypothesisValidation,
   confirmations?: FinalizeConfirmations,
+  opts?: { tx?: Prisma.TransactionClient },
 ): Promise<void> {
   // Both validation and confirmations are optional so the state-machine
   // orchestrator (runOnboarding / Task 9) can call this with just the
@@ -462,7 +467,7 @@ export async function persistSchemaRelations(
     clusteringConfig.mergeThreshold = 30;
   }
 
-  await prisma.$transaction(async (tx) => {
+  const runWork = async (tx: Prisma.TransactionClient) => {
     // Overwrite the stub's placeholder values with the real configs.
     await tx.caseSchema.update({
       where: { id: schemaId },
@@ -690,7 +695,16 @@ export async function persistSchemaRelations(
         rulesCreated: noiseRules.length,
       });
     }
-  }, { timeout: 15000 });
+  };
+
+  if (opts?.tx) {
+    // Caller owns the outer transaction. Run all writes against their
+    // tx client so our inserts commit together with whatever else they
+    // write in the same transaction (see POST confirm route, #67).
+    await runWork(opts.tx);
+  } else {
+    await prisma.$transaction(runWork, { timeout: 15000 });
+  }
 
   logger.info({
     service: "interview",

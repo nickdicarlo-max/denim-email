@@ -1,13 +1,21 @@
 /**
- * drainOnboardingOutbox — transactional outbox drain for #33.
+ * drainOnboardingOutbox — generic transactional outbox drain (#33, #67).
  *
- * POST /api/onboarding/start writes a `{CaseSchema stub, OnboardingOutbox
- * row}` pair inside a single Prisma transaction, then fires a best-effort
- * `inngest.send("onboarding.session.started", ...)` after the commit. If
- * that optimistic emit succeeds, the outbox row flips to `EMITTED` and
- * this function no-ops for it on the next tick. If it fails (Inngest
- * unreachable, transient network blip, cloud outage), the row stays in
- * `PENDING_EMIT` and this function is the recovery path.
+ * The `onboarding_outbox` table holds one row per (schemaId, eventName)
+ * pair that needs to be emitted to Inngest. Producers write the row
+ * inside the same Prisma transaction as the state change that triggered
+ * it, then fire a best-effort `inngest.send` for happy-path latency. If
+ * the optimistic emit fails (Inngest unreachable, network blip, cloud
+ * outage), the row stays in `PENDING_EMIT` and this drain is the
+ * guaranteed recovery path.
+ *
+ * Current producers:
+ *   - POST /api/onboarding/start        -> "onboarding.session.started"  (#33)
+ *   - POST /api/onboarding/[schemaId]   -> "onboarding.review.confirmed" (#67)
+ *
+ * The drain is event-generic: it reads `eventName` + `payload` from each
+ * row and sends exactly what's there. Adding a new lifecycle event means
+ * writing a new outbox row from a new producer — no drain change needed.
  *
  * Runs every minute. Pulls a small batch of `PENDING_EMIT` rows whose
  * `nextAttemptAt` has arrived, tries to emit each, and either flips the
@@ -17,15 +25,15 @@
  *
  * ## Duplicate-emission safety
  *
- * The route's optimistic emit and this drain can both fire the same
- * event. `runOnboarding` uses `advanceSchemaPhase` CAS guards and no-ops
- * when the schema has already moved past PENDING — so double emission is
- * safe at the workflow layer.
+ * The producing route's optimistic emit and this drain can both fire
+ * the same event. Downstream Inngest functions use `advanceSchemaPhase`
+ * CAS guards and no-op when the schema has already moved past the
+ * expected `from` phase — so double emission is safe at the workflow
+ * layer.
  *
  * ## Cron vs event trigger
  *
- * This function uses a real `{ cron: "..." }` trigger (unlike
- * `cronDailyScans` which stayed event-triggered for Task 17). It's a
+ * This function uses a real `{ cron: "..." }` trigger. It's a
  * production recovery path that needs to run autonomously.
  */
 import { logger } from "@/lib/logger";
@@ -41,8 +49,10 @@ import { inngest } from "./client";
  */
 export interface DrainRow {
   schemaId: string;
+  eventName: string;
   userId: string;
   attempts: number;
+  payload: unknown;
 }
 
 /**
@@ -73,16 +83,21 @@ function backoffMs(attempts: number): number {
  * the row-level logic directly without wiring up a full Inngest runtime.
  */
 export async function drainOutboxRow(row: DrainRow): Promise<"emitted" | "retry" | "dead_letter"> {
+  // Composite PK on (schemaId, eventName) after #67; the `where` clause uses
+  // the Prisma-generated compound key form.
+  const whereKey = {
+    schemaId_eventName: { schemaId: row.schemaId, eventName: row.eventName },
+  };
   try {
     await inngest.send({
-      name: "onboarding.session.started",
-      data: {
-        schemaId: row.schemaId,
-        userId: row.userId,
-      },
+      name: row.eventName,
+      // Payload is whatever the producer stored — passing it through
+      // opaquely keeps the drain event-generic. Event-specific shape is
+      // enforced by the producer and consumer, not by the drain.
+      data: row.payload as Record<string, unknown>,
     });
     await prisma.onboardingOutbox.update({
-      where: { schemaId: row.schemaId },
+      where: whereKey,
       data: {
         status: "EMITTED",
         emittedAt: new Date(),
@@ -95,7 +110,7 @@ export async function drainOutboxRow(row: DrainRow): Promise<"emitted" | "retry"
     const nextAttempts = row.attempts + 1;
     const dead = nextAttempts >= MAX_ATTEMPTS;
     await prisma.onboardingOutbox.update({
-      where: { schemaId: row.schemaId },
+      where: whereKey,
       data: {
         status: dead ? "DEAD_LETTER" : "PENDING_EMIT",
         attempts: nextAttempts,
@@ -109,6 +124,7 @@ export async function drainOutboxRow(row: DrainRow): Promise<"emitted" | "retry"
         service: "inngest",
         operation: "drainOnboardingOutbox.deadLetter",
         schemaId: row.schemaId,
+        eventName: row.eventName,
         userId: row.userId,
         attempts: nextAttempts,
         lastError: err instanceof Error ? err.message : String(err),
@@ -138,7 +154,13 @@ export const drainOnboardingOutbox = inngest.createFunction(
         },
         orderBy: { createdAt: "asc" },
         take: BATCH_SIZE,
-        select: { schemaId: true, userId: true, attempts: true },
+        select: {
+          schemaId: true,
+          eventName: true,
+          userId: true,
+          attempts: true,
+          payload: true,
+        },
       }),
     );
 
@@ -151,7 +173,10 @@ export const drainOnboardingOutbox = inngest.createFunction(
     let deadLetter = 0;
 
     for (const row of rows) {
-      const outcome = await step.run(`emit-${row.schemaId}`, () => drainOutboxRow(row));
+      const outcome = await step.run(
+        `emit-${row.schemaId}-${row.eventName}`,
+        () => drainOutboxRow(row),
+      );
       if (outcome === "emitted") emitted++;
       else if (outcome === "retry") retry++;
       else deadLetter++;

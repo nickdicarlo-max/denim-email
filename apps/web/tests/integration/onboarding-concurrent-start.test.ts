@@ -125,7 +125,9 @@ describe("POST /api/onboarding/start — concurrent idempotency", () => {
     const outboxRows = await prisma.onboardingOutbox.count({ where: { schemaId } });
     expect(outboxRows).toBe(1);
     const outbox = await prisma.onboardingOutbox.findUniqueOrThrow({
-      where: { schemaId },
+      where: {
+        schemaId_eventName: { schemaId, eventName: "onboarding.session.started" },
+      },
       select: { userId: true, eventName: true },
     });
     expect(outbox.userId).toBe(testUser.userId);

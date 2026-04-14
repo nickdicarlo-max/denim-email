@@ -219,6 +219,24 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
     );
   }
 
+  // After a successful confirm POST, Function B owns the phase transition
+  // from AWAITING_REVIEW to PROCESSING_SCAN. Until polling catches up, keep
+  // rendering a submission-in-flight state so the review form doesn't flash
+  // back between the POST return and the next poll tick.
+  if (status === "finalizing") {
+    return (
+      <div className="flex flex-col items-center gap-4 text-center">
+        <span className="material-symbols-outlined text-[40px] text-accent animate-spin">
+          progress_activity
+        </span>
+        <p className="text-primary font-medium">Starting your scan…</p>
+        <p className="text-sm text-muted max-w-sm">
+          Finding and organizing your emails. This usually takes under a minute.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-2xl mx-auto">
       <h1 className="font-serif text-2xl text-primary">Here&apos;s what we found</h1>
@@ -249,8 +267,8 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
       )}
 
       <div className="mt-8">
-        <Button onClick={handleFinalize} disabled={status === "finalizing" || !topicName.trim()}>
-          {status === "finalizing" ? "Setting up…" : "Show me my cases!"}
+        <Button onClick={handleFinalize} disabled={!topicName.trim()}>
+          Show me my cases!
         </Button>
       </div>
     </div>

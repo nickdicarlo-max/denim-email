@@ -172,7 +172,7 @@ model CaseSchema {
   scanFailures      ScanFailure[]
   exclusionRules    ExclusionRule[]
   pipelineIntelligence PipelineIntelligence[]
-  outbox            OnboardingOutbox?
+  outbox            OnboardingOutbox[]
 
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -1132,26 +1132,27 @@ model ExtractionCost {
 
 
 // =============================================================================
-// ONBOARDING OUTBOX (#33 — transactional outbox pattern)
+// ONBOARDING OUTBOX (#33, #67 — generic transactional outbox pattern)
 // =============================================================================
 //
-// Durable record of "onboarding.session.started" events that need to be emitted
-// to Inngest. Written atomically with the CaseSchema stub inside a single
-// Prisma transaction by POST /api/onboarding/start. The route then does a
-// best-effort fire-and-forget emit for happy-path latency; the
-// `drainOnboardingOutbox` cron function is the guaranteed recovery path when
-// the optimistic emit fails (Inngest outage, network blip, etc.).
+// Durable record of onboarding lifecycle events to be emitted to Inngest.
+// Composite PK (schemaId, eventName) allows N rows per schema — one per
+// lifecycle event. Producers:
+//   - POST /api/onboarding/start       -> "onboarding.session.started"   (#33)
+//   - POST /api/onboarding/[schemaId]  -> "onboarding.review.confirmed"  (#67)
 //
-// This single unique-constraint (schemaId as PK) is the sole idempotency guard
-// for the start route — it replaces the prior fragile dual-path P2002 handling
-// across CaseSchema.id + (nothing), and fixes the Inngest-outage stranding
-// deferred debt from the onboarding state machine refactor (#30, Task 16).
+// Each row is written inside the same Prisma transaction as the state change
+// that produced it. The producing route fires a best-effort inngest.send for
+// happy-path latency; the drainOnboardingOutbox cron (1-minute tick) is the
+// guaranteed recovery path when the optimistic emit fails.
+//
+// The composite PK is the sole idempotency guard — concurrent or retried
+// writes for the same (schemaId, eventName) pair race into the transaction
+// and exactly one commits.
 // =============================================================================
 
 model OnboardingOutbox {
-  // schemaId is the PK because outbox rows are 1:1 with CaseSchema stubs
-  // and this is the constraint that serves as the idempotency guard.
-  schemaId       String         @id
+  schemaId       String
   userId         String
   eventName      String                                    // e.g. "onboarding.session.started"
   payload        Json                                      // { schemaId, userId }
@@ -1166,6 +1167,7 @@ model OnboardingOutbox {
 
   schema         CaseSchema     @relation(fields: [schemaId], references: [id], onDelete: Cascade)
 
+  @@id([schemaId, eventName])
   @@index([status, nextAttemptAt])   // drain worker hot path
   @@index([userId])
   @@map("onboarding_outbox")

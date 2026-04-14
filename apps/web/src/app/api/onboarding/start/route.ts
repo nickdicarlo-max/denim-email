@@ -122,9 +122,17 @@ export const POST = withAuth(async ({ userId, request }) => {
     // Fast path: sequential-retry idempotency check. Reads the outbox
     // (not case_schemas) because the outbox is the source of truth for
     // "this onboarding session has already been claimed".
+    //
+    // Key is composite (schemaId, eventName) after #67 — here we always
+    // look up the `onboarding.session.started` row for this schema.
     // -----------------------------------------------------------------
     const existing = await prisma.onboardingOutbox.findUnique({
-      where: { schemaId },
+      where: {
+        schemaId_eventName: {
+          schemaId,
+          eventName: "onboarding.session.started",
+        },
+      },
       select: { userId: true, status: true },
     });
 
@@ -169,7 +177,12 @@ export const POST = withAuth(async ({ userId, request }) => {
       // as an idempotent retry. Apply the ownership check in case of a
       // cross-user ULID collision (extremely unlikely but not impossible).
       const winner = await prisma.onboardingOutbox.findUnique({
-        where: { schemaId },
+        where: {
+          schemaId_eventName: {
+            schemaId,
+            eventName: "onboarding.session.started",
+          },
+        },
         select: { userId: true, status: true },
       });
 
@@ -220,7 +233,12 @@ export const POST = withAuth(async ({ userId, request }) => {
       })
       .then(() =>
         prisma.onboardingOutbox.update({
-          where: { schemaId },
+          where: {
+            schemaId_eventName: {
+              schemaId,
+              eventName: "onboarding.session.started",
+            },
+          },
           data: {
             status: "EMITTED",
             emittedAt: new Date(),

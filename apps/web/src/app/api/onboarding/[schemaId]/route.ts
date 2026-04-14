@@ -6,16 +6,22 @@
  *          `derivePollingResponse` so the client has one flat shape to
  *          render against.
  *
- *   POST   /api/onboarding/:schemaId — review confirmation. Flips
- *          phase=AWAITING_REVIEW → PROCESSING_SCAN, persists Entity rows
- *          via `persistSchemaRelations`, and emits
- *          `onboarding.review.confirmed` to kick off the pipeline.
+ *   POST   /api/onboarding/:schemaId — review confirmation. Persists
+ *          Entity / SchemaTag / ExclusionRule rows and writes an
+ *          OnboardingOutbox row for "onboarding.review.confirmed" in a
+ *          single Prisma transaction (#67). A best-effort optimistic
+ *          inngest.send fires after the commit; on failure, the drain
+ *          cron picks the row up within ~1 minute. Function B
+ *          (`runOnboardingPipeline`) owns the AWAITING_REVIEW →
+ *          PROCESSING_SCAN phase transition + ScanJob creation when it
+ *          picks up the event — same pattern as POST /start + Function A.
  *
  *   DELETE /api/onboarding/:schemaId — cancellation. Emits
  *          `onboarding.session.cancelled` so `runOnboarding`'s `cancelOn`
  *          binding tears down any in-flight workflow, then marks the
  *          schema ARCHIVED so it falls out of active-schema lists.
  */
+import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { SchemaHypothesis, HypothesisValidation, InterviewInput } from "@denim/types";
@@ -28,6 +34,20 @@ import { extractOnboardingSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
 import { persistSchemaRelations } from "@/lib/services/interview";
 import { derivePollingResponse } from "@/lib/services/onboarding-polling";
+
+/**
+ * Duck-typed check for Prisma's P2002 unique-constraint violation. Matches
+ * the pattern used in POST /api/onboarding/start — the `code` string is
+ * part of Prisma's public error contract and stable across versions.
+ */
+function isUniqueConstraintViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code: unknown }).code === "P2002"
+  );
+}
 
 // GET — polling endpoint -----------------------------------------------------
 export const GET = withAuth(async ({ userId, request }) => {
@@ -81,31 +101,38 @@ export const POST = withAuth(async ({ userId, request }) => {
     });
     assertResourceOwnership(schema, userId, "Schema");
 
-    // CAS: only advance from AWAITING_REVIEW → PROCESSING_SCAN.
-    // Concurrent confirms from two tabs will see updated.count === 0 on
-    // the loser and fall through to the idempotent "already-confirmed" branch.
-    const updated = await prisma.caseSchema.updateMany({
-      where: { id: schemaId, phase: "AWAITING_REVIEW" },
-      data: {
-        phase: "PROCESSING_SCAN",
-        name: body.topicName.trim(),
-        phaseUpdatedAt: new Date(),
+    // Idempotency: if a confirm outbox row already exists for this
+    // schema, the user already confirmed. Return success regardless of
+    // pipeline progress (phase could be PROCESSING_SCAN, COMPLETED, etc).
+    const existingConfirm = await prisma.onboardingOutbox.findUnique({
+      where: {
+        schemaId_eventName: {
+          schemaId,
+          eventName: "onboarding.review.confirmed",
+        },
       },
+      select: { status: true },
     });
-
-    if (updated.count === 0) {
-      const current = await prisma.caseSchema.findUnique({
-        where: { id: schemaId },
-        select: { phase: true, status: true },
+    if (existingConfirm) {
+      logger.info({
+        service: "onboarding",
+        operation: "confirm.idempotent",
+        userId,
+        schemaId,
+        outboxStatus: existingConfirm.status,
       });
-      if (current?.status === "ACTIVE" || current?.phase === "PROCESSING_SCAN") {
-        return NextResponse.json({
-          data: { schemaId, status: "already-confirmed" },
-        });
-      }
+      return NextResponse.json({
+        data: { schemaId, status: "already-confirmed" },
+      });
+    }
+
+    // Phase gate: only AWAITING_REVIEW can be confirmed. No state change
+    // here — Function B (runOnboardingPipeline) owns the phase advance
+    // after it receives the event.
+    if (schema?.phase !== "AWAITING_REVIEW") {
       return NextResponse.json(
         {
-          error: `Cannot confirm from phase ${current?.phase ?? "unknown"}`,
+          error: `Cannot confirm from phase ${schema?.phase ?? "unknown"}`,
           code: 409,
           type: "CONFLICT",
         },
@@ -113,8 +140,6 @@ export const POST = withAuth(async ({ userId, request }) => {
       );
     }
 
-    // Build confirmations from entity toggles (names, not DB IDs — Entity
-    // rows don't exist yet at review time; persistSchemaRelations creates them).
     const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
     const validation = schema.validation as unknown as HypothesisValidation | null;
 
@@ -125,6 +150,7 @@ export const POST = withAuth(async ({ userId, request }) => {
       );
     }
 
+    // Names, not DB ids — Entity rows don't exist yet at review time.
     const acceptedNames = new Set(
       body.entityToggles.filter((t) => t.isActive).map((t) => t.name),
     );
@@ -145,21 +171,59 @@ export const POST = withAuth(async ({ userId, request }) => {
 
     const inputs = schema.inputs as unknown as InterviewInput | null;
 
-    await persistSchemaRelations(schemaId, hypothesis, validation ?? undefined, {
-      confirmedEntities,
-      removedEntities,
-      confirmedTags,
-      removedTags: [],
-      schemaName: body.topicName.trim(),
-      groups: inputs?.groups,
-      sharedWhos: inputs?.sharedWhos,
-    });
-
-    // Emit event to trigger the pipeline (Function B: scan → extract → cluster → synthesize).
-    await inngest.send({
-      name: "onboarding.review.confirmed",
-      data: { schemaId, userId },
-    });
+    // Atomic write: entity persistence + outbox row commit together.
+    // If either throws, nothing is written and the client can retry.
+    // The outbox composite PK (schemaId, "onboarding.review.confirmed")
+    // is the idempotency guard against concurrent confirms from two tabs.
+    try {
+      await prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          // Set the user-chosen topic name here — no separate CAS update
+          // is needed because persistSchemaRelations opens with a
+          // caseSchema.update that overwrites placeholder fields.
+          await persistSchemaRelations(
+            schemaId,
+            hypothesis,
+            validation ?? undefined,
+            {
+              confirmedEntities,
+              removedEntities,
+              confirmedTags,
+              removedTags: [],
+              schemaName: body.topicName.trim(),
+              groups: inputs?.groups,
+              sharedWhos: inputs?.sharedWhos,
+            },
+            { tx },
+          );
+          await tx.onboardingOutbox.create({
+            data: {
+              schemaId,
+              userId,
+              eventName: "onboarding.review.confirmed",
+              payload: { schemaId, userId } as Prisma.InputJsonValue,
+            },
+          });
+        },
+        { timeout: 20000 },
+      );
+    } catch (writeError) {
+      if (isUniqueConstraintViolation(writeError)) {
+        // Concurrent confirm committed between our idempotency check and
+        // the transaction. Treat as idempotent success — the other
+        // request's outbox row will emit the event.
+        logger.info({
+          service: "onboarding",
+          operation: "confirm.idempotent.raceLost",
+          userId,
+          schemaId,
+        });
+        return NextResponse.json({
+          data: { schemaId, status: "already-confirmed" },
+        });
+      }
+      throw writeError;
+    }
 
     logger.info({
       service: "onboarding",
@@ -169,6 +233,41 @@ export const POST = withAuth(async ({ userId, request }) => {
       acceptedCount: acceptedNames.size,
       rejectedCount: rejectedNames.size,
     });
+
+    // Best-effort optimistic emit. Preserves sub-second happy-path
+    // latency when Inngest is healthy. If it fails, the drain cron
+    // (1-minute tick) retries automatically. We do NOT await this
+    // promise — the client has already been told confirmation succeeded.
+    void inngest
+      .send({
+        name: "onboarding.review.confirmed",
+        data: { schemaId, userId },
+      })
+      .then(() =>
+        prisma.onboardingOutbox.update({
+          where: {
+            schemaId_eventName: {
+              schemaId,
+              eventName: "onboarding.review.confirmed",
+            },
+          },
+          data: {
+            status: "EMITTED",
+            emittedAt: new Date(),
+            attempts: { increment: 1 },
+            lastAttemptAt: new Date(),
+          },
+        }),
+      )
+      .catch((err: unknown) => {
+        logger.warn({
+          service: "onboarding",
+          operation: "confirm.optimisticEmitFailed",
+          userId,
+          schemaId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
 
     return NextResponse.json({
       data: { schemaId, status: "confirmed" },
