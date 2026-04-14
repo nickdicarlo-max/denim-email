@@ -383,7 +383,7 @@ export const runOnboardingPipeline = inngest.createFunction(
                 snippet: m.snippet,
               }));
 
-              const pass2 = await validateHypothesis(hypothesis, samples, {
+              const pass2 = await validateHypothesis(narrowed, samples, {
                 userId,
                 entityGroups,
                 userThings,
@@ -436,8 +436,15 @@ export const runOnboardingPipeline = inngest.createFunction(
           // can gate on relatedUserThing !== null in a future pass.
           await prisma.$transaction(
             newDiscoveries.map((d) =>
-              prisma.entity.create({
-                data: {
+              prisma.entity.upsert({
+                where: {
+                  schemaId_name_type: {
+                    schemaId,
+                    name: d.name,
+                    type: d.type,
+                  },
+                },
+                create: {
                   schemaId,
                   name: d.name,
                   type: d.type,
@@ -447,6 +454,10 @@ export const runOnboardingPipeline = inngest.createFunction(
                   confidence: d.confidence,
                   isActive: true,
                 },
+                // Idempotent retry: if this step runs again after a
+                // previous transaction already wrote the row, do nothing.
+                // The existing row is whatever the earlier run wrote.
+                update: {},
               }),
             ),
           );
