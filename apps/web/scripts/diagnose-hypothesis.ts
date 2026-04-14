@@ -199,7 +199,7 @@ async function diagnoseSchema(schema: any) {
     console.log(`  sampleEmailCount:  ${v.sampleEmailCount}`);
     console.log(`  scanDurationMs:    ${v.scanDurationMs}`);
 
-    subheader("4a. Confirmed Entities");
+    subheader("4a. Confirmed Entities (string list — type/metadata comes from hypothesis)");
     if (v.confirmedEntities?.length) {
       for (const e of v.confirmedEntities) {
         console.log(`    ${(e.name ?? e).toString().padEnd(30)} type=${e.type ?? "?"}`);
@@ -219,7 +219,16 @@ async function diagnoseSchema(schema: any) {
       console.log("    (none discovered)");
     }
 
-    subheader("4c. Suggested Tags");
+    subheader("4c. Confirmed Tags (from hypothesis that appeared in real emails)");
+    if (v.confirmedTags?.length) {
+      for (const t of v.confirmedTags) {
+        console.log(`    ${t}`);
+      }
+    } else {
+      console.log("    (none — no hypothesis tags matched the sample)");
+    }
+
+    subheader("4d. Suggested Tags (new patterns Claude found — may include off-topic inbox noise)");
     if (v.suggestedTags?.length) {
       for (const t of v.suggestedTags) {
         console.log(`    ${(t.name ?? t).toString()}`);
@@ -228,7 +237,7 @@ async function diagnoseSchema(schema: any) {
       console.log("    (none)");
     }
 
-    subheader("4d. Noise Patterns");
+    subheader("4e. Noise Patterns");
     if (v.noisePatterns?.length) {
       for (const p of v.noisePatterns) {
         console.log(`    ${typeof p === "string" ? p : JSON.stringify(p)}`);
@@ -245,16 +254,21 @@ async function diagnoseSchema(schema: any) {
   // =========================================================================
   subheader("5. Persisted Discovery Queries (schema.discoveryQueries)");
 
-  if (schema.discoveryQueries) {
-    const dq = schema.discoveryQueries as any[];
-    console.log(`  Total queries: ${dq.length}\n`);
-    for (const q of dq) {
+  const dqRaw = schema.discoveryQueries;
+  const dqArr = Array.isArray(dqRaw) ? (dqRaw as any[]) : [];
+  if (dqArr.length > 0) {
+    console.log(`  Total queries: ${dqArr.length}\n`);
+    for (const q of dqArr) {
       console.log(
         `    [group=${q.groupIndex ?? "?"}] ${(q.label ?? "").padEnd(35)} | ${q.query}`,
       );
     }
   } else {
-    console.log("  (not yet persisted — schema still in hypothesis stage)");
+    console.log("  Total queries: 0");
+    console.log("  (This is CORRECT at AWAITING_REVIEW. The stub was created with an");
+    console.log("   empty discoveryQueries array; persistSchemaRelations writes the real");
+    console.log("   list at confirm time. The queries exist in the hypothesis JSON —");
+    console.log("   see section 3c.)");
   }
 
   // =========================================================================
