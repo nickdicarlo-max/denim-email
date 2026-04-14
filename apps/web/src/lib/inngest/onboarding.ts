@@ -20,7 +20,7 @@
  * This file does NOT call persistSchemaRelations — that is now called by
  * the POST /api/onboarding/:schemaId route (Task 4) when the user confirms.
  */
-import type { InterviewInput, SchemaHypothesis } from "@denim/types";
+import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { NonRetriableError } from "inngest";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
@@ -28,6 +28,7 @@ import { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
+import { extractExpansionTargets } from "@/lib/services/expansion-targets";
 import {
   generateHypothesis,
   resolveWhoEmails,
@@ -264,6 +265,212 @@ export const runOnboardingPipeline = inngest.createFunction(
     const { schemaId, userId } = event.data;
 
     try {
+      // ---- Step 0: Pass 2 — targeted domain expansion ------------------
+      //
+      // The user has confirmed which entities they care about. Expand
+      // Gmail coverage for those entities ONLY: for each confirmed
+      // SECONDARY entity's alias addresses, emit an expansion target
+      // (domain for corporate senders, full sender address for generic
+      // providers like @gmail.com). Query Gmail for each target, run a
+      // second validateHypothesis pass on those samples, and write any
+      // newly discovered entities as Entity rows so the downstream scan
+      // picks them up via normal entity reads.
+      //
+      // This step is best-effort: failure here should NOT block the
+      // pipeline. If Gmail quota or an expansion call fails, log and
+      // continue so the user still gets their scan.
+      await step.run("expand-confirmed-domains", async () => {
+        try {
+          const schema = await prisma.caseSchema.findUniqueOrThrow({
+            where: { id: schemaId },
+            select: { hypothesis: true, inputs: true },
+          });
+          const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
+          if (!hypothesis) {
+            logger.warn({
+              service: "runOnboardingPipeline",
+              operation: "expand-confirmed-domains.skip",
+              schemaId,
+              reason: "no-hypothesis",
+            });
+            return;
+          }
+
+          // Only expand for entities the user kept (isActive=true). A
+          // rejected entity means the user doesn't want its domain
+          // crawled.
+          const activeEntities = await prisma.entity.findMany({
+            where: { schemaId, isActive: true, type: "SECONDARY" },
+            select: { name: true, aliases: true },
+          });
+          if (activeEntities.length === 0) {
+            logger.info({
+              service: "runOnboardingPipeline",
+              operation: "expand-confirmed-domains.skip",
+              schemaId,
+              reason: "no-active-secondary-entities",
+            });
+            return;
+          }
+
+          // Build a hypothesis-shaped view restricted to active SECONDARY
+          // entities with their DB-resolved aliases. extractExpansionTargets
+          // walks aliases, so this narrows the inputs correctly without
+          // touching the helper.
+          const narrowed: SchemaHypothesis = {
+            ...hypothesis,
+            entities: activeEntities.map((e) => ({
+              name: e.name,
+              type: "SECONDARY",
+              secondaryTypeName: null,
+              aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+              confidence: 1,
+              source: "user_input",
+            })),
+          };
+
+          const targets = extractExpansionTargets(narrowed).slice(
+            0,
+            ONBOARDING_TUNABLES.pass2.maxTargetsToExpand,
+          );
+          if (targets.length === 0) {
+            logger.info({
+              service: "runOnboardingPipeline",
+              operation: "expand-confirmed-domains.skip",
+              schemaId,
+              reason: "no-targets",
+            });
+            return;
+          }
+
+          const accessToken = await getValidGmailToken(userId);
+          const gmail = new GmailClient(accessToken);
+          const inputs = schema.inputs as unknown as InterviewInput | null;
+          const entityGroups = inputs?.groups?.map((g, idx) => ({
+            index: idx,
+            primaryNames: g.whats,
+            secondaryNames: g.whos,
+          }));
+          const userThings = inputs?.whats ?? inputs?.groups?.flatMap((g) => g.whats) ?? [];
+
+          // Accumulate discoveries across targets, deduped by entity name
+          // against existing DB entities AND across targets in this pass.
+          const existingNames = new Set(
+            activeEntities.map((e) => e.name.toLowerCase()),
+          );
+          const allPrimaryNames = await prisma.entity.findMany({
+            where: { schemaId, type: "PRIMARY" },
+            select: { name: true },
+          });
+          for (const p of allPrimaryNames) existingNames.add(p.name.toLowerCase());
+
+          const newDiscoveries: HypothesisValidation["discoveredEntities"] = [];
+
+          for (const target of targets) {
+            try {
+              const query =
+                `from:${target.value} newer_than:${ONBOARDING_TUNABLES.pass2.lookback}`;
+              const targetMessages = await gmail.searchEmails(
+                query,
+                ONBOARDING_TUNABLES.pass2.emailsPerTarget,
+              );
+              if (targetMessages.length === 0) continue;
+
+              const samples = targetMessages.map((m) => ({
+                subject: m.subject,
+                senderDomain: m.senderDomain,
+                senderName: m.senderDisplayName || m.senderEmail,
+                snippet: m.snippet,
+              }));
+
+              const pass2 = await validateHypothesis(hypothesis, samples, {
+                userId,
+                entityGroups,
+                userThings,
+              });
+
+              for (const discovered of pass2.discoveredEntities) {
+                const key = discovered.name.toLowerCase();
+                if (existingNames.has(key)) continue;
+                if (newDiscoveries.some((e) => e.name.toLowerCase() === key)) continue;
+                newDiscoveries.push(discovered);
+                existingNames.add(key);
+              }
+
+              logger.info({
+                service: "runOnboardingPipeline",
+                operation: "expand-confirmed-domains.target",
+                schemaId,
+                targetType: target.type,
+                targetValue: target.value,
+                emailsFetched: targetMessages.length,
+                newFromTarget: pass2.discoveredEntities.length,
+              });
+            } catch (err) {
+              logger.warn({
+                service: "runOnboardingPipeline",
+                operation: "expand-confirmed-domains.target.failed",
+                schemaId,
+                targetType: target.type,
+                targetValue: target.value,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+
+          if (newDiscoveries.length === 0) {
+            logger.info({
+              service: "runOnboardingPipeline",
+              operation: "expand-confirmed-domains.complete",
+              schemaId,
+              newDiscoveries: 0,
+            });
+            return;
+          }
+
+          // Persist new discoveries as Entity rows so the downstream scan
+          // reads them when building discovery queries. These are written
+          // as isActive=true with autoDetected=true — the user didn't
+          // get to toggle them because they were discovered AFTER confirm.
+          // If that turns out to surface too many off-topic entities, we
+          // can gate on relatedUserThing !== null in a future pass.
+          await prisma.$transaction(
+            newDiscoveries.map((d) =>
+              prisma.entity.create({
+                data: {
+                  schemaId,
+                  name: d.name,
+                  type: d.type,
+                  secondaryTypeName: d.secondaryTypeName,
+                  aliases: [],
+                  autoDetected: true,
+                  confidence: d.confidence,
+                  isActive: true,
+                },
+              }),
+            ),
+          );
+
+          logger.info({
+            service: "runOnboardingPipeline",
+            operation: "expand-confirmed-domains.complete",
+            schemaId,
+            targetCount: targets.length,
+            newDiscoveries: newDiscoveries.length,
+          });
+        } catch (err) {
+          // Outer catch: swallow so pipeline continues. Domain expansion
+          // is best-effort; its value is more discoveries, not
+          // correctness.
+          logger.warn({
+            service: "runOnboardingPipeline",
+            operation: "expand-confirmed-domains.failed",
+            schemaId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      });
+
       // ---- Step 1: AWAITING_REVIEW → PROCESSING_SCAN --------------------
       //
       // Create the onboarding ScanJob row in the same CAS so the scan id
