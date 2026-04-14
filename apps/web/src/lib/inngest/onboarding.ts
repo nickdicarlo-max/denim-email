@@ -57,7 +57,8 @@ export const runOnboarding = inngest.createFunction(
       { key: "event.data.userId", limit: 3 },
     ],
     // Failures are explicit via markSchemaFailed in the catch block.
-    retries: 0,
+    // retries bumped 0 → 2 after step-level idempotency audit 2026-04-14 (Phase 1 of perf-quality sprint, #69).
+    retries: 2,
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
@@ -319,7 +320,8 @@ export const runOnboardingPipeline = inngest.createFunction(
       { key: "event.data.schemaId", limit: 1 },
       { key: "event.data.userId", limit: 3 },
     ],
-    retries: 0,
+    // retries bumped 0 → 2 after step-level idempotency audit 2026-04-14 (Phase 1 of perf-quality sprint, #69).
+    retries: 2,
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
@@ -553,6 +555,18 @@ export const runOnboardingPipeline = inngest.createFunction(
           from: "AWAITING_REVIEW",
           to: "PROCESSING_SCAN",
           work: async () => {
+            // Idempotency guard (Phase 1 audit, #69): advanceSchemaPhase runs
+            // work() before the CAS commit. If scanJob.create succeeded but
+            // the subsequent CAS updateMany failed (or the process died
+            // between them), an Inngest retry would re-enter this step with
+            // phase still AWAITING_REVIEW and create a second ONBOARDING
+            // scan. Check for an existing onboarding scan first and reuse it.
+            const existing = await prisma.scanJob.findFirst({
+              where: { schemaId, triggeredBy: "ONBOARDING" },
+              orderBy: { createdAt: "desc" },
+              select: { id: true },
+            });
+            if (existing) return existing.id;
             const scan = await prisma.scanJob.create({
               data: {
                 schemaId,
