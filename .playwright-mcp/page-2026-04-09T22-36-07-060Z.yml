@@ -1,0 +1,18 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e123]:
+    - heading "Here's what we found" [level=1] [ref=e126]
+    - paragraph [ref=e125]: Confirm what looks right. Tap to change.
+    - generic [ref=e129]:
+      - heading "Your Things" [level=2] [ref=e130]
+      - generic [ref=e132]:
+        - paragraph [ref=e133]: Soccer
+        - paragraph [ref=e134]: No additional items found
+    - generic [ref=e135]:
+      - generic [ref=e136]: Name this topic
+      - textbox "Name this topic" [ref=e137]:
+        - /placeholder: e.g. My Projects
+        - text: Soccer
+    - button "Show me my cases!" [ref=e139] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]

@@ -1,0 +1,7 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]
+  - generic [ref=e138]:
+    - generic [ref=e139]: check_circle
+    - paragraph [ref=e140]: Gmail connected! Preparing scan...

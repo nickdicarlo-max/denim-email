@@ -83,6 +83,7 @@ export interface ClusteringConfig {
   threadMatchScore: number;
   subjectMatchScore: number;
   actorAffinityScore: number;
+  tagMatchScore: number;
   timeDecayDays: { fresh: number };
   reminderCollapseEnabled: boolean;
   reminderSubjectSimilarity: number;
@@ -98,6 +99,12 @@ export interface ExtractionInput {
   date: string; // ISO string
   body: string;
   isReply: boolean;
+  attachments?: Array<{
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    extractionSummary?: string; // filled when OCR is implemented
+  }>;
 }
 
 export interface ExtractionSchemaContext {
@@ -148,6 +155,7 @@ export interface ClusterCaseInput {
   entityId: string;
   threadIds: string[];
   senderEntityIds: string[];
+  tags: string[];
   subject: string;
   emailCount: number;
   lastEmailDate: Date;
@@ -157,6 +165,7 @@ export interface ClusterCaseInput {
 export interface ScoreBreakdown {
   threadScore: number;
   subjectScore: number;
+  tagScore: number;
   actorScore: number;
   timeDecayMultiplier: number;
   rawScore: number;
@@ -254,6 +263,7 @@ export interface CalibrationResult {
     mergeThreshold: number;
     subjectMatchScore: number;
     actorAffinityScore: number;
+    tagMatchScore: number;
     timeDecayFreshDays: number;
   };
   discriminatorVocabulary: Record<string, {
@@ -291,9 +301,12 @@ export interface SynthesisSchemaContext {
 
 export type UrgencyLevel = "IMMINENT" | "THIS_WEEK" | "UPCOMING" | "NO_ACTION" | "IRRELEVANT";
 
+export type MoodLevel = "CELEBRATORY" | "POSITIVE" | "NEUTRAL" | "URGENT" | "NEGATIVE";
+
 export interface SynthesisResult {
   title: string;
   emoji?: string;
+  mood?: MoodLevel;
   summary: {
     beginning: string;
     middle: string;
@@ -347,6 +360,16 @@ export interface HypothesisValidation {
     confidence: number;
     source: string;
     emailCount?: number;
+    emailIndices?: number[];
+    likelyAliasOf?: string | null;
+    aliasConfidence?: number | null;
+    aliasReason?: string | null;
+    /**
+     * Name of the user-entered WHAT this entity most relates to (e.g.,
+     * "soccer"), or null if no single clear association. Used by the
+     * review screen to group discoveries under the right topic.
+     */
+    relatedUserThing?: string | null;
   }[];
   confirmedTags: string[];
   suggestedTags: {

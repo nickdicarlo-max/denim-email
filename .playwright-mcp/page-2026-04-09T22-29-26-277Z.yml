@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]
+  - generic [ref=e170]:
+    - generic [ref=e171]: auto_awesome
+    - heading "Writing your cases" [level=1] [ref=e172]
+    - paragraph [ref=e173]: Summarizing 1 case.

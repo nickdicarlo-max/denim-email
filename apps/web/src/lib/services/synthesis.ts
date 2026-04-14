@@ -10,9 +10,12 @@
  */
 
 import { Prisma } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { logger } from "@/lib/logger";
 import { callClaude } from "@/lib/ai/client";
+import { MODEL_PRICING } from "@/lib/ai/cost-constants";
+import { logAICost } from "@/lib/ai/cost-tracker";
+import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
+import { prisma } from "@/lib/prisma";
 
 /** Safely parse a date string, returning null if invalid. */
 function safeDate(value: string | null | undefined): Date | null {
@@ -20,17 +23,15 @@ function safeDate(value: string | null | undefined): Date | null {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-import { buildSynthesisPrompt, parseSynthesisResponse } from "@denim/ai";
-import { generateFingerprint, matchAction } from "@denim/engine";
-import type {
-  SynthesisEmailInput,
-  SynthesisSchemaContext,
-  SynthesisResult,
-} from "@denim/types";
 
-// Claude Sonnet 4.5 pricing (per 1M tokens): $3 input, $15 output
-const CLAUDE_INPUT_COST_PER_TOKEN = 3 / 1_000_000;
-const CLAUDE_OUTPUT_COST_PER_TOKEN = 15 / 1_000_000;
+import { buildSynthesisPrompt, parseSynthesisResponse } from "@denim/ai";
+import {
+  computeCaseDecay,
+  computeNextActionDate,
+  generateFingerprint,
+  matchAction,
+} from "@denim/engine";
+import type { SynthesisEmailInput, SynthesisResult, SynthesisSchemaContext } from "@denim/types";
 
 interface AggregationFieldDef {
   name: string;
@@ -90,6 +91,15 @@ function aggregateFieldData(
   return result;
 }
 
+interface SynthesizeCaseMetrics {
+  skipped?: boolean;
+  emailCount?: number;
+  actionCount?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  estimatedCostUsd?: number;
+}
+
 /**
  * Synthesize a single case: call Claude, parse response, write results.
  */
@@ -98,8 +108,22 @@ export async function synthesizeCase(
   schemaId: string,
   scanJobId?: string,
 ): Promise<void> {
-  const startTime = Date.now();
+  await withLogging<SynthesizeCaseMetrics>(
+    {
+      service: "synthesis",
+      operation: "synthesizeCase",
+      context: { caseId, schemaId },
+    },
+    () => synthesizeCaseImpl(caseId, schemaId, scanJobId),
+    (metrics) => ({ ...metrics }),
+  );
+}
 
+async function synthesizeCaseImpl(
+  caseId: string,
+  schemaId: string,
+  scanJobId?: string,
+): Promise<SynthesizeCaseMetrics> {
   // 0. Skip guard: don't re-synthesize cases with no new emails
   const caseCheck = await prisma.case.findUniqueOrThrow({
     where: { id: caseId },
@@ -123,7 +147,7 @@ export async function synthesizeCase(
         reason: "already_synthesized_no_new_emails",
         synthesizedAt: caseCheck.synthesizedAt.toISOString(),
       });
-      return;
+      return { skipped: true };
     }
   }
 
@@ -164,7 +188,7 @@ export async function synthesizeCase(
       caseId,
       schemaId,
     });
-    return;
+    return { emailCount: 0 };
   }
 
   // 2. Load schema context
@@ -299,15 +323,15 @@ export async function synthesizeCase(
   await prisma.$transaction(async (tx) => {
     // Update Case with synthesis results
     // If urgency is IRRELEVANT, auto-resolve the case
-    const effectiveStatus = synthesisResult.urgency === "IRRELEVANT"
-      ? "RESOLVED" as const
-      : synthesisResult.status;
+    const effectiveStatus =
+      synthesisResult.urgency === "IRRELEVANT" ? ("RESOLVED" as const) : synthesisResult.status;
 
     await tx.case.update({
       where: { id: caseId },
       data: {
         title: synthesisResult.title,
         emoji: synthesisResult.emoji ?? null,
+        mood: synthesisResult.mood ?? "NEUTRAL",
         summary: synthesisResult.summary,
         displayTags: synthesisResult.displayTags,
         primaryActor: synthesisResult.primaryActor ?? Prisma.JsonNull,
@@ -380,53 +404,94 @@ export async function synthesizeCase(
         });
       }
     }
+
+    // Compute nextActionDate from all PENDING actions for this case
+    const allPendingActions = await tx.caseAction.findMany({
+      where: { caseId, status: "PENDING" },
+      select: { dueDate: true, eventStartTime: true, status: true },
+    });
+    const nextActionDate = computeNextActionDate(
+      allPendingActions.map((a) => ({
+        status: a.status as "PENDING",
+        dueDate: a.dueDate,
+        eventStartTime: a.eventStartTime,
+      })),
+    );
+    await tx.case.update({
+      where: { id: caseId },
+      data: { nextActionDate },
+    });
   });
 
-  // 10. Deterministic urgency override: if all event actions are in the past, force NO_ACTION
-  const nowMs = Date.now();
-  const eventActions = synthesisResult.actions.filter((a) => a.actionType === "EVENT");
-  if (eventActions.length > 0) {
-    const allPast = eventActions.every((a) => {
-      const dateStr = a.eventStartTime ?? a.dueDate;
-      return dateStr ? new Date(dateStr).getTime() < nowMs : true;
+  // 10. Deterministic urgency + decay via computeCaseDecay
+  const nowForDecay = new Date();
+  const currentCase = await prisma.case.findUnique({
+    where: { id: caseId },
+    select: { status: true, urgency: true, lastEmailDate: true },
+  });
+  if (currentCase) {
+    const freshActions = await prisma.caseAction.findMany({
+      where: { caseId },
+      select: { id: true, status: true, dueDate: true, eventStartTime: true, eventEndTime: true },
     });
-    if (allPast && synthesisResult.urgency !== "NO_ACTION" && synthesisResult.urgency !== "IRRELEVANT") {
+    const decay = computeCaseDecay(
+      {
+        caseStatus: currentCase.status,
+        caseUrgency: currentCase.urgency ?? "UPCOMING",
+        actions: freshActions.map((a) => ({
+          id: a.id,
+          status: a.status as "PENDING" | "DONE" | "EXPIRED" | "SUPERSEDED" | "DISMISSED",
+          dueDate: a.dueDate,
+          eventStartTime: a.eventStartTime,
+          eventEndTime: a.eventEndTime,
+        })),
+        lastEmailDate: currentCase.lastEmailDate ?? nowForDecay,
+      },
+      nowForDecay,
+    );
+    if (decay.changed) {
+      if (decay.expiredActionIds.length > 0) {
+        await prisma.caseAction.updateMany({
+          where: { id: { in: decay.expiredActionIds } },
+          data: { status: "EXPIRED" },
+        });
+      }
       await prisma.case.update({
         where: { id: caseId },
-        data: { urgency: "NO_ACTION" },
+        data: {
+          urgency: decay.updatedUrgency,
+          status: decay.updatedStatus,
+          nextActionDate: decay.nextActionDate,
+        },
       });
     }
   }
 
   // 11. Log extraction cost
+  const claudePricing = MODEL_PRICING["claude-sonnet-4-6"];
   const estimatedCost =
-    aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
-    aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;
+    aiResult.inputTokens * claudePricing.inputCostPerToken +
+    aiResult.outputTokens * claudePricing.outputCostPerToken;
 
-  await prisma.extractionCost.create({
-    data: {
+  await logAICost(
+    {
+      inputTokens: aiResult.inputTokens,
+      outputTokens: aiResult.outputTokens,
+      latencyMs: aiResult.latencyMs,
+    },
+    {
       emailId: emails[0].id,
       scanJobId: scanJobId ?? null,
       model: "claude-sonnet-4-6",
       operation: "synthesis",
-      inputTokens: aiResult.inputTokens,
-      outputTokens: aiResult.outputTokens,
-      estimatedCostUsd: estimatedCost,
-      latencyMs: aiResult.latencyMs,
     },
-  });
+  );
 
-  const durationMs = Date.now() - startTime;
-  logger.info({
-    service: "synthesis",
-    operation: "synthesizeCase",
-    caseId,
-    schemaId,
-    durationMs,
+  return {
     emailCount: emails.length,
     actionCount: synthesisResult.actions.length,
     inputTokens: aiResult.inputTokens,
     outputTokens: aiResult.outputTokens,
     estimatedCostUsd: estimatedCost,
-  });
+  };
 }

@@ -13,30 +13,27 @@
  * Also updates: Case denormalized fields, CaseSchema.caseCount
  */
 
-import { prisma } from "@/lib/prisma";
-import { logger } from "@/lib/logger";
-import { callClaude } from "@/lib/ai/client";
-import { clusterEmails } from "@denim/engine";
-import { analyzeWordFrequencies } from "@denim/engine";
 import {
   buildCaseSplittingPrompt,
-  parseCaseSplittingResponse,
   buildClusteringCalibrationPrompt,
+  parseCaseSplittingResponse,
   parseClusteringCalibrationResponse,
 } from "@denim/ai";
+import type { CoarseClusterInput } from "@denim/engine";
+import { analyzeWordFrequencies, clusterEmails } from "@denim/engine";
 import type {
   ClusterCaseInput,
   ClusterEmailInput,
   ClusteringConfig,
   EntityGroupInput,
-  QualityPhaseType,
   FrequencyTable,
+  QualityPhaseType,
 } from "@denim/types";
-import type { CoarseClusterInput } from "@denim/engine";
-
-// Claude Sonnet pricing (per 1M tokens): $3 input, $15 output
-const CLAUDE_INPUT_COST_PER_TOKEN = 3 / 1_000_000;
-const CLAUDE_OUTPUT_COST_PER_TOKEN = 15 / 1_000_000;
+import { callClaude } from "@/lib/ai/client";
+import { logAICost } from "@/lib/ai/cost-tracker";
+import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
+import { prisma } from "@/lib/prisma";
 
 interface ClusterResult {
   clusterIds: string[];
@@ -53,12 +50,29 @@ interface ClusterResult {
  * Run simplified gravity model to create coarse entity-level clusters.
  * No AI calls — pure computation + DB reads/writes.
  */
-export async function coarseCluster(
+export async function coarseCluster(schemaId: string, scanJobId?: string): Promise<ClusterResult> {
+  const augmented = await withLogging<ClusterResult & { emailCount: number }>(
+    {
+      service: "cluster",
+      operation: "coarseCluster",
+      context: { schemaId },
+    },
+    () => coarseClusterImpl(schemaId, scanJobId),
+    (result) => ({
+      emailCount: result.emailCount,
+      casesCreated: result.casesCreated,
+      casesMerged: result.casesMerged,
+      clustersCreated: result.clustersCreated,
+    }),
+  );
+  const { emailCount: _emailCount, ...rest } = augmented;
+  return rest;
+}
+
+async function coarseClusterImpl(
   schemaId: string,
   scanJobId?: string,
-): Promise<ClusterResult> {
-  const startTime = Date.now();
-
+): Promise<ClusterResult & { emailCount: number }> {
   // 0. Clean up orphaned cases from failed prior clustering attempts
   const orphanedCases = await prisma.case.findMany({
     where: { schemaId, caseEmails: { none: {} } },
@@ -97,9 +111,12 @@ export async function coarseCluster(
   });
 
   // Use tuned config if available (TRACKING/STABLE phases), otherwise interview config
-  const baseConfig = schema.clusteringConfig as unknown as ClusteringConfig;
-  const tunedConfig = schema.tunedClusteringConfig as unknown as ClusteringConfig | null;
-  const config: ClusteringConfig = tunedConfig ?? baseConfig;
+  // Existing schemas may not have tagMatchScore in stored JSON — default to 15
+  const raw = (schema.tunedClusteringConfig ?? schema.clusteringConfig) as Record<string, unknown>;
+  const config: ClusteringConfig = {
+    ...(raw as unknown as ClusteringConfig),
+    tagMatchScore: (raw.tagMatchScore as number) ?? 15,
+  };
 
   const entityByName = new Map(schema.entities.map((e) => [e.name.toLowerCase(), e]));
 
@@ -133,7 +150,13 @@ export async function coarseCluster(
       schemaId,
       message: "No unclustered emails found",
     });
-    return { clusterIds: [], casesCreated: 0, casesMerged: 0, clustersCreated: 0 };
+    return {
+      clusterIds: [],
+      casesCreated: 0,
+      casesMerged: 0,
+      clustersCreated: 0,
+      emailCount: 0,
+    };
   }
 
   // 3. Transform to ClusterEmailInput[], filter emails without entity
@@ -194,7 +217,7 @@ export async function coarseCluster(
       caseEmails: {
         select: {
           email: {
-            select: { threadId: true, senderEntityId: true },
+            select: { threadId: true, senderEntityId: true, tags: true },
           },
         },
       },
@@ -207,9 +230,14 @@ export async function coarseCluster(
     threadIds: [...new Set(c.caseEmails.map((ce) => ce.email.threadId))],
     senderEntityIds: [
       ...new Set(
-        c.caseEmails
-          .map((ce) => ce.email.senderEntityId)
-          .filter((id): id is string => id !== null),
+        c.caseEmails.map((ce) => ce.email.senderEntityId).filter((id): id is string => id !== null),
+      ),
+    ],
+    tags: [
+      ...new Set(
+        c.caseEmails.flatMap((ce) =>
+          Array.isArray(ce.email.tags) ? (ce.email.tags as string[]) : [],
+        ),
       ),
     ],
     subject: c.title,
@@ -226,170 +254,202 @@ export async function coarseCluster(
   let casesCreated = 0;
   let casesMerged = 0;
 
-  await prisma.$transaction(async (tx) => {
-    for (const decision of decisions) {
-      if (decision.action === "CREATE") {
-        const entityId =
-          decision.entityId ?? resolveEntityFromDetected(decision.emailIds);
-        if (!entityId) {
-          logger.warn({
-            service: "cluster",
-            operation: "coarseCluster.noEntity",
-            schemaId,
-            emailIds: decision.emailIds,
-          });
-          continue;
-        }
+  await prisma.$transaction(
+    async (tx) => {
+      // The gravity model assigns synthetic IDs ("new-case-0", "new-case-1",
+      // etc.) to newly created cases in its in-memory activeCases list. MERGE
+      // decisions reference these synthetic IDs as targetCaseId. We need to
+      // map them to real CUIDs after creating the Case rows.
+      //
+      // The synthetic ID format is `new-case-${decisionIndex}` where
+      // decisionIndex is the position of the CREATE decision in the array.
+      const syntheticToReal = new Map<string, string>();
 
-        const firstEmail = emailLookup.get(decision.emailIds[0]);
-        const lastEmail = decision.emailIds.length > 1
-          ? emailLookup.get(decision.emailIds[decision.emailIds.length - 1])
-          : firstEmail;
+      for (const [decisionIndex, decision] of decisions.entries()) {
+        if (decision.action === "CREATE") {
+          const entityId = decision.entityId ?? resolveEntityFromDetected(decision.emailIds);
+          if (!entityId) {
+            logger.warn({
+              service: "cluster",
+              operation: "coarseCluster.noEntity",
+              schemaId,
+              emailIds: decision.emailIds,
+            });
+            continue;
+          }
 
-        const newCase = await tx.case.create({
-          data: {
-            schemaId,
-            entityId,
-            title: firstEmail?.subject ?? "Untitled Case",
-            summary: { beginning: "", middle: "", end: "" },
-            status: "OPEN",
-            anchorTags: [],
-            allTags: [],
-            displayTags: [],
-            startDate: firstEmail?.date,
-            lastEmailDate: lastEmail?.date,
-            lastSenderName: lastEmail?.senderDisplayName,
-          },
-        });
+          const firstEmail = emailLookup.get(decision.emailIds[0]);
+          const lastEmail =
+            decision.emailIds.length > 1
+              ? emailLookup.get(decision.emailIds[decision.emailIds.length - 1])
+              : firstEmail;
 
-        for (const emailId of decision.emailIds) {
-          await tx.caseEmail.upsert({
-            where: { emailId },
-            create: {
-              caseId: newCase.id,
-              emailId,
-              assignedBy: "CLUSTERING",
-              clusteringScore: decision.score > 0 ? decision.score : null,
-            },
-            update: {
-              caseId: newCase.id,
-              assignedBy: "CLUSTERING",
-              clusteringScore: decision.score > 0 ? decision.score : null,
-            },
-          });
-        }
+          const caseTags = [
+            ...new Set(
+              decision.emailIds.flatMap((id) => {
+                const em = emailLookup.get(id);
+                return em && Array.isArray(em.tags) ? (em.tags as string[]) : [];
+              }),
+            ),
+          ];
 
-        const cluster = await tx.cluster.create({
-          data: {
-            schemaId,
-            action: "CREATE",
-            targetCaseId: null,
-            clusterPass: "COARSE",
-            emailIds: decision.emailIds,
-            threadIds: decision.threadIds,
-            score: decision.score > 0 ? decision.score : null,
-            primaryTag: decision.primaryTag,
-            scoreBreakdown: decision.breakdown as any,
-            status: "COMPLETED",
-            resultCaseId: newCase.id,
-            scanJobId,
-          },
-        });
-
-        clusterIds.push(cluster.id);
-        casesCreated++;
-      } else {
-        // MERGE
-        const targetCaseId = decision.targetCaseId!;
-
-        const targetExists = await tx.case.findUnique({
-          where: { id: targetCaseId },
-          select: { id: true },
-        });
-        if (!targetExists) continue;
-
-        for (const emailId of decision.emailIds) {
-          await tx.caseEmail.upsert({
-            where: { emailId },
-            create: {
-              caseId: targetCaseId,
-              emailId,
-              assignedBy: "CLUSTERING",
-              clusteringScore: decision.score,
-            },
-            update: {
-              caseId: targetCaseId,
-              assignedBy: "CLUSTERING",
-              clusteringScore: decision.score,
+          const newCase = await tx.case.create({
+            data: {
+              schemaId,
+              entityId,
+              title: firstEmail?.subject ?? "Untitled Case",
+              summary: { beginning: "", middle: "", end: "" },
+              status: "OPEN",
+              anchorTags: caseTags,
+              allTags: caseTags,
+              displayTags: caseTags.slice(0, 3),
+              startDate: firstEmail?.date,
+              lastEmailDate: lastEmail?.date,
+              lastSenderName: lastEmail?.senderDisplayName,
             },
           });
+
+          // Map the synthetic ID to the real CUID so MERGE decisions can
+          // resolve their targetCaseId.
+          syntheticToReal.set(`new-case-${decisionIndex}`, newCase.id);
+
+          for (const emailId of decision.emailIds) {
+            await tx.caseEmail.upsert({
+              where: { emailId },
+              create: {
+                caseId: newCase.id,
+                emailId,
+                assignedBy: "CLUSTERING",
+                clusteringScore: decision.score > 0 ? decision.score : null,
+              },
+              update: {
+                caseId: newCase.id,
+                assignedBy: "CLUSTERING",
+                clusteringScore: decision.score > 0 ? decision.score : null,
+              },
+            });
+          }
+
+          const cluster = await tx.cluster.create({
+            data: {
+              schemaId,
+              action: "CREATE",
+              targetCaseId: null,
+              clusterPass: "COARSE",
+              emailIds: decision.emailIds,
+              threadIds: decision.threadIds,
+              score: decision.score > 0 ? decision.score : null,
+              primaryTag: decision.primaryTag,
+              scoreBreakdown: decision.breakdown as any,
+              status: "COMPLETED",
+              resultCaseId: newCase.id,
+              scanJobId,
+            },
+          });
+
+          clusterIds.push(cluster.id);
+          casesCreated++;
+        } else {
+          // MERGE — resolve synthetic IDs to real CUIDs
+          let targetCaseId = decision.targetCaseId!;
+          if (targetCaseId.startsWith("new-case-")) {
+            const realId = syntheticToReal.get(targetCaseId);
+            if (!realId) {
+              logger.warn({
+                service: "cluster",
+                operation: "coarseCluster.unresolvedSyntheticId",
+                schemaId,
+                syntheticId: targetCaseId,
+              });
+              continue;
+            }
+            targetCaseId = realId;
+          }
+
+          const targetExists = await tx.case.findUnique({
+            where: { id: targetCaseId },
+            select: { id: true },
+          });
+          if (!targetExists) continue;
+
+          for (const emailId of decision.emailIds) {
+            await tx.caseEmail.upsert({
+              where: { emailId },
+              create: {
+                caseId: targetCaseId,
+                emailId,
+                assignedBy: "CLUSTERING",
+                clusteringScore: decision.score,
+              },
+              update: {
+                caseId: targetCaseId,
+                assignedBy: "CLUSTERING",
+                clusteringScore: decision.score,
+              },
+            });
+          }
+
+          // Update denormalized fields
+          const lastEmailId = decision.emailIds[decision.emailIds.length - 1];
+          const lastEmail = emailLookup.get(lastEmailId);
+
+          await tx.case.update({
+            where: { id: targetCaseId },
+            data: {
+              lastEmailDate: lastEmail?.date,
+              lastSenderName: lastEmail?.senderDisplayName,
+            },
+          });
+
+          const cluster = await tx.cluster.create({
+            data: {
+              schemaId,
+              action: "MERGE",
+              targetCaseId,
+              clusterPass: "COARSE",
+              emailIds: decision.emailIds,
+              threadIds: decision.threadIds,
+              score: decision.score,
+              primaryTag: decision.primaryTag,
+              scoreBreakdown: decision.breakdown as any,
+              status: "COMPLETED",
+              resultCaseId: targetCaseId,
+              scanJobId,
+            },
+          });
+
+          clusterIds.push(cluster.id);
+          casesMerged++;
         }
-
-        // Update denormalized fields
-        const lastEmailId = decision.emailIds[decision.emailIds.length - 1];
-        const lastEmail = emailLookup.get(lastEmailId);
-
-        await tx.case.update({
-          where: { id: targetCaseId },
-          data: {
-            lastEmailDate: lastEmail?.date,
-            lastSenderName: lastEmail?.senderDisplayName,
-          },
-        });
-
-        const cluster = await tx.cluster.create({
-          data: {
-            schemaId,
-            action: "MERGE",
-            targetCaseId,
-            clusterPass: "COARSE",
-            emailIds: decision.emailIds,
-            threadIds: decision.threadIds,
-            score: decision.score,
-            primaryTag: decision.primaryTag,
-            scoreBreakdown: decision.breakdown as any,
-            status: "COMPLETED",
-            resultCaseId: targetCaseId,
-            scanJobId,
-          },
-        });
-
-        clusterIds.push(cluster.id);
-        casesMerged++;
       }
-    }
 
-    // Write alternativeCaseId for emails with second-best matches
-    for (const decision of decisions) {
-      if (decision.alternativeCaseId && decision.emailIds.length > 0) {
-        await tx.email.updateMany({
-          where: { id: { in: decision.emailIds } },
-          data: { alternativeCaseId: decision.alternativeCaseId },
-        });
+      // Write alternativeCaseId for emails with second-best matches,
+      // resolving any synthetic IDs to real CUIDs.
+      for (const decision of decisions) {
+        let altCaseId = decision.alternativeCaseId;
+        if (altCaseId?.startsWith("new-case-")) {
+          altCaseId = syntheticToReal.get(altCaseId) ?? null;
+        }
+        if (altCaseId && decision.emailIds.length > 0) {
+          await tx.email.updateMany({
+            where: { id: { in: decision.emailIds } },
+            data: { alternativeCaseId: altCaseId },
+          });
+        }
       }
-    }
 
-    // Update CaseSchema.caseCount
-    const totalCases = await tx.case.count({ where: { schemaId } });
-    await tx.caseSchema.update({
-      where: { id: schemaId },
-      data: { caseCount: totalCases },
-    });
-  }, { timeout: 120000 });
+      // CaseSchema.caseCount is computed on demand by computeSchemaMetrics.
+    },
+    { timeout: 120000 },
+  );
 
-  const durationMs = Date.now() - startTime;
-  logger.info({
-    service: "cluster",
-    operation: "coarseCluster",
-    schemaId,
-    durationMs,
-    emailCount: emailInputs.length,
+  return {
+    clusterIds,
     casesCreated,
     casesMerged,
     clustersCreated: clusterIds.length,
-  });
-
-  return { clusterIds, casesCreated, casesMerged, clustersCreated: clusterIds.length };
+    emailCount: emailInputs.length,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -404,8 +464,25 @@ export async function splitCoarseClusters(
   schemaId: string,
   scanJobId?: string,
 ): Promise<ClusterResult> {
-  const startTime = Date.now();
+  return withLogging<ClusterResult>(
+    {
+      service: "cluster",
+      operation: "splitCoarseClusters",
+      context: { schemaId },
+    },
+    () => splitCoarseClustersImpl(schemaId, scanJobId),
+    (result) => ({
+      casesCreated: result.casesCreated,
+      casesMerged: result.casesMerged,
+      clustersCreated: result.clustersCreated,
+    }),
+  );
+}
 
+async function splitCoarseClustersImpl(
+  schemaId: string,
+  scanJobId?: string,
+): Promise<ClusterResult> {
   // 1. Load schema with phase and vocabulary
   const schema = await prisma.caseSchema.findUniqueOrThrow({
     where: { id: schemaId },
@@ -447,12 +524,15 @@ export async function splitCoarseClusters(
 
   // 3. Build coarse clusters grouped by entity for frequency analysis
   // Group cases by entityId to form coarse clusters
-  const entityClusters = new Map<string, {
-    entityId: string;
-    entityName: string;
-    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
-    caseIds: string[];
-  }>();
+  const entityClusters = new Map<
+    string,
+    {
+      entityId: string;
+      entityName: string;
+      emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+      caseIds: string[];
+    }
+  >();
 
   for (const c of cases) {
     const entityName = entityNameById.get(c.entityId) ?? c.entityId;
@@ -506,11 +586,25 @@ export async function splitCoarseClusters(
 
   // 5. Decide: AI or deterministic splitting
   if (qualityPhase === "STABLE") {
-    return await deterministicSplit(schemaId, scanJobId, entityClusters, frequencyTables, schema.discriminatorVocabulary);
+    return await deterministicSplit(
+      schemaId,
+      scanJobId,
+      entityClusters,
+      frequencyTables,
+      schema.discriminatorVocabulary,
+    );
   }
 
   // CALIBRATING or TRACKING: use Claude
-  return await aiCaseSplit(schemaId, scanJobId, entityClusters, frequencyTables, qualityPhase, schema.discriminatorVocabulary, schema.domain);
+  return await aiCaseSplit(
+    schemaId,
+    scanJobId,
+    entityClusters,
+    frequencyTables,
+    qualityPhase,
+    schema.discriminatorVocabulary,
+    schema.domain,
+  );
 }
 
 /**
@@ -520,16 +614,24 @@ export async function splitCoarseClusters(
  */
 function assignRemainingEmails(
   splitResult: {
-    cases: Array<{ caseTitle: string; discriminators: string[]; emailIds: string[]; reasoning: string }>;
+    cases: Array<{
+      caseTitle: string;
+      discriminators: string[];
+      emailIds: string[];
+      reasoning: string;
+    }>;
     catchAllEmailIds: string[];
     reasoning: string;
   },
-  entityClusters: Map<string, {
-    entityId: string;
-    entityName: string;
-    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
-    caseIds: string[];
-  }>,
+  entityClusters: Map<
+    string,
+    {
+      entityId: string;
+      entityName: string;
+      emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+      caseIds: string[];
+    }
+  >,
 ): typeof splitResult {
   // Collect all email IDs Claude already assigned
   const assignedIds = new Set<string>();
@@ -594,12 +696,15 @@ function assignRemainingEmails(
 async function aiCaseSplit(
   schemaId: string,
   scanJobId: string | undefined,
-  entityClusters: Map<string, {
-    entityId: string;
-    entityName: string;
-    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
-    caseIds: string[];
-  }>,
+  entityClusters: Map<
+    string,
+    {
+      entityId: string;
+      entityName: string;
+      emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+      caseIds: string[];
+    }
+  >,
   frequencyTables: FrequencyTable[],
   qualityPhase: QualityPhaseType,
   learnedVocabulary: unknown,
@@ -647,7 +752,9 @@ async function aiCaseSplit(
     today,
     clusters,
     correctionHistory: correctionHistory.length > 0 ? correctionHistory : undefined,
-    learnedVocabulary: learnedVocabulary as Record<string, { words: Record<string, number>; mergedAway: string[] }> | undefined,
+    learnedVocabulary: learnedVocabulary as
+      | Record<string, { words: Record<string, number>; mergedAway: string[] }>
+      | undefined,
   });
 
   try {
@@ -676,21 +783,19 @@ async function aiCaseSplit(
     });
 
     // Log cost
-    const estimatedCost =
-      aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
-      aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: clusters[0]?.emailSamples[0]?.id ?? "unknown",
         scanJobId,
         model: "claude-sonnet-4-6",
         operation: "case-splitting",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
     // Assign ALL remaining emails to cases using discriminator word matching.
     // Claude only saw a sample — the rest must be deterministically assigned.
@@ -703,8 +808,38 @@ async function aiCaseSplit(
       service: "cluster",
       operation: "aiCaseSplit.error",
       schemaId,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
+
+    // Write a diagnostic record so the failure is visible in PipelineIntelligence.
+    // Per lessons learned (Bug 1): failures that break functionality must not be
+    // silent warnings — they must leave a visible trace.
+    try {
+      await prisma.pipelineIntelligence.create({
+        data: {
+          schemaId,
+          scanJobId,
+          stage: "case-splitting",
+          input: { clusterCount: clusters.length, phase: qualityPhase } as any,
+          output: {
+            error: true,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorType: error instanceof Error ? error.constructor.name : "unknown",
+          } as any,
+          model: "claude-sonnet-4-6",
+          tokenCount: null,
+        },
+      });
+    } catch (dbError) {
+      // Don't mask the original error if the diagnostic write also fails
+      logger.error({
+        service: "cluster",
+        operation: "aiCaseSplit.diagnosticWriteFailed",
+        schemaId,
+        error: dbError instanceof Error ? dbError.message : String(dbError),
+      });
+    }
+
     // Fallback: no splitting, keep coarse clusters as-is
     return { clusterIds: [], casesCreated: 0, casesMerged: 0, clustersCreated: 0 };
   }
@@ -717,19 +852,25 @@ async function aiCaseSplit(
 async function deterministicSplit(
   schemaId: string,
   scanJobId: string | undefined,
-  entityClusters: Map<string, {
-    entityId: string;
-    entityName: string;
-    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
-    caseIds: string[];
-  }>,
+  entityClusters: Map<
+    string,
+    {
+      entityId: string;
+      entityName: string;
+      emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+      caseIds: string[];
+    }
+  >,
   frequencyTables: FrequencyTable[],
   vocabulary: unknown,
 ): Promise<ClusterResult> {
-  const vocab = vocabulary as Record<string, {
-    words: Record<string, number>;
-    mergedAway: string[];
-  }> | null;
+  const vocab = vocabulary as Record<
+    string,
+    {
+      words: Record<string, number>;
+      mergedAway: string[];
+    }
+  > | null;
 
   if (!vocab) {
     // No vocabulary learned yet, skip splitting
@@ -807,19 +948,26 @@ async function deterministicSplit(
 async function applyCaseSplitResult(
   schemaId: string,
   scanJobId: string | undefined,
-  entityClusters: Map<string, {
-    entityId: string;
-    entityName: string;
-    emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
-    caseIds: string[];
-  }>,
+  entityClusters: Map<
+    string,
+    {
+      entityId: string;
+      entityName: string;
+      emails: Array<{ id: string; subject: string; summary: string; tags: string[] }>;
+      caseIds: string[];
+    }
+  >,
   splitResult: {
-    cases: Array<{ caseTitle: string; discriminators: string[]; emailIds: string[]; reasoning: string }>;
+    cases: Array<{
+      caseTitle: string;
+      discriminators: string[];
+      emailIds: string[];
+      reasoning: string;
+    }>;
     catchAllEmailIds: string[];
     reasoning: string;
   },
 ): Promise<ClusterResult> {
-  const startTime = Date.now();
   // Build email → entity mapping
   const emailEntityMap = new Map<string, string>();
   for (const [entityId, cluster] of entityClusters) {
@@ -846,6 +994,7 @@ async function applyCaseSplitResult(
       date: true,
       senderDisplayName: true,
       entityId: true,
+      tags: true,
     },
   });
   const emailDetailMap = new Map(emailDetails.map((e) => [e.id, e]));
@@ -855,190 +1004,199 @@ async function applyCaseSplitResult(
 
   // Delete old coarse-pass CaseEmail assignments for emails being re-assigned
   // Then create new cases from split definitions
-  await prisma.$transaction(async (tx) => {
-    // Remove existing case assignments for emails that will be re-split
-    if (allEmailIds.length > 0) {
-      await tx.caseEmail.deleteMany({
-        where: { emailId: { in: allEmailIds } },
-      });
-    }
-
-    // Delete empty coarse cases (they'll be replaced by split cases)
-    const allCoarseCaseIds = Array.from(entityClusters.values()).flatMap((c) => c.caseIds);
-    if (allCoarseCaseIds.length > 0) {
-      // Only delete cases that have no remaining emails (after CaseEmail deletion)
-      const emptyCases = await tx.case.findMany({
-        where: {
-          id: { in: allCoarseCaseIds },
-          caseEmails: { none: {} },
-        },
-        select: { id: true },
-      });
-      if (emptyCases.length > 0) {
-        await tx.case.deleteMany({
-          where: { id: { in: emptyCases.map((c) => c.id) } },
+  await prisma.$transaction(
+    async (tx) => {
+      // Remove existing case assignments for emails that will be re-split
+      if (allEmailIds.length > 0) {
+        await tx.caseEmail.deleteMany({
+          where: { emailId: { in: allEmailIds } },
         });
       }
-    }
 
-    // Create new cases from AI/deterministic split definitions
-    for (const caseDef of splitResult.cases) {
-      if (caseDef.emailIds.length === 0) continue;
-
-      // Resolve entity from first email
-      const entityId = emailEntityMap.get(caseDef.emailIds[0]);
-      if (!entityId) continue;
-
-      const firstEmail = emailDetailMap.get(caseDef.emailIds[0]);
-      const lastEmail = emailDetailMap.get(caseDef.emailIds[caseDef.emailIds.length - 1]);
-
-      const newCase = await tx.case.create({
-        data: {
-          schemaId,
-          entityId,
-          title: caseDef.caseTitle,
-          summary: { beginning: "", middle: "", end: "" },
-          status: "OPEN",
-          anchorTags: [],
-          allTags: [],
-          displayTags: [],
-          startDate: firstEmail?.date,
-          lastEmailDate: lastEmail?.date,
-          lastSenderName: lastEmail?.senderDisplayName,
-        },
-      });
-
-      for (const emailId of caseDef.emailIds) {
-        await tx.caseEmail.upsert({
-          where: { emailId },
-          create: {
-            caseId: newCase.id,
-            emailId,
-            assignedBy: "CLUSTERING",
+      // Delete empty coarse cases (they'll be replaced by split cases)
+      const allCoarseCaseIds = Array.from(entityClusters.values()).flatMap((c) => c.caseIds);
+      if (allCoarseCaseIds.length > 0) {
+        // Only delete cases that have no remaining emails (after CaseEmail deletion)
+        const emptyCases = await tx.case.findMany({
+          where: {
+            id: { in: allCoarseCaseIds },
+            caseEmails: { none: {} },
           },
-          update: {
-            caseId: newCase.id,
-            assignedBy: "CLUSTERING",
-          },
+          select: { id: true },
         });
+        if (emptyCases.length > 0) {
+          await tx.case.deleteMany({
+            where: { id: { in: emptyCases.map((c) => c.id) } },
+          });
+        }
       }
 
-      // Update discriminators on emails
-      if (caseDef.discriminators.length > 0) {
-        await tx.email.updateMany({
-          where: { id: { in: caseDef.emailIds } },
-          data: { discriminators: caseDef.discriminators },
-        });
-      }
+      // Create new cases from AI/deterministic split definitions
+      for (const caseDef of splitResult.cases) {
+        if (caseDef.emailIds.length === 0) continue;
 
-      // Audit record
-      const cluster = await tx.cluster.create({
-        data: {
-          schemaId,
-          action: "CREATE",
-          targetCaseId: null,
-          clusterPass: "SPLIT",
-          emailIds: caseDef.emailIds,
-          threadIds: [],
-          primaryTag: caseDef.discriminators[0] ?? null,
-          scoreBreakdown: { discriminators: caseDef.discriminators, reasoning: caseDef.reasoning } as any,
-          status: "COMPLETED",
-          resultCaseId: newCase.id,
-          scanJobId,
-        },
-      });
-
-      clusterIds.push(cluster.id);
-      casesCreated++;
-    }
-
-    // Handle catch-all emails — create a catch-all case per entity
-    if (splitResult.catchAllEmailIds.length > 0) {
-      // Group catch-all emails by entity
-      const catchAllByEntity = new Map<string, string[]>();
-      for (const emailId of splitResult.catchAllEmailIds) {
-        const entityId = emailEntityMap.get(emailId);
+        // Resolve entity from first email
+        const entityId = emailEntityMap.get(caseDef.emailIds[0]);
         if (!entityId) continue;
-        const list = catchAllByEntity.get(entityId) ?? [];
-        list.push(emailId);
-        catchAllByEntity.set(entityId, list);
-      }
 
-      for (const [entityId, emailIds] of catchAllByEntity) {
-        const cluster = entityClusters.get(entityId);
-        const entityName = cluster?.entityName ?? "Other";
+        const firstEmail = emailDetailMap.get(caseDef.emailIds[0]);
+        const lastEmail = emailDetailMap.get(caseDef.emailIds[caseDef.emailIds.length - 1]);
 
-        const firstEmail = emailDetailMap.get(emailIds[0]);
-        const lastEmail = emailDetailMap.get(emailIds[emailIds.length - 1]);
+        const caseTags = [
+          ...new Set(
+            caseDef.emailIds.flatMap((id) => {
+              const em = emailDetailMap.get(id);
+              return em && Array.isArray(em.tags) ? (em.tags as string[]) : [];
+            }),
+          ),
+        ];
 
-        const catchAllCase = await tx.case.create({
+        const newCase = await tx.case.create({
           data: {
             schemaId,
             entityId,
-            title: `${entityName} — General`,
+            title: caseDef.caseTitle,
             summary: { beginning: "", middle: "", end: "" },
             status: "OPEN",
-            anchorTags: [],
-            allTags: [],
-            displayTags: [],
+            anchorTags: caseTags,
+            allTags: caseTags,
+            displayTags: caseTags.slice(0, 3),
             startDate: firstEmail?.date,
             lastEmailDate: lastEmail?.date,
             lastSenderName: lastEmail?.senderDisplayName,
           },
         });
 
-        for (const emailId of emailIds) {
+        for (const emailId of caseDef.emailIds) {
           await tx.caseEmail.upsert({
             where: { emailId },
             create: {
-              caseId: catchAllCase.id,
+              caseId: newCase.id,
               emailId,
               assignedBy: "CLUSTERING",
             },
             update: {
-              caseId: catchAllCase.id,
+              caseId: newCase.id,
               assignedBy: "CLUSTERING",
             },
           });
         }
 
-        const auditCluster = await tx.cluster.create({
+        // Update discriminators on emails
+        if (caseDef.discriminators.length > 0) {
+          await tx.email.updateMany({
+            where: { id: { in: caseDef.emailIds } },
+            data: { discriminators: caseDef.discriminators },
+          });
+        }
+
+        // Audit record
+        const cluster = await tx.cluster.create({
           data: {
             schemaId,
             action: "CREATE",
+            targetCaseId: null,
             clusterPass: "SPLIT",
-            emailIds,
+            emailIds: caseDef.emailIds,
             threadIds: [],
-            primaryTag: null,
-            scoreBreakdown: { catchAll: true } as any,
+            primaryTag: caseDef.discriminators[0] ?? null,
+            scoreBreakdown: {
+              discriminators: caseDef.discriminators,
+              reasoning: caseDef.reasoning,
+            } as any,
             status: "COMPLETED",
-            resultCaseId: catchAllCase.id,
+            resultCaseId: newCase.id,
             scanJobId,
           },
         });
 
-        clusterIds.push(auditCluster.id);
+        clusterIds.push(cluster.id);
         casesCreated++;
       }
-    }
 
-    // Update case count
-    const totalCases = await tx.case.count({ where: { schemaId } });
-    await tx.caseSchema.update({
-      where: { id: schemaId },
-      data: { caseCount: totalCases },
-    });
-  }, { timeout: 120000 });
+      // Handle catch-all emails — create a catch-all case per entity
+      if (splitResult.catchAllEmailIds.length > 0) {
+        // Group catch-all emails by entity
+        const catchAllByEntity = new Map<string, string[]>();
+        for (const emailId of splitResult.catchAllEmailIds) {
+          const entityId = emailEntityMap.get(emailId);
+          if (!entityId) continue;
+          const list = catchAllByEntity.get(entityId) ?? [];
+          list.push(emailId);
+          catchAllByEntity.set(entityId, list);
+        }
 
-  const durationMs = Date.now() - startTime;
-  logger.info({
-    service: "cluster",
-    operation: "splitCoarseClusters",
-    schemaId,
-    durationMs,
-    casesCreated,
-    clustersCreated: clusterIds.length,
-  });
+        for (const [entityId, emailIds] of catchAllByEntity) {
+          const cluster = entityClusters.get(entityId);
+          const entityName = cluster?.entityName ?? "Other";
+
+          const firstEmail = emailDetailMap.get(emailIds[0]);
+          const lastEmail = emailDetailMap.get(emailIds[emailIds.length - 1]);
+
+          const caseTags = [
+            ...new Set(
+              emailIds.flatMap((id) => {
+                const em = emailDetailMap.get(id);
+                return em && Array.isArray(em.tags) ? (em.tags as string[]) : [];
+              }),
+            ),
+          ];
+
+          const catchAllCase = await tx.case.create({
+            data: {
+              schemaId,
+              entityId,
+              title: `${entityName} — General`,
+              summary: { beginning: "", middle: "", end: "" },
+              status: "OPEN",
+              anchorTags: caseTags,
+              allTags: caseTags,
+              displayTags: caseTags.slice(0, 3),
+              startDate: firstEmail?.date,
+              lastEmailDate: lastEmail?.date,
+              lastSenderName: lastEmail?.senderDisplayName,
+            },
+          });
+
+          for (const emailId of emailIds) {
+            await tx.caseEmail.upsert({
+              where: { emailId },
+              create: {
+                caseId: catchAllCase.id,
+                emailId,
+                assignedBy: "CLUSTERING",
+              },
+              update: {
+                caseId: catchAllCase.id,
+                assignedBy: "CLUSTERING",
+              },
+            });
+          }
+
+          const auditCluster = await tx.cluster.create({
+            data: {
+              schemaId,
+              action: "CREATE",
+              clusterPass: "SPLIT",
+              emailIds,
+              threadIds: [],
+              primaryTag: null,
+              scoreBreakdown: { catchAll: true } as any,
+              status: "COMPLETED",
+              resultCaseId: catchAllCase.id,
+              scanJobId,
+            },
+          });
+
+          clusterIds.push(auditCluster.id);
+          casesCreated++;
+        }
+      }
+
+      // CaseSchema.caseCount is computed on demand by computeSchemaMetrics.
+    },
+    { timeout: 120000 },
+  );
 
   return { clusterIds, casesCreated, casesMerged: 0, clustersCreated: clusterIds.length };
 }
@@ -1052,10 +1210,7 @@ async function applyCaseSplitResult(
  * calls Claude to adjust params + vocabulary, persists results.
  * Called by Inngest after synthesis when phase is CALIBRATING or TRACKING.
  */
-export async function applyCalibration(
-  schemaId: string,
-  scanJobId?: string,
-): Promise<void> {
+export async function applyCalibration(schemaId: string, scanJobId?: string): Promise<void> {
   const schema = await prisma.caseSchema.findUniqueOrThrow({
     where: { id: schemaId },
     select: {
@@ -1074,7 +1229,14 @@ export async function applyCalibration(
   const phase = schema.qualityPhase as QualityPhaseType;
   if (phase === "STABLE") return; // No calibration in STABLE phase
 
-  const config = (schema.tunedClusteringConfig ?? schema.clusteringConfig) as unknown as ClusteringConfig;
+  const rawCfg = (schema.tunedClusteringConfig ?? schema.clusteringConfig) as Record<
+    string,
+    unknown
+  >;
+  const config: ClusteringConfig = {
+    ...(rawCfg as unknown as ClusteringConfig),
+    tagMatchScore: (rawCfg.tagMatchScore as number) ?? 15,
+  };
 
   // Load recent corrections
   const corrections = await prisma.feedbackEvent.findMany({
@@ -1123,8 +1285,57 @@ export async function applyCalibration(
   }));
 
   // Build real frequency tables from case emails (previously hardcoded as {})
-  const frequencyTables: Record<string, { word: string; pct: number; caseAssignment: string }[]> = {};
-  const stopWords = new Set(["the", "a", "an", "is", "are", "was", "were", "be", "to", "of", "in", "for", "on", "at", "by", "with", "from", "and", "but", "or", "if", "this", "that", "it", "not", "no", "re", "fw", "fwd", "am", "pm", "i", "me", "my", "you", "your", "we", "our", "they", "he", "she", "her", "his", "its", "so", "as", "up"]);
+  const frequencyTables: Record<string, { word: string; pct: number; caseAssignment: string }[]> =
+    {};
+  const stopWords = new Set([
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "at",
+    "by",
+    "with",
+    "from",
+    "and",
+    "but",
+    "or",
+    "if",
+    "this",
+    "that",
+    "it",
+    "not",
+    "no",
+    "re",
+    "fw",
+    "fwd",
+    "am",
+    "pm",
+    "i",
+    "me",
+    "my",
+    "you",
+    "your",
+    "we",
+    "our",
+    "they",
+    "he",
+    "she",
+    "her",
+    "his",
+    "its",
+    "so",
+    "as",
+    "up",
+  ]);
 
   // Group cases by entity
   const casesByEntity = new Map<string, typeof cases>();
@@ -1146,7 +1357,8 @@ export async function applyCalibration(
     for (const c of entityCases) {
       for (const ce of c.caseEmails) {
         totalEmails++;
-        const text = `${ce.email.subject ?? ""} ${typeof ce.email.summary === "string" ? ce.email.summary : ""}`.toLowerCase();
+        const text =
+          `${ce.email.subject ?? ""} ${typeof ce.email.summary === "string" ? ce.email.summary : ""}`.toLowerCase();
         const words = text.match(/[a-z]{3,}/g) ?? [];
         const uniqueWords = new Set(words.filter((w) => !stopWords.has(w)));
 
@@ -1192,14 +1404,29 @@ export async function applyCalibration(
       mergeThreshold: config.mergeThreshold,
       subjectMatchScore: config.subjectMatchScore,
       actorAffinityScore: config.actorAffinityScore,
+      tagMatchScore: config.tagMatchScore ?? 15,
       timeDecayFreshDays: config.timeDecayDays.fresh,
     },
     coarseClusters,
     frequencyTables,
-    corrections: corrections.map((c) => ({
-      type: c.eventType,
-      ...(c.payload as Record<string, unknown>),
-    })),
+    corrections: corrections.map((c) => {
+      const payload = c.payload as Record<string, unknown>;
+      const caseTitleById = new Map(cases.map((cs) => [cs.id, cs.title]));
+      const resolveCase = (id: unknown): string => {
+        if (typeof id !== "string") return String(id);
+        const title = caseTitleById.get(id);
+        return title ? `${title} (${id})` : id;
+      };
+      return {
+        type: c.eventType as string,
+        ...(typeof payload.fromCaseId === "string"
+          ? { from: resolveCase(payload.fromCaseId) }
+          : {}),
+        ...(typeof payload.toCaseId === "string" ? { to: resolveCase(payload.toCaseId) } : {}),
+        ...(typeof payload.caseId === "string" ? { caseId: resolveCase(payload.caseId) } : {}),
+        ...(Array.isArray(payload.cases) ? { cases: payload.cases.map(resolveCase) } : {}),
+      };
+    }),
   });
 
   try {
@@ -1213,6 +1440,14 @@ export async function applyCalibration(
     });
 
     const parsed = parseClusteringCalibrationResponse(aiResult.content);
+
+    // Defense in depth: clamp tuned parameters to safe bounds
+    const clamp = (val: number, min: number, max: number) => Math.min(max, Math.max(min, val));
+    parsed.tunedConfig.mergeThreshold = clamp(parsed.tunedConfig.mergeThreshold, 20, 80);
+    parsed.tunedConfig.subjectMatchScore = clamp(parsed.tunedConfig.subjectMatchScore, 10, 60);
+    parsed.tunedConfig.actorAffinityScore = clamp(parsed.tunedConfig.actorAffinityScore, 0, 40);
+    parsed.tunedConfig.tagMatchScore = clamp(parsed.tunedConfig.tagMatchScore ?? 15, 0, 50);
+    parsed.tunedConfig.timeDecayFreshDays = clamp(parsed.tunedConfig.timeDecayFreshDays, 14, 120);
 
     // Persist learned config + vocabulary
     const newRunCount = schema.calibrationRunCount + 1;
@@ -1232,6 +1467,7 @@ export async function applyCalibration(
           mergeThreshold: parsed.tunedConfig.mergeThreshold,
           subjectMatchScore: parsed.tunedConfig.subjectMatchScore,
           actorAffinityScore: parsed.tunedConfig.actorAffinityScore,
+          tagMatchScore: parsed.tunedConfig.tagMatchScore,
           timeDecayDays: { fresh: parsed.tunedConfig.timeDecayFreshDays },
         } as any,
         discriminatorVocabulary: parsed.discriminatorVocabulary as any,
@@ -1254,21 +1490,19 @@ export async function applyCalibration(
     });
 
     // Log cost
-    const estimatedCost =
-      aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
-      aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: "calibration",
         scanJobId,
         model: "claude-sonnet-4-6",
         operation: "clustering-calibration",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
     logger.info({
       service: "cluster",

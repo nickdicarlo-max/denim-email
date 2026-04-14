@@ -1,0 +1,5 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e94]: progress_activity
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]

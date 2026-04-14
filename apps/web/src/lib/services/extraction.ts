@@ -3,28 +3,22 @@
  * to produce rich metadata records stored in the Email table.
  *
  * Write owner for: Email, EmailAttachment
- * Also increments: SchemaTag.emailCount, CaseSchema.emailCount, Entity.emailCount
+ * Also increments: SchemaTag.emailCount, Entity.emailCount
+ * (CaseSchema email/case counts are now compute-on-demand via scan-metrics.)
  */
 
+import { buildExtractionPrompt, parseExtractionResponse } from "@denim/ai";
+import { resolveEntity } from "@denim/engine";
+import type { ExtractionInput, ExtractionResult, ExtractionSchemaContext } from "@denim/types";
 import { callGemini } from "@/lib/ai/client";
+import { logAICost } from "@/lib/ai/cost-tracker";
 import { GmailClient } from "@/lib/gmail/client";
 import type { GmailMessageFull } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import type {
-  ExtractionInput,
-  ExtractionResult,
-  ExtractionSchemaContext,
-} from "@denim/types";
-import { buildExtractionPrompt, parseExtractionResponse } from "@denim/ai";
-import { resolveEntity } from "@denim/engine";
 import { matchesExclusionRule } from "./exclusion";
 
 const GEMINI_MODEL = "gemini-2.5-flash";
-
-// Gemini Flash 2.5 pricing (per token)
-const GEMINI_INPUT_COST = 0.00000015;
-const GEMINI_OUTPUT_COST = 0.0000006;
 
 interface ExtractEmailOptions {
   schemaId: string;
@@ -35,22 +29,29 @@ interface ExtractEmailOptions {
 interface ExtractEmailResult {
   emailId: string;
   excluded: boolean;
-  failed: boolean;
 }
 
 interface ProcessBatchResult {
   processed: number;
   excluded: number;
-  failed: number;
+  // `failed` is no longer a denormalized counter — derive it via
+  // computeScanMetrics (which reads ScanFailure rows written per email
+  // in the catch block of processEmailBatch below).
 }
 
 /**
  * Build ExtractionSchemaContext from a loaded schema with relations.
  */
-function buildSchemaContext(schema: {
+export function buildSchemaContext(schema: {
   domain: string | null;
   tags: { name: string; description: string | null; isActive: boolean }[];
-  entities: { name: string; type: string; aliases: unknown; isActive: boolean; autoDetected: boolean }[];
+  entities: {
+    name: string;
+    type: string;
+    aliases: unknown;
+    isActive: boolean;
+    autoDetected: boolean;
+  }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[];
   entityGroups?: { index: number; entities: { name: string; type: string; isActive: boolean }[] }[];
@@ -82,9 +83,7 @@ function buildSchemaContext(schema: {
       description: f.description,
       source: f.source,
     })),
-    exclusionPatterns: schema.exclusionRules
-      .filter((r) => r.isActive)
-      .map((r) => r.pattern),
+    exclusionPatterns: schema.exclusionRules.filter((r) => r.isActive).map((r) => r.pattern),
     entityGroups,
   };
 }
@@ -151,10 +150,13 @@ export async function extractEmail(
         isExcluded: true,
         excludeReason: `rule:${exclusionCheck.rule!.ruleType.toLowerCase()}`,
         bodyLength: gmailMessage.body.length,
+        firstScanJobId: scanJobId ?? null,
+        lastScanJobId: scanJobId ?? null,
       },
       update: {
         isExcluded: true,
         excludeReason: `rule:${exclusionCheck.rule!.ruleType.toLowerCase()}`,
+        lastScanJobId: scanJobId ?? undefined,
       },
     });
 
@@ -168,7 +170,7 @@ export async function extractEmail(
       data: { matchCount: { increment: 1 } },
     });
 
-    return { emailId: email.id, excluded: true, failed: false };
+    return { emailId: email.id, excluded: true };
   }
 
   // 2. Build prompt and call Gemini
@@ -188,9 +190,30 @@ export async function extractEmail(
   // 3. Parse AI response
   const parsed: ExtractionResult = parseExtractionResponse(aiResult.content);
 
-  // 3a. Relevance gate: reject emails that don't connect to user-input entities
+  // 3a. Check if sender is a known entity (deterministic inclusion bypass)
+  const senderEntityMatch = resolveEntity(
+    gmailMessage.senderDisplayName,
+    gmailMessage.senderEmail,
+    entities,
+  );
+  const senderIsKnownEntity = senderEntityMatch !== null;
+
+  // 3b. Log when a known-entity email bypasses the relevance gate
   const RELEVANCE_THRESHOLD = 0.4;
-  if (parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+  if (senderIsKnownEntity && parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+    logger.info({
+      service: "extraction",
+      operation: "relevanceGateBypass",
+      schemaId,
+      senderName: senderEntityMatch?.entityName,
+      relevanceScore: parsed.relevanceScore,
+      subject: gmailMessage.subject.slice(0, 60),
+    });
+  }
+
+  // 3c. Relevance gate: reject emails that don't connect to user-input entities
+  // Known entities bypass — their emails are always relevant by definition.
+  if (!senderIsKnownEntity && parsed.relevanceScore < RELEVANCE_THRESHOLD) {
     const email = await prisma.email.upsert({
       where: {
         schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
@@ -211,32 +234,45 @@ export async function extractEmail(
         isExcluded: true,
         excludeReason: `relevance:low`,
         bodyLength: gmailMessage.body.length,
+        routingDecision: {
+          relevanceScore: parsed.relevanceScore,
+          relevanceEntity: parsed.relevanceEntity,
+          senderMatch: null,
+          bypassReason: null,
+        } as any,
+        firstScanJobId: scanJobId ?? null,
+        lastScanJobId: scanJobId ?? null,
       },
       update: {
         isExcluded: true,
         excludeReason: `relevance:low`,
         summary: parsed.summary,
+        routingDecision: {
+          relevanceScore: parsed.relevanceScore,
+          relevanceEntity: parsed.relevanceEntity,
+          senderMatch: null,
+          bypassReason: null,
+        } as any,
+        lastScanJobId: scanJobId ?? undefined,
       },
     });
 
     // Still log the extraction cost
-    const estimatedCost =
-      aiResult.inputTokens * GEMINI_INPUT_COST +
-      aiResult.outputTokens * GEMINI_OUTPUT_COST;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: email.id,
         scanJobId,
         model: GEMINI_MODEL,
         operation: "extraction",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
-    return { emailId: email.id, excluded: true, failed: false };
+    return { emailId: email.id, excluded: true };
   }
 
   // 4. Content-first entity routing
@@ -246,27 +282,38 @@ export async function extractEmail(
   // found in content, and only when the sender has exactly 1 associated primary.
 
   let senderEntityId: string | null = null;
+  let senderEntityType: "PRIMARY" | "SECONDARY" | null = null;
+  let senderPrimaryIds: string[] = [];
   let entityId: string | null = null;
   let routeMethod: string | null = null;
   let routeDetail: string | null = null;
 
-  // Resolve sender entity for senderEntityId (always, regardless of routing)
-  const entityMatch = resolveEntity(
-    gmailMessage.senderDisplayName,
-    gmailMessage.senderEmail,
-    entities,
-  );
-  if (entityMatch) {
+  // Resolve sender entity up-front. Used by Stage 4 (sender-based routing)
+  // and by Stage 3b (mid-scan PRIMARY creation trust gate, #76) to decide
+  // whether an ambiguous-sender email with a new primary in content should
+  // spawn the new entity.
+  if (senderEntityMatch) {
     const senderEntity = await prisma.entity.findFirst({
-      where: { schemaId, name: entityMatch.entityName, type: entityMatch.entityType, isActive: true },
-      select: { id: true },
+      where: {
+        schemaId,
+        name: senderEntityMatch.entityName,
+        type: senderEntityMatch.entityType,
+        isActive: true,
+      },
+      select: { id: true, type: true, associatedPrimaryIds: true },
     });
-    senderEntityId = senderEntity?.id ?? null;
+    if (senderEntity) {
+      senderEntityId = senderEntity.id;
+      senderEntityType = senderEntity.type as "PRIMARY" | "SECONDARY";
+      senderPrimaryIds = Array.isArray(senderEntity.associatedPrimaryIds)
+        ? (senderEntity.associatedPrimaryIds as string[])
+        : [];
+    }
   }
 
   // Stage 1: Gemini's relevanceEntity — AI reads the email and names the WHAT
   if (parsed.relevanceEntity) {
-    const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.80);
+    const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.8);
     if (relevanceMatch) {
       const matchedEntity = await prisma.entity.findFirst({
         where: { schemaId, name: relevanceMatch.entityName, isActive: true },
@@ -330,11 +377,16 @@ export async function extractEmail(
   // Stage 3: Gemini's detectedEntities — fallback to detected entity list
   if (!entityId && parsed.detectedEntities.length > 0) {
     for (const detected of parsed.detectedEntities) {
-      const detectedMatch = resolveEntity(detected.name, "", entities, 0.80);
+      const detectedMatch = resolveEntity(detected.name, "", entities, 0.8);
       if (!detectedMatch) continue;
 
       const matchedEntity = await prisma.entity.findFirst({
-        where: { schemaId, name: detectedMatch.entityName, type: detectedMatch.entityType, isActive: true },
+        where: {
+          schemaId,
+          name: detectedMatch.entityName,
+          type: detectedMatch.entityType,
+          isActive: true,
+        },
         select: { id: true, type: true, associatedPrimaryIds: true },
       });
       if (!matchedEntity) continue;
@@ -358,34 +410,108 @@ export async function extractEmail(
     }
   }
 
-  // Stage 4: Sender match (last resort) — only when no WHAT found in content
-  if (!entityId && entityMatch) {
-    const senderEntity = await prisma.entity.findFirst({
-      where: { schemaId, name: entityMatch.entityName, type: entityMatch.entityType, isActive: true },
-      select: { id: true, type: true, associatedPrimaryIds: true },
-    });
+  // Stage 3b: Mid-scan PRIMARY creation (#76). When Gemini detects a
+  // PRIMARY-type entity that doesn't match any existing row, upsert it as
+  // a new Entity so the email routes into a real case instead of falling
+  // to NO_ENTITY. Guarded by a trust gate to avoid entity explosion on
+  // noisy content.
+  //
+  // Trust gate (need at least ONE signal to create):
+  //   - sender is a confirmed SECONDARY with >= 2 associated primaries —
+  //     those are exactly the emails that would otherwise drop with
+  //     "sender ambiguous, skipping" in Stage 4
+  //   - subject literally contains the detected entity name — very high
+  //     precision (e.g. "1906 Crockett Street-Tiles")
+  //   - Gemini confidence >= 0.7 — lower precision but still useful
+  if (!entityId && parsed.detectedEntities.length > 0) {
+    const senderAmbiguous = senderEntityType === "SECONDARY" && senderPrimaryIds.length >= 2;
+    const subjectLC = gmailMessage.subject.toLowerCase();
 
-    if (senderEntity) {
-      if (senderEntity.type === "PRIMARY") {
-        entityId = senderEntity.id;
+    for (const detected of parsed.detectedEntities) {
+      if (detected.type !== "PRIMARY") continue;
+
+      // Dedup: if resolveEntity finds a close match at the stricter 0.85
+      // threshold, treat it as existing (Stage 3 above already tried 0.8).
+      const nearMatch = resolveEntity(detected.name, "", entities, 0.85);
+      if (nearMatch) continue;
+
+      // Exact-name and alias guard — resolveEntity uses Jaro-Winkler which
+      // can miss obvious duplicates with whitespace or case differences.
+      const nameLC = detected.name.toLowerCase().trim();
+      if (!nameLC) continue;
+      const alreadyKnown = entities.some(
+        (e) =>
+          e.name.toLowerCase() === nameLC ||
+          e.aliases.some((a) => a.toLowerCase() === nameLC),
+      );
+      if (alreadyKnown) continue;
+
+      const subjectContainsName = subjectLC.includes(nameLC);
+      const confidenceHigh = detected.confidence >= 0.7;
+      if (!senderAmbiguous && !subjectContainsName && !confidenceHigh) continue;
+
+      const trustSignal = subjectContainsName
+        ? "subject-contains-name"
+        : confidenceHigh
+          ? "confidence>=0.7"
+          : "sender-ambiguous";
+
+      // Upsert is idempotent under @@unique([schemaId, name, type]) so
+      // extraction retries and parallel batches don't create duplicates.
+      const newEntity = await prisma.entity.upsert({
+        where: {
+          schemaId_name_type: { schemaId, name: detected.name, type: "PRIMARY" },
+        },
+        create: {
+          schemaId,
+          name: detected.name,
+          type: "PRIMARY",
+          secondaryTypeName: null,
+          aliases: [],
+          autoDetected: true,
+          confidence: detected.confidence,
+          isActive: true,
+        },
+        update: {},
+        select: { id: true },
+      });
+
+      entityId = newEntity.id;
+      routeMethod = "detected-created";
+      routeDetail = `detectedEntity "${detected.name}" (PRIMARY) auto-created (trust: ${trustSignal}, confidence=${detected.confidence})`;
+
+      logger.info({
+        service: "extraction",
+        operation: "stage3b.primaryCreated",
+        schemaId,
+        gmailMessageId: gmailMessage.id,
+        entityName: detected.name,
+        confidence: detected.confidence,
+        trustSignal,
+      });
+      break;
+    }
+  }
+
+  // Stage 4: Sender match (last resort) — only when no WHAT found in content
+  if (!entityId && senderEntityMatch && senderEntityId) {
+    if (senderEntityType === "PRIMARY") {
+      entityId = senderEntityId;
+      routeMethod = "sender";
+      routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${senderEntityMatch.entityName}"`;
+    } else {
+      if (senderPrimaryIds.length === 1) {
+        entityId = senderPrimaryIds[0];
         routeMethod = "sender";
-        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched PRIMARY "${entityMatch.entityName}"`;
-      } else {
-        const primaryIds = Array.isArray(senderEntity.associatedPrimaryIds)
-          ? (senderEntity.associatedPrimaryIds as string[])
-          : [];
-        if (primaryIds.length === 1) {
-          // 1:1 pairing (e.g., Ziad→Soccer) — safe to use
-          entityId = primaryIds[0];
-          routeMethod = "sender";
-          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" → single primary`;
-        } else if (primaryIds.length > 1) {
-          // Multiple associated primaries — ambiguous, leave null
-          routeMethod = null;
-          routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${entityMatch.entityName}" but has ${primaryIds.length} associated primaries — ambiguous, skipping`;
-        }
-        // primaryIds.length === 0 → shared WHO, leave entityId null
+        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" → single primary`;
+      } else if (senderPrimaryIds.length > 1) {
+        // Multiple associated primaries — ambiguous, leave null.
+        // Stage 3b above has already run and either spawned a new PRIMARY
+        // or confirmed no trust signal; this is the terminal sender path.
+        routeMethod = null;
+        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" but has ${senderPrimaryIds.length} associated primaries — ambiguous, skipping`;
       }
+      // senderPrimaryIds.length === 0 → shared WHO, leave entityId null
     }
   }
 
@@ -396,7 +522,7 @@ export async function extractEmail(
     relevanceScore: parsed.relevanceScore,
     relevanceEntity: parsed.relevanceEntity,
     detectedEntities: parsed.detectedEntities.map((d) => d.name),
-    senderMatch: entityMatch ? entityMatch.entityName : null,
+    senderMatch: senderEntityMatch ? senderEntityMatch.entityName : null,
   };
 
   // 5. Check if email already exists (to decide whether to increment counts)
@@ -437,6 +563,8 @@ export async function extractEmail(
         senderEntityId,
         entityId,
         routingDecision: routingDecision as any,
+        firstScanJobId: scanJobId ?? null,
+        lastScanJobId: scanJobId ?? null,
       },
       update: {
         summary: parsed.summary,
@@ -445,12 +573,17 @@ export async function extractEmail(
         detectedEntities: parsed.detectedEntities as any,
         isInternal: parsed.isInternal,
         language: parsed.language,
+        isExcluded: false,
+        excludeReason: null,
         bodyLength: gmailMessage.body.length,
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
         entityId,
         routingDecision: routingDecision as any,
         reprocessedAt: new Date(),
+        // Advance lastScanJobId to the current scan; firstScanJobId stays as-is
+        // so scan-metrics can attribute emails to the scan that first ingested them.
+        lastScanJobId: scanJobId ?? undefined,
       },
     });
 
@@ -468,11 +601,8 @@ export async function extractEmail(
         });
       }
 
-      // Increment CaseSchema.emailCount
-      await tx.caseSchema.update({
-        where: { id: schemaId },
-        data: { emailCount: { increment: 1 } },
-      });
+      // CaseSchema.emailCount is computed on demand by computeSchemaMetrics
+      // (no denormalized counter to increment).
 
       // Increment Entity.emailCount for sender entity
       if (senderEntityId) {
@@ -495,24 +625,21 @@ export async function extractEmail(
   });
 
   // 7. Write ExtractionCost row (outside transaction — non-critical)
-  const estimatedCost =
-    aiResult.inputTokens * GEMINI_INPUT_COST +
-    aiResult.outputTokens * GEMINI_OUTPUT_COST;
-
-  await prisma.extractionCost.create({
-    data: {
+  await logAICost(
+    {
+      inputTokens: aiResult.inputTokens,
+      outputTokens: aiResult.outputTokens,
+      latencyMs: aiResult.latencyMs,
+    },
+    {
       emailId: email.id,
       scanJobId,
       model: GEMINI_MODEL,
       operation: "extraction",
-      inputTokens: aiResult.inputTokens,
-      outputTokens: aiResult.outputTokens,
-      estimatedCostUsd: estimatedCost,
-      latencyMs: aiResult.latencyMs,
     },
-  });
+  );
 
-  return { emailId: email.id, excluded: false, failed: false };
+  return { emailId: email.id, excluded: false };
 }
 
 /**
@@ -526,11 +653,14 @@ export async function processEmailBatch(
   entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[] }[],
   exclusionRules: { ruleType: string; pattern: string; isActive: boolean }[],
   options: ExtractEmailOptions,
+  /** Optional pre-built client (e.g., FixtureGmailClient for eval). */
+  injectedClient?: {
+    getEmailFullWithPacing(id: string, delayMs?: number): Promise<GmailMessageFull>;
+  },
 ): Promise<ProcessBatchResult> {
-  const gmailClient = new GmailClient(accessToken);
+  const gmailClient = injectedClient ?? new GmailClient(accessToken);
   let processed = 0;
   let excluded = 0;
-  let failed = 0;
 
   // Pre-check which emails already exist to skip re-extraction
   const existingEmails = await prisma.email.findMany({
@@ -567,16 +697,44 @@ export async function processEmailBatch(
         processed++;
       }
     } catch (error) {
-      failed++;
+      // Record the per-email failure as a ScanFailure row so
+      // computeScanMetrics can derive failedEmails on demand. Idempotent
+      // via the (scanJobId, gmailMessageId) unique index — a retry of the
+      // same batch just bumps attemptCount and refreshes errorMessage.
+      if (options.scanJobId) {
+        await prisma.scanFailure.upsert({
+          where: {
+            scanJobId_gmailMessageId: {
+              scanJobId: options.scanJobId,
+              gmailMessageId: messageId,
+            },
+          },
+          create: {
+            scanJobId: options.scanJobId,
+            schemaId: options.schemaId,
+            gmailMessageId: messageId,
+            phase: "EXTRACTING",
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? (error.stack ?? null) : null,
+          },
+          update: {
+            attemptCount: { increment: 1 },
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? (error.stack ?? null) : null,
+          },
+        });
+      }
+
       logger.error({
         service: "extraction",
         operation: "extractEmail.error",
         schemaId: options.schemaId,
+        scanJobId: options.scanJobId,
         error,
         messageId,
       });
     }
   }
 
-  return { processed, excluded, failed };
+  return { processed, excluded };
 }

@@ -47,6 +47,35 @@ export function subjectScore(
   return config.subjectMatchScore * similarity;
 }
 
+/**
+ * Tag match: Jaccard similarity of tag sets × config score.
+ * If email has [Practice, Schedule] and case has [Practice, Schedule, Action Required],
+ * Jaccard = |intersection| / |union| = 2/3 ≈ 0.67 → 0.67 × tagMatchScore.
+ * Returns 0 if either set is empty.
+ */
+export function tagScore(
+  emailTags: string[],
+  caseTags: string[],
+  config: ClusteringConfig,
+): number {
+  if (emailTags.length === 0 || caseTags.length === 0) return 0;
+
+  const emailSet = new Set(emailTags);
+  const caseSet = new Set(caseTags);
+
+  let intersection = 0;
+  for (const tag of emailSet) {
+    if (caseSet.has(tag)) intersection++;
+  }
+
+  if (intersection === 0) return 0;
+
+  const union = new Set([...emailSet, ...caseSet]).size;
+  const jaccard = intersection / union;
+
+  return config.tagMatchScore * jaccard;
+}
+
 /** Actor affinity: if email sender is among case's known senders. */
 export function actorScore(
   emailSenderEntityId: string | null,

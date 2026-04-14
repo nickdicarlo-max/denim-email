@@ -1,0 +1,42 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - heading "Settings" [level=1] [ref=e4]
+      - generic [ref=e5]:
+        - link "list_alt My Topics Manage what Denim tracks chevron_right" [ref=e6] [cursor=pointer]:
+          - /url: /settings/topics
+          - generic [ref=e7]: list_alt
+          - generic [ref=e8]:
+            - heading "My Topics" [level=3] [ref=e9]
+            - paragraph [ref=e10]: Manage what Denim tracks
+          - generic [ref=e11]: chevron_right
+        - link "add_circle Add a Topic Set up a new category chevron_right" [ref=e12] [cursor=pointer]:
+          - /url: /onboarding/category
+          - generic [ref=e13]: add_circle
+          - generic [ref=e14]:
+            - heading "Add a Topic" [level=3] [ref=e15]
+            - paragraph [ref=e16]: Set up a new category
+          - generic [ref=e17]: chevron_right
+        - link "person Account Email, sign out chevron_right" [ref=e18] [cursor=pointer]:
+          - /url: "#account"
+          - generic [ref=e19]: person
+          - generic [ref=e20]:
+            - heading "Account" [level=3] [ref=e21]
+            - paragraph [ref=e22]: Email, sign out
+          - generic [ref=e23]: chevron_right
+    - navigation [ref=e24]:
+      - generic [ref=e25]:
+        - link "dynamic_feed Feed" [ref=e26] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e27]: dynamic_feed
+          - generic [ref=e28]: Feed
+        - button "add_circle Note" [ref=e29] [cursor=pointer]:
+          - generic [ref=e30]: add_circle
+          - generic [ref=e31]: Note
+        - link "settings Settings" [ref=e32] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e33]: settings
+          - generic [ref=e34]: Settings
+  - button "Open Next.js Dev Tools" [ref=e40] [cursor=pointer]:
+    - img [ref=e41]
+  - alert [ref=e44]

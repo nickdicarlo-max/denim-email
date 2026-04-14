@@ -1,12 +1,12 @@
-import { withAuth } from "@/lib/middleware/auth";
-import { prisma } from "@/lib/prisma";
-import { inngest } from "@/lib/inngest/client";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { GmailClient } from "@/lib/gmail/client";
-import { runSmartDiscovery } from "@/lib/services/discovery";
-import { logger } from "@/lib/logger";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { GmailClient } from "@/lib/gmail/client";
+import { inngest } from "@/lib/inngest/client";
+import { logger } from "@/lib/logger";
+import { withAuth } from "@/lib/middleware/auth";
+import { prisma } from "@/lib/prisma";
+import { runSmartDiscovery } from "@/lib/services/discovery";
+import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 
 const TriggerSchema = z.object({
   schemaId: z.string().min(1),
@@ -95,7 +95,7 @@ export const POST = withAuth(async ({ userId, request }) => {
       status: "PENDING",
       phase: "DISCOVERING",
       totalEmails: emailIds.length,
-      triggeredBy: "manual",
+      triggeredBy: "MANUAL",
       statusMessage: `Found ${emailIds.length} emails`,
     },
   });

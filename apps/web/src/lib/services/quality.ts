@@ -1,4 +1,5 @@
 import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
 
 interface QualityResult {
@@ -31,12 +32,25 @@ const STABLE_CONSECUTIVE_DAYS = 7;
 /**
  * Compute and persist a quality snapshot for a schema.
  */
-export async function computeSnapshot(
-  schemaId: string,
-  date: Date,
-): Promise<QualityResult> {
-  const start = Date.now();
+export async function computeSnapshot(schemaId: string, date: Date): Promise<QualityResult> {
+  return withLogging<QualityResult>(
+    {
+      service: "quality",
+      operation: "computeSnapshot",
+      context: { schemaId },
+    },
+    () => computeSnapshotImpl(schemaId, date),
+    (result) => ({
+      accuracy: result.accuracy,
+      totalSignals: result.totalSignals,
+      corrections: result.corrections,
+      casesViewed: result.casesViewed,
+      phase: result.phase,
+    }),
+  );
+}
 
+async function computeSnapshotImpl(schemaId: string, date: Date): Promise<QualityResult> {
   // 30-day rolling window
   const windowStart = new Date(date);
   windowStart.setDate(windowStart.getDate() - 30);
@@ -59,10 +73,7 @@ export async function computeSnapshot(
   }
 
   // Count corrections
-  const corrections = CORRECTION_TYPES.reduce(
-    (sum, type) => sum + (eventCounts[type] ?? 0),
-    0,
-  );
+  const corrections = CORRECTION_TYPES.reduce((sum, type) => sum + (eventCounts[type] ?? 0), 0);
 
   // Count distinct cases viewed (any feedback event with a caseId)
   const casesViewedResult = await prisma.feedbackEvent.findMany({
@@ -84,12 +95,19 @@ export async function computeSnapshot(
     where: { id: schemaId },
     select: { qualityPhase: true },
   });
-  const currentPhase = (schema?.qualityPhase ?? "CALIBRATING") as "CALIBRATING" | "TRACKING" | "STABLE";
+  const currentPhase = (schema?.qualityPhase ?? "CALIBRATING") as
+    | "CALIBRATING"
+    | "TRACKING"
+    | "STABLE";
   let newPhase: "CALIBRATING" | "TRACKING" | "STABLE" = currentPhase;
 
   if (currentPhase === "CALIBRATING" && totalSignals >= CALIBRATION_THRESHOLD) {
     newPhase = "TRACKING";
-  } else if (currentPhase === "TRACKING" && accuracy !== null && accuracy >= STABLE_ACCURACY_THRESHOLD) {
+  } else if (
+    currentPhase === "TRACKING" &&
+    accuracy !== null &&
+    accuracy >= STABLE_ACCURACY_THRESHOLD
+  ) {
     // Check consecutive days at >= 95%
     const recentSnapshots = await prisma.qualitySnapshot.findMany({
       where: { schemaId },
@@ -97,7 +115,8 @@ export async function computeSnapshot(
       take: STABLE_CONSECUTIVE_DAYS - 1,
       select: { accuracy: true },
     });
-    const allHighAccuracy = recentSnapshots.length >= STABLE_CONSECUTIVE_DAYS - 1 &&
+    const allHighAccuracy =
+      recentSnapshots.length >= STABLE_CONSECUTIVE_DAYS - 1 &&
       recentSnapshots.every((s) => s.accuracy !== null && s.accuracy >= STABLE_ACCURACY_THRESHOLD);
     if (allHighAccuracy) {
       newPhase = "STABLE";
@@ -140,28 +159,13 @@ export async function computeSnapshot(
     });
   }
 
-  const durationMs = Date.now() - start;
-  logger.info({
-    service: "quality",
-    operation: "computeSnapshot",
-    schemaId,
-    durationMs,
-    accuracy,
-    totalSignals,
-    corrections,
-    casesViewed,
-    phase: newPhase,
-  });
-
   return { accuracy, phase: newPhase, totalSignals, corrections, casesViewed };
 }
 
 /**
  * Get current accuracy and phase for a schema.
  */
-export async function getCurrentAccuracy(
-  schemaId: string,
-): Promise<QualityResult> {
+export async function getCurrentAccuracy(schemaId: string): Promise<QualityResult> {
   const latest = await prisma.qualitySnapshot.findFirst({
     where: { schemaId },
     orderBy: { date: "desc" },
@@ -176,8 +180,11 @@ export async function getCurrentAccuracy(
     accuracy: latest?.accuracy ?? null,
     phase: schema?.qualityPhase ?? "CALIBRATING",
     totalSignals: latest?.totalSignals ?? 0,
-    corrections: (latest?.thumbsDown ?? 0) + (latest?.emailMoves ?? 0) +
-      (latest?.caseMerges ?? 0) + (latest?.caseSplits ?? 0),
+    corrections:
+      (latest?.thumbsDown ?? 0) +
+      (latest?.emailMoves ?? 0) +
+      (latest?.caseMerges ?? 0) +
+      (latest?.caseSplits ?? 0),
     casesViewed: latest?.casesViewed ?? 0,
   };
 }

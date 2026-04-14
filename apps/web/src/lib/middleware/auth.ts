@@ -1,7 +1,8 @@
-import { logger } from "@/lib/logger";
 import { AuthError } from "@denim/types";
 import { createClient } from "@supabase/supabase-js";
 import { type NextRequest, NextResponse } from "next/server";
+import { logger } from "@/lib/logger";
+import { ensureUserRow } from "@/lib/services/user";
 
 interface AuthenticatedContext {
   userId: string;
@@ -71,6 +72,23 @@ export function withAuth(handler: AuthenticatedHandler) {
         { status: 401 },
       );
     }
+
+    // Ensure the user row exists in public.users (Supabase auth.users
+    // is created by OAuth, but the app-level row must also exist for FK
+    // constraints on CaseSchema, etc.).
+    // Upsert by email first (handles re-auth where Supabase assigns a new
+    // user ID for the same Google account after token revocation). Falls back
+    // to id-based upsert if no email is available.
+    const email = user.email ?? "";
+    const displayName = user.user_metadata?.full_name ?? user.user_metadata?.name ?? null;
+    const avatarUrl = user.user_metadata?.avatar_url ?? null;
+
+    await ensureUserRow({
+      userId: user.id,
+      email,
+      displayName,
+      avatarUrl,
+    });
 
     const response = await handler({ userId: user.id, request });
     logger.info({

@@ -14,14 +14,14 @@
  *
  * Run: pnpm --filter web test:integration
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { prisma } from "@/lib/prisma";
-import { createTestUser, cleanupTestUser, type TestUser } from "../helpers/test-user";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { GmailClient } from "@/lib/gmail/client";
+import { prisma } from "@/lib/prisma";
+import { clusterNewEmails } from "@/lib/services/cluster";
 import { runDiscoveryQueries } from "@/lib/services/discovery";
 import { processEmailBatch } from "@/lib/services/extraction";
-import { clusterNewEmails } from "@/lib/services/cluster";
 import { synthesizeCase } from "@/lib/services/synthesis";
+import { cleanupTestUser, createTestUser, type TestUser } from "../helpers/test-user";
 
 const HAS_GMAIL_TOKEN = Boolean(process.env.GMAIL_TEST_REFRESH_TOKEN);
 
@@ -78,9 +78,7 @@ async function createGenericTestSchema(userId: string) {
         internalDomains: [],
       },
       secondaryEntityConfig: [],
-      discoveryQueries: [
-        { query: "newer_than:7d", label: "Recent emails" },
-      ],
+      discoveryQueries: [{ query: "newer_than:7d", label: "Recent emails" }],
       summaryLabels: {
         beginning: "Context",
         middle: "Details",
@@ -95,6 +93,7 @@ async function createGenericTestSchema(userId: string) {
         threadMatchScore: 100,
         subjectMatchScore: 20,
         actorAffinityScore: 10,
+        tagMatchScore: 15,
         timeDecayDays: { fresh: 45 },
         reminderCollapseEnabled: true,
         reminderSubjectSimilarity: 0.85,
@@ -166,162 +165,150 @@ describe.skipIf(!HAS_GMAIL_TOKEN)(
       await prisma.$disconnect();
     }, 30_000);
 
-    it(
-      "runs the full pipeline with real Gmail data",
-      async () => {
-        // --- Step 1: Discovery ---
-        const gmailClient = new GmailClient(accessToken);
+    it("runs the full pipeline with real Gmail data", async () => {
+      // --- Step 1: Discovery ---
+      const gmailClient = new GmailClient(accessToken);
 
-        const schema = await prisma.caseSchema.findUniqueOrThrow({
-          where: { id: schemaId },
-          select: { discoveryQueries: true },
-        });
+      const schema = await prisma.caseSchema.findUniqueOrThrow({
+        where: { id: schemaId },
+        select: { discoveryQueries: true },
+      });
 
-        const queries = schema.discoveryQueries as Array<{
-          query: string;
-          label: string;
-        }>;
+      const queries = schema.discoveryQueries as Array<{
+        query: string;
+        label: string;
+      }>;
 
-        const discovery = await runDiscoveryQueries(gmailClient, queries, {
-          maxEmails: 5,
-        });
+      const discovery = await runDiscoveryQueries(gmailClient, queries, {
+        maxEmails: 5,
+      });
 
-        expect(discovery.emailIds.length).toBeGreaterThan(0);
-        console.log(
-          `Discovery: found ${discovery.emailIds.length} email IDs`,
-        );
+      expect(discovery.emailIds.length).toBeGreaterThan(0);
+      console.log(`Discovery: found ${discovery.emailIds.length} email IDs`);
 
-        // --- Step 2: Extraction (live Gmail fetch + live Gemini) ---
-        const schemaWithRelations = await prisma.caseSchema.findUniqueOrThrow({
-          where: { id: schemaId },
-          include: {
-            tags: {
-              where: { isActive: true },
-              select: { name: true, description: true, isActive: true },
-            },
-            entities: {
-              where: { isActive: true },
-              select: {
-                name: true,
-                type: true,
-                aliases: true,
-                isActive: true,
-                autoDetected: true,
-              },
-            },
-            extractedFields: {
-              select: {
-                name: true,
-                type: true,
-                description: true,
-                source: true,
-              },
-            },
-            exclusionRules: {
-              where: { isActive: true },
-              select: { ruleType: true, pattern: true, isActive: true },
+      // --- Step 2: Extraction (live Gmail fetch + live Gemini) ---
+      const schemaWithRelations = await prisma.caseSchema.findUniqueOrThrow({
+        where: { id: schemaId },
+        include: {
+          tags: {
+            where: { isActive: true },
+            select: { name: true, description: true, isActive: true },
+          },
+          entities: {
+            where: { isActive: true },
+            select: {
+              name: true,
+              type: true,
+              aliases: true,
+              isActive: true,
+              autoDetected: true,
             },
           },
-        });
+          extractedFields: {
+            select: {
+              name: true,
+              type: true,
+              description: true,
+              source: true,
+            },
+          },
+          exclusionRules: {
+            where: { isActive: true },
+            select: { ruleType: true, pattern: true, isActive: true },
+          },
+        },
+      });
 
-        const schemaContext = {
-          domain: schemaWithRelations.domain ?? "general",
-          tags: schemaWithRelations.tags.map((t) => ({
-            name: t.name,
-            description: t.description ?? "",
-          })),
-          entities: schemaWithRelations.entities.map((e) => ({
-            name: e.name,
-            type: e.type as "PRIMARY" | "SECONDARY",
-            aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-            isUserInput: !e.autoDetected,
-          })),
-          extractedFields: schemaWithRelations.extractedFields.map((f) => ({
-            name: f.name,
-            type: f.type,
-            description: f.description,
-            source: f.source,
-          })),
-          exclusionPatterns: schemaWithRelations.exclusionRules.map(
-            (r) => r.pattern,
-          ),
-        };
-
-        const entities = schemaWithRelations.entities.map((e) => ({
+      const schemaContext = {
+        domain: schemaWithRelations.domain ?? "general",
+        tags: schemaWithRelations.tags.map((t) => ({
+          name: t.name,
+          description: t.description ?? "",
+        })),
+        entities: schemaWithRelations.entities.map((e) => ({
           name: e.name,
           type: e.type as "PRIMARY" | "SECONDARY",
           aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-        }));
+          isUserInput: !e.autoDetected,
+        })),
+        extractedFields: schemaWithRelations.extractedFields.map((f) => ({
+          name: f.name,
+          type: f.type,
+          description: f.description,
+          source: f.source,
+        })),
+        exclusionPatterns: schemaWithRelations.exclusionRules.map((r) => r.pattern),
+      };
 
-        const exclusionRules = schemaWithRelations.exclusionRules.map((r) => ({
-          ruleType: r.ruleType,
-          pattern: r.pattern,
-          isActive: r.isActive,
-        }));
+      const entities = schemaWithRelations.entities.map((e) => ({
+        name: e.name,
+        type: e.type as "PRIMARY" | "SECONDARY",
+        aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+      }));
 
-        const batchResult = await processEmailBatch(
-          discovery.emailIds,
-          accessToken,
-          schemaContext,
-          entities,
-          exclusionRules,
-          { schemaId, userId: testUser.userId },
-        );
+      const exclusionRules = schemaWithRelations.exclusionRules.map((r) => ({
+        ruleType: r.ruleType,
+        pattern: r.pattern,
+        isActive: r.isActive,
+      }));
 
-        expect(batchResult.processed + batchResult.excluded).toBeGreaterThan(0);
-        console.log(
-          `Extraction: processed=${batchResult.processed}, excluded=${batchResult.excluded}, failed=${batchResult.failed}`,
-        );
+      const batchResult = await processEmailBatch(
+        discovery.emailIds,
+        accessToken,
+        schemaContext,
+        entities,
+        exclusionRules,
+        { schemaId, userId: testUser.userId },
+      );
 
-        // --- Step 3: Clustering ---
-        const clusterResult = await clusterNewEmails(schemaId);
+      expect(batchResult.processed + batchResult.excluded).toBeGreaterThan(0);
+      console.log(
+        `Extraction: processed=${batchResult.processed}, excluded=${batchResult.excluded}`,
+      );
 
-        expect(
-          clusterResult.casesCreated + clusterResult.casesMerged,
-        ).toBeGreaterThan(0);
-        console.log(
-          `Clustering: created=${clusterResult.casesCreated}, merged=${clusterResult.casesMerged}`,
-        );
+      // --- Step 3: Clustering ---
+      const clusterResult = await clusterNewEmails(schemaId);
 
-        // --- Step 4: Synthesis (live Claude) ---
-        const cases = await prisma.case.findMany({
-          where: { schemaId },
-          select: { id: true },
-        });
+      expect(clusterResult.casesCreated + clusterResult.casesMerged).toBeGreaterThan(0);
+      console.log(
+        `Clustering: created=${clusterResult.casesCreated}, merged=${clusterResult.casesMerged}`,
+      );
 
-        expect(cases.length).toBeGreaterThan(0);
+      // --- Step 4: Synthesis (live Claude) ---
+      const cases = await prisma.case.findMany({
+        where: { schemaId },
+        select: { id: true },
+      });
 
-        for (const c of cases) {
-          await synthesizeCase(c.id, schemaId);
-        }
+      expect(cases.length).toBeGreaterThan(0);
 
-        // --- Verify final state ---
-        const emails = await prisma.email.findMany({
-          where: { schemaId, isExcluded: false },
-          select: { id: true, summary: true },
-        });
+      for (const c of cases) {
+        await synthesizeCase(c.id, schemaId);
+      }
 
-        expect(emails.length).toBeGreaterThan(0);
-        for (const email of emails) {
-          expect(email.summary).toBeTruthy();
-        }
+      // --- Verify final state ---
+      const emails = await prisma.email.findMany({
+        where: { schemaId, isExcluded: false },
+        select: { id: true, summary: true },
+      });
 
-        const synthesizedCases = await prisma.case.findMany({
-          where: { schemaId },
-          select: { id: true, title: true, synthesizedAt: true },
-        });
+      expect(emails.length).toBeGreaterThan(0);
+      for (const email of emails) {
+        expect(email.summary).toBeTruthy();
+      }
 
-        expect(synthesizedCases.length).toBeGreaterThan(0);
-        for (const c of synthesizedCases) {
-          expect(c.title).toBeTruthy();
-          expect(c.synthesizedAt).toBeTruthy();
-        }
+      const synthesizedCases = await prisma.case.findMany({
+        where: { schemaId },
+        select: { id: true, title: true, synthesizedAt: true },
+      });
 
-        console.log(
-          `Pipeline complete: ${emails.length} emails → ${synthesizedCases.length} cases`,
-        );
-      },
-      600_000,
-    );
+      expect(synthesizedCases.length).toBeGreaterThan(0);
+      for (const c of synthesizedCases) {
+        expect(c.title).toBeTruthy();
+        expect(c.synthesizedAt).toBeTruthy();
+      }
+
+      console.log(`Pipeline complete: ${emails.length} emails → ${synthesizedCases.length} cases`);
+    }, 600_000);
   },
 );

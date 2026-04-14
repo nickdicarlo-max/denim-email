@@ -16,7 +16,9 @@ const clusterGroupSchema = z.object({
 
 const configOverridesSchema = z.object({
   mergeThreshold: z.number().nullable(),
-  senderAffinityWeight: z.number().nullable(),
+  subjectMatchScore: z.number().nullable(),
+  actorAffinityScore: z.number().nullable(),
+  timeDecayFreshDays: z.number().nullable(),
   reasoning: z.string(),
 });
 

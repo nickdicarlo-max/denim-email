@@ -9,10 +9,5 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "isolatedModules": true
-  },
-  "references": [
-    { "path": "packages/types" },
-    { "path": "packages/engine" },
-    { "path": "packages/ai" }
-  ]
+  }
 }

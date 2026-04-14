@@ -35,7 +35,7 @@ const extractedFieldSchema = z.object({
   type: z.enum(["NUMBER", "STRING", "DATE", "BOOLEAN"]),
   description: z.string(),
   source: z.enum(["BODY", "ATTACHMENT", "ANY"]),
-  format: z.string(),
+  format: z.string().nullable().default(""),
   showOnCard: z.boolean(),
   aggregation: z.enum(["SUM", "LATEST", "MAX", "MIN", "COUNT", "FIRST"]),
 });
@@ -45,6 +45,7 @@ const clusteringConfigSchema = z.object({
   threadMatchScore: z.number(),
   subjectMatchScore: z.number(),
   actorAffinityScore: z.number(),
+  tagMatchScore: z.number().default(15),
   timeDecayDays: z.object({
     fresh: z.number(),
   }),

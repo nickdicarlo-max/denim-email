@@ -13,26 +13,26 @@
  * Phase E: Targeted fetch with merged queries
  */
 
-import { GmailClient } from "@/lib/gmail/client";
-import { callClaude } from "@/lib/ai/client";
+import type { BodySample, SenderPattern, SocialCluster } from "@denim/ai";
 import { buildDiscoveryIntelligencePrompt, parseDiscoveryIntelligenceResponse } from "@denim/ai";
-import type { SenderPattern, SocialCluster, BodySample } from "@denim/ai";
 import type { EntityGroupInput } from "@denim/types";
-import { prisma } from "@/lib/prisma";
+import { callClaude } from "@/lib/ai/client";
+import { logAICost } from "@/lib/ai/cost-tracker";
+import type { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
+
 /** Strip markdown code fences from AI response. */
 function stripCodeFences(raw: string): string {
-  return raw.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+  return raw
+    .replace(/^```(?:json)?\s*\n?/i, "")
+    .replace(/\n?```\s*$/i, "")
+    .trim();
 }
 
-const MAX_DISCOVERY_EMAILS = 200;
-const DISCOVERY_LOOKBACK = "56d";
 const BROAD_SCAN_LIMIT = 200;
 const BODY_SAMPLE_COUNT = 3;
-
-// Claude Sonnet pricing (per 1M tokens): $3 input, $15 output
-const CLAUDE_INPUT_COST_PER_TOKEN = 3 / 1_000_000;
-const CLAUDE_OUTPUT_COST_PER_TOKEN = 15 / 1_000_000;
 
 interface DiscoveryQuery {
   query: string;
@@ -61,8 +61,8 @@ export async function runDiscoveryQueries(
   queries: DiscoveryQuery[],
   options?: { maxEmails?: number; lookback?: string },
 ): Promise<DiscoveryResult> {
-  const maxEmails = options?.maxEmails ?? MAX_DISCOVERY_EMAILS;
-  const lookback = options?.lookback ?? DISCOVERY_LOOKBACK;
+  const maxEmails = options?.maxEmails ?? ONBOARDING_TUNABLES.discovery.maxTotalEmails;
+  const lookback = options?.lookback ?? ONBOARDING_TUNABLES.discovery.lookback;
   const allMessageIds = new Set<string>();
   let queriesRun = 0;
   let queriesSkipped = 0;
@@ -123,10 +123,7 @@ export async function broadInboxScan(
   }>;
 }> {
   // searchEmails returns GmailMessageMeta which includes all the fields we need
-  const messages = await gmailClient.searchEmails(
-    `newer_than:${DISCOVERY_LOOKBACK}`,
-    limit,
-  );
+  const messages = await gmailClient.searchEmails(`newer_than:${ONBOARDING_TUNABLES.discovery.lookback}`, limit);
 
   const metadata = messages.map((msg) => ({
     id: msg.id,
@@ -155,8 +152,7 @@ export async function broadInboxScan(
   }
 
   // Sort by count descending
-  const senderPatterns = Array.from(senderCounts.values())
-    .sort((a, b) => b.count - a.count);
+  const senderPatterns = Array.from(senderCounts.values()).sort((a, b) => b.count - a.count);
 
   logger.info({
     service: "discovery",
@@ -186,12 +182,17 @@ export function buildSocialGraph(
   // Find senders that match known entity names
   const entitySenders = metadata.filter((m) => {
     const nameLower = m.senderDisplayName.toLowerCase();
-    return knownNamesLower.has(nameLower) ||
-      knownEntityNames.some((n) => nameLower.includes(n.toLowerCase()));
+    return (
+      knownNamesLower.has(nameLower) ||
+      knownEntityNames.some((n) => nameLower.includes(n.toLowerCase()))
+    );
   });
 
   // Group by sender and collect co-recipients
-  const senderMap = new Map<string, { entityName: string | null; recipients: Set<string>; domains: Set<string> }>();
+  const senderMap = new Map<
+    string,
+    { entityName: string | null; recipients: Set<string>; domains: Set<string> }
+  >();
 
   for (const m of entitySenders) {
     const key = m.senderEmail.toLowerCase();
@@ -203,8 +204,8 @@ export function buildSocialGraph(
         if (domain) existing.domains.add(domain);
       }
     } else {
-      const matchedEntity = knownEntityNames.find(
-        (n) => m.senderDisplayName.toLowerCase().includes(n.toLowerCase()),
+      const matchedEntity = knownEntityNames.find((n) =>
+        m.senderDisplayName.toLowerCase().includes(n.toLowerCase()),
       );
       senderMap.set(key, {
         entityName: matchedEntity ?? null,
@@ -239,7 +240,7 @@ export async function sampleBodies(
   for (const domain of unknownDomains.slice(0, 5)) {
     try {
       const messages = await gmailClient.searchEmails(
-        `from:${domain} newer_than:${DISCOVERY_LOOKBACK}`,
+        `from:${domain} newer_than:${ONBOARDING_TUNABLES.discovery.lookback}`,
         sampleSize,
       );
 
@@ -322,21 +323,19 @@ export async function generateSmartQueries(
     });
 
     // Log cost
-    const estimatedCost =
-      aiResult.inputTokens * CLAUDE_INPUT_COST_PER_TOKEN +
-      aiResult.outputTokens * CLAUDE_OUTPUT_COST_PER_TOKEN;
-    await prisma.extractionCost.create({
-      data: {
+    await logAICost(
+      {
+        inputTokens: aiResult.inputTokens,
+        outputTokens: aiResult.outputTokens,
+        latencyMs: aiResult.latencyMs,
+      },
+      {
         emailId: "discovery", // No specific email — use placeholder
         scanJobId,
         model: "claude-sonnet-4-6",
         operation: "discovery-intelligence",
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        estimatedCostUsd: estimatedCost,
-        latencyMs: aiResult.latencyMs,
       },
-    });
+    );
 
     logger.info({
       service: "discovery",
@@ -395,13 +394,27 @@ export async function runSmartDiscovery(
     );
     // Noise domains to skip
     const noiseDomains = new Set([
-      "gmail.com", "google.com", "googlemail.com", "yahoo.com", "hotmail.com",
-      "outlook.com", "github.com", "linkedin.com", "facebook.com", "twitter.com",
-      "noreply.com", "notification.com",
+      "gmail.com",
+      "google.com",
+      "googlemail.com",
+      "yahoo.com",
+      "hotmail.com",
+      "outlook.com",
+      "github.com",
+      "linkedin.com",
+      "facebook.com",
+      "twitter.com",
+      "noreply.com",
+      "notification.com",
     ]);
 
     const unknownDomains = senderPatterns
-      .filter((s) => s.count >= 3 && !knownDomains.has(s.domain.toLowerCase()) && !noiseDomains.has(s.domain.toLowerCase()))
+      .filter(
+        (s) =>
+          s.count >= 3 &&
+          !knownDomains.has(s.domain.toLowerCase()) &&
+          !noiseDomains.has(s.domain.toLowerCase()),
+      )
       .map((s) => s.domain)
       .slice(0, 5);
 

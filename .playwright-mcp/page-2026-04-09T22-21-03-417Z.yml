@@ -1,0 +1,45 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]
+  - generic [ref=e53]:
+    - heading "What do you want to organize?" [level=1] [ref=e54]
+    - paragraph [ref=e55]: Pick one area. You'll add more topics later.
+    - generic [ref=e56]:
+      - button "child_care Parent / Family Schools, activities, sports teams" [ref=e57] [cursor=pointer]:
+        - generic [ref=e58]:
+          - generic [ref=e59]: child_care
+          - generic [ref=e60]:
+            - generic [ref=e61]: Parent / Family
+            - generic [ref=e62]: Schools, activities, sports teams
+      - button "home_work Property Manager Tenants, vendors, maintenance" [ref=e63] [cursor=pointer]:
+        - generic [ref=e64]:
+          - generic [ref=e65]: home_work
+          - generic [ref=e66]:
+            - generic [ref=e67]: Property Manager
+            - generic [ref=e68]: Tenants, vendors, maintenance
+      - button "construction Construction / Contractor Job sites, subs, permits" [ref=e69] [cursor=pointer]:
+        - generic [ref=e70]:
+          - generic [ref=e71]: construction
+          - generic [ref=e72]:
+            - generic [ref=e73]: Construction / Contractor
+            - generic [ref=e74]: Job sites, subs, permits
+      - button "gavel Attorney / Legal Clients, matters, filings" [ref=e75] [cursor=pointer]:
+        - generic [ref=e76]:
+          - generic [ref=e77]: gavel
+          - generic [ref=e78]:
+            - generic [ref=e79]: Attorney / Legal
+            - generic [ref=e80]: Clients, matters, filings
+      - button "business_center Agency / Consulting Client projects, deliverables" [ref=e81] [cursor=pointer]:
+        - generic [ref=e82]:
+          - generic [ref=e83]: business_center
+          - generic [ref=e84]:
+            - generic [ref=e85]: Agency / Consulting
+            - generic [ref=e86]: Client projects, deliverables
+      - button "auto_awesome Something else Any topic you track by email" [ref=e87] [cursor=pointer]:
+        - generic [ref=e88]:
+          - generic [ref=e89]: auto_awesome
+          - generic [ref=e90]:
+            - generic [ref=e91]: Something else
+            - generic [ref=e92]: Any topic you track by email
+    - paragraph [ref=e93]: Step 1 of 5

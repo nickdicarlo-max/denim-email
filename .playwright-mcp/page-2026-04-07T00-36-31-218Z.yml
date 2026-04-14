@@ -1,0 +1,15 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e70]:
+    - button "arrow_back child_care Parent / Family" [ref=e72] [cursor=pointer]:
+      - generic [ref=e73]: arrow_back
+      - generic [ref=e74]: child_care
+      - text: Parent / Family
+    - heading "Name the things you track" [level=1] [ref=e75]
+    - paragraph [ref=e76]: Each one becomes a separate organized group in your feed.
+    - generic [ref=e77]:
+      - textbox "e.g. \"Vail Mountain School\"" [ref=e78]
+      - button "Add" [disabled] [ref=e79]
+    - paragraph [ref=e80]: Step 2 of 5
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]

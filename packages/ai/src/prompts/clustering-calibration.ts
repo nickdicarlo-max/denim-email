@@ -15,6 +15,7 @@ export interface CalibrationPromptInput {
     mergeThreshold: number;
     subjectMatchScore: number;
     actorAffinityScore: number;
+    tagMatchScore: number;
     timeDecayFreshDays: number;
   };
   coarseClusters: {
@@ -82,14 +83,34 @@ CURRENT GRAVITY MODEL PARAMETERS:
   matters more for grouping.
 - actorAffinityScore: ${input.currentConfig.actorAffinityScore}
   Points awarded when emails share the same sender. Higher = sender identity matters more.
+- tagMatchScore: ${input.currentConfig.tagMatchScore}
+  Points awarded when emails share extracted tags (Jaccard similarity × score). Higher = tag
+  overlap matters more for grouping.
 - timeDecayFreshDays: ${input.currentConfig.timeDecayFreshDays}
   Number of days an email is considered "fresh" before time decay reduces its clustering score.
+
+PARAMETER ADJUSTMENT RULES:
+- Adjust parameters INCREMENTALLY. Changes of more than 20% from current values should be rare and require strong justification from correction patterns.
+- Hard bounds (reject any values outside these):
+  - mergeThreshold: 20 to 80 (current: ${input.currentConfig.mergeThreshold})
+  - subjectMatchScore: 10 to 60 (current: ${input.currentConfig.subjectMatchScore})
+  - actorAffinityScore: 0 to 40 (current: ${input.currentConfig.actorAffinityScore})
+  - tagMatchScore: 0 to 50 (current: ${input.currentConfig.tagMatchScore})
+  - timeDecayFreshDays: 14 to 120 (current: ${input.currentConfig.timeDecayFreshDays})
+- When in doubt, leave parameters unchanged. Bad parameter changes are worse than no changes.
 
 CURRENT CLUSTER STATE:
 ${clusterSummary}
 
 USER CORRECTIONS:
-${correctionLines.length > 0 ? correctionLines : "  (none — first calibration run)"}
+${correctionLines.length > 0 ? correctionLines : `  (none — no corrections yet)
+
+FIRST CALIBRATION GUIDANCE:
+When no corrections exist, do NOT change gravity model parameters. Return current values unchanged.
+Focus instead on building initial discriminator vocabulary from the frequency data.
+Identify words that clearly separate different cases within each entity and assign
+confidence scores based on how cleanly they discriminate.
+Parameter changes require correction signals. No corrections = no parameter changes.`}
 
 HOW TO INTERPRET CORRECTIONS:
 - EMAIL_MOVED: The discriminator words assigned this email to the wrong case. Adjust the
@@ -115,6 +136,7 @@ Required JSON shape:
     "mergeThreshold": number,
     "subjectMatchScore": number,
     "actorAffinityScore": number,
+    "tagMatchScore": number,
     "timeDecayFreshDays": number
   },
   "discriminatorVocabulary": {

@@ -1,12 +1,96 @@
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { processEmailBatch } from "@/lib/services/extraction";
-import { coarseCluster, splitCoarseClusters, applyCalibration } from "@/lib/services/cluster";
-import { synthesizeCase } from "@/lib/services/synthesis";
-import { prisma } from "@/lib/prisma";
+import { AuthError } from "@denim/types";
+import { NonRetriableError } from "inngest";
+import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { logger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+import { applyCalibration, coarseCluster, splitCoarseClusters } from "@/lib/services/cluster";
+import { processEmailBatch } from "@/lib/services/extraction";
+import { getValidGmailToken } from "@/lib/services/gmail-tokens";
+import { advanceScanPhase, markScanFailed } from "@/lib/services/onboarding-state";
+import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-metrics";
+import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
+import { cronDailyScans } from "./cron";
+import { dailyStatusDecay } from "./daily-status-decay";
+import { runOnboarding, runOnboardingPipeline } from "./onboarding";
+import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
+import { runScan } from "./scan";
 
 const BATCH_SIZE = 20;
+
+/**
+ * Shared onFailure handler for downstream scan-pipeline functions
+ * (runCoarseClustering, runCaseSplitting, runSynthesis).
+ *
+ * When Inngest exhausts retries on one of these functions, we need to:
+ *   1. Mark the ScanJob as FAILED with the phase where it died, so the
+ *      polling response surfaces the error to the observer page.
+ *   2. Emit scan.completed with reason="failed" so runOnboarding's
+ *      waitForEvent unblocks immediately instead of hanging for the
+ *      full 20-minute timeout.
+ *
+ * Without this, a crash during clustering or synthesis silently stalls
+ * the pipeline: the ScanJob stays in EXTRACTING/CLUSTERING/SYNTHESIZING
+ * forever, runOnboarding waits the full 20 minutes, and the user stares
+ * at a spinner.
+ *
+ * Both writes happen inside step.run so Inngest makes them durable.
+ */
+type ScanPhaseAtFailure = "EXTRACTING" | "CLUSTERING" | "SYNTHESIZING";
+
+/**
+ * Minimal step shape we use inside handleDownstreamScanFailure. We only
+ * call `step.run` with void-returning operations, so the return type of
+ * step.run is intentionally `unknown` here — matches Inngest's runtime
+ * `Jsonify<T>` serialization without forcing us to import Inngest types.
+ */
+type StepLike = {
+  run: (id: string, fn: () => Promise<unknown>) => Promise<unknown>;
+};
+
+async function handleDownstreamScanFailure({
+  step,
+  schemaId,
+  scanJobId,
+  phase,
+  error,
+}: {
+  step: StepLike;
+  schemaId: string;
+  scanJobId: string;
+  phase: ScanPhaseAtFailure;
+  error: { message?: string } | Error | unknown;
+}): Promise<void> {
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error && "message" in error
+        ? String((error as { message?: unknown }).message ?? error)
+        : String(error);
+
+  await step.run("mark-scan-failed-downstream", async () => {
+    await markScanFailed(scanJobId, phase, error);
+  });
+  await step.run("emit-scan-failed-downstream", async () => {
+    await inngest.send({
+      name: "scan.completed",
+      data: {
+        schemaId,
+        scanJobId,
+        reason: "failed",
+        errorMessage,
+      },
+    });
+  });
+  logger.error({
+    service: "inngest",
+    operation: "downstreamScanFailure",
+    schemaId,
+    scanJobId,
+    phase,
+    error: errorMessage,
+  });
+}
 
 /**
  * Fan out extraction: split discovered email IDs into batches
@@ -24,13 +108,14 @@ export const fanOutExtraction = inngest.createFunction(
   async ({ event, step }) => {
     const { schemaId, userId, scanJobId, emailIds } = event.data;
 
-    // Update ScanJob to RUNNING / EXTRACTING
-    await step.run("update-scan-job", async () => {
+    // runScan already advanced the scan phase from DISCOVERING → EXTRACTING
+    // before emitting scan.emails.discovered. We just update the status
+    // fields here — no CAS needed (and a CAS would race with runScan's).
+    await step.run("update-extracting-status", async () => {
       await prisma.scanJob.update({
         where: { id: scanJobId },
         data: {
           status: "RUNNING",
-          phase: "EXTRACTING",
           totalEmails: emailIds.length,
           startedAt: new Date(),
           statusMessage: `Extracting ${emailIds.length} emails...`,
@@ -72,6 +157,12 @@ export const fanOutExtraction = inngest.createFunction(
 
 /**
  * Process a single batch of emails through the extraction pipeline.
+ *
+ * If all retries are exhausted, the `onFailure` handler runs to record the
+ * batch as failed (incrementing `failedEmails` by the batch size) and emit
+ * the `extraction.batch.completed` event so downstream stages still advance.
+ * Without this handler, a single bad batch silently dropped 20 emails from
+ * the accounting and the pipeline could stall waiting for completion (#16).
  */
 export const extractBatch = inngest.createFunction(
   {
@@ -82,88 +173,223 @@ export const extractBatch = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 3,
-  },
-  async ({ event, step }) => {
-    const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } =
-      event.data;
+    onFailure: async ({ event, error, step }) => {
+      // FailureEventPayload wraps the original event under data.event.
+      const original = event.data.event.data as {
+        schemaId: string;
+        scanJobId: string;
+        emailIds: string[];
+        batchIndex: number;
+        totalBatches: number;
+      };
+      const { schemaId, scanJobId, emailIds, batchIndex, totalBatches } = original;
 
-    const result = await step.run("process-batch", async () => {
-      // Load schema with all needed relations
-      const schema = await prisma.caseSchema.findUniqueOrThrow({
-        where: { id: schemaId },
-        include: {
-          tags: { where: { isActive: true }, select: { name: true, description: true, isActive: true } },
-          entities: { where: { isActive: true }, select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
-          extractedFields: { select: { name: true, type: true, description: true, source: true } },
-          exclusionRules: { where: { isActive: true }, select: { ruleType: true, pattern: true, isActive: true } },
-          entityGroups: { orderBy: { index: "asc" }, include: { entities: { where: { isActive: true }, select: { name: true, type: true, isActive: true } } } },
-        },
+      const errorMessage = error?.message ?? String(error);
+      const authFailure =
+        error instanceof AuthError ||
+        matchesGmailAuthError(error instanceof Error ? error.message : String(error));
+
+      await step.run("record-batch-failure", async () => {
+        // Whole-batch failure: processEmailBatch threw before any individual
+        // email could be caught (Gmail token expired, schema load failed, etc).
+        // Write a ScanFailure row for every email in the batch so
+        // computeScanMetrics.failedEmails stays accurate and the pipeline
+        // can't silently drop emails (#16).
+        const errorStack = error?.stack ?? null;
+        await prisma.scanFailure.createMany({
+          data: emailIds.map((gmailMessageId) => ({
+            scanJobId,
+            schemaId,
+            gmailMessageId,
+            phase: "EXTRACTING" as const,
+            errorMessage,
+            errorStack,
+          })),
+          skipDuplicates: true, // idempotent on retry (unique index)
+        });
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: {
+            statusMessage: authFailure
+              ? "Google connection lost — please reconnect"
+              : `Batch ${batchIndex + 1}/${totalBatches} failed after retries`,
+          },
+        });
+        logger.error({
+          service: "inngest",
+          operation: authFailure ? "extractBatch.authFailure" : "extractBatch.exhaustedRetries",
+          schemaId,
+          scanJobId,
+          batchIndex,
+          batchSize: emailIds.length,
+          error: errorMessage,
+        });
       });
 
-      // Get valid Gmail token
-      const accessToken = await getValidGmailToken(userId);
+      // Auth errors are fatal to the entire scan — every subsequent batch
+      // will fail identically. Mark the scan as failed so the polling
+      // response surfaces the error immediately, rather than waiting for
+      // all batches to exhaust retries.
+      if (authFailure) {
+        await step.run("mark-scan-failed-auth", async () => {
+          await markScanFailed(scanJobId, "EXTRACTING", error);
+          // Emit scan.completed with reason="failed" so runOnboarding
+          // unblocks immediately instead of waiting for the 20-min timeout.
+          await inngest.send({
+            name: "scan.completed",
+            data: {
+              schemaId,
+              scanJobId,
+              reason: "failed",
+              errorMessage,
+            },
+          });
+        });
+        return;
+      }
 
-      // Build contexts
-      const schemaContext = {
-        domain: schema.domain ?? "general",
-        tags: schema.tags.map((t) => ({ name: t.name, description: t.description ?? "" })),
-        entities: schema.entities.map((e) => ({
+      // Non-auth failure: still emit batch.completed so
+      // checkExtractionComplete can advance; without this the pipeline
+      // hangs waiting for a batch that never finishes.
+      await step.run("emit-completed-after-failure", async () => {
+        await inngest.send({
+          name: "extraction.batch.completed",
+          data: {
+            schemaId,
+            scanJobId,
+            batchIndex,
+            totalBatches,
+            processedCount: 0,
+            excludedCount: 0,
+            failedCount: emailIds.length,
+          },
+        });
+      });
+    },
+  },
+  async ({ event, step }) => {
+    const { schemaId, userId, scanJobId, emailIds, batchIndex, totalBatches } = event.data;
+
+    const result = await step.run("process-batch", async () => {
+      // Wrap the entire batch in an auth-error check. If the Gmail token
+      // is dead, convert to NonRetriableError so Inngest skips the 3
+      // retries and jumps straight to onFailure (which marks the scan
+      // as FAILED). Without this, auth errors burn through all retries
+      // and every concurrent batch does the same — wasting minutes.
+      try {
+        return await processBatchInner();
+      } catch (err) {
+        if (
+          err instanceof AuthError ||
+          matchesGmailAuthError(err instanceof Error ? err.message : String(err))
+        ) {
+          throw new NonRetriableError(
+            `Gmail auth failed: ${err instanceof Error ? err.message : String(err)}`,
+            { cause: err },
+          );
+        }
+        throw err;
+      }
+
+      async function processBatchInner() {
+        // Load schema with all needed relations
+        const schema = await prisma.caseSchema.findUniqueOrThrow({
+          where: { id: schemaId },
+          include: {
+            tags: {
+              where: { isActive: true },
+              select: { name: true, description: true, isActive: true },
+            },
+            entities: {
+              where: { isActive: true },
+              select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
+            },
+            extractedFields: {
+              select: { name: true, type: true, description: true, source: true },
+            },
+            exclusionRules: {
+              where: { isActive: true },
+              select: { ruleType: true, pattern: true, isActive: true },
+            },
+            entityGroups: {
+              orderBy: { index: "asc" },
+              include: {
+                entities: {
+                  where: { isActive: true },
+                  select: { name: true, type: true, isActive: true },
+                },
+              },
+            },
+          },
+        });
+
+        // Get valid Gmail token
+        const accessToken = await getValidGmailToken(userId);
+
+        // Build contexts
+        const schemaContext = {
+          domain: schema.domain ?? "general",
+          tags: schema.tags.map((t) => ({ name: t.name, description: t.description ?? "" })),
+          entities: schema.entities.map((e) => ({
+            name: e.name,
+            type: e.type as "PRIMARY" | "SECONDARY",
+            aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
+            isUserInput: !e.autoDetected,
+          })),
+          extractedFields: schema.extractedFields.map((f) => ({
+            name: f.name,
+            type: f.type,
+            description: f.description,
+            source: f.source,
+          })),
+          exclusionPatterns: schema.exclusionRules.map((r) => r.pattern),
+          entityGroups: schema.entityGroups.map((g) => ({
+            whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
+            whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
+          })),
+        };
+
+        const entities = schema.entities.map((e) => ({
           name: e.name,
           type: e.type as "PRIMARY" | "SECONDARY",
           aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-          isUserInput: !e.autoDetected,
-        })),
-        extractedFields: schema.extractedFields.map((f) => ({
-          name: f.name,
-          type: f.type,
-          description: f.description,
-          source: f.source,
-        })),
-        exclusionPatterns: schema.exclusionRules.map((r) => r.pattern),
-        entityGroups: schema.entityGroups.map((g) => ({
-          whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
-          whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
-        })),
-      };
+        }));
 
-      const entities = schema.entities.map((e) => ({
-        name: e.name,
-        type: e.type as "PRIMARY" | "SECONDARY",
-        aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-      }));
+        const exclusionRules = schema.exclusionRules.map((r) => ({
+          ruleType: r.ruleType,
+          pattern: r.pattern,
+          isActive: r.isActive,
+        }));
 
-      const exclusionRules = schema.exclusionRules.map((r) => ({
-        ruleType: r.ruleType,
-        pattern: r.pattern,
-        isActive: r.isActive,
-      }));
+        // Process the batch
+        const batchResult = await processEmailBatch(
+          emailIds,
+          accessToken,
+          schemaContext,
+          entities,
+          exclusionRules,
+          { schemaId, scanJobId, userId },
+        );
 
-      // Process the batch
-      const batchResult = await processEmailBatch(
-        emailIds,
-        accessToken,
-        schemaContext,
-        entities,
-        exclusionRules,
-        { schemaId, scanJobId, userId },
-      );
+        // processedEmails / excludedEmails / failedEmails are computed on
+        // demand by computeScanMetrics from Email rows + ScanFailure rows.
+        // Only the status message is updated here.
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: {
+            statusMessage: `Batch ${batchIndex + 1}/${totalBatches} complete`,
+          },
+        });
 
-      // Update ScanJob progress
-      await prisma.scanJob.update({
-        where: { id: scanJobId },
-        data: {
-          processedEmails: { increment: batchResult.processed },
-          excludedEmails: { increment: batchResult.excluded },
-          failedEmails: { increment: batchResult.failed },
-          statusMessage: `Batch ${batchIndex + 1}/${totalBatches} complete`,
-        },
-      });
-
-      return batchResult;
+        return batchResult;
+      } // end processBatchInner
     });
 
-    // Emit batch completed event
+    // Emit batch completed event. failedCount is derived (batch size minus
+    // the two tallied buckets) since processEmailBatch no longer returns
+    // a `failed` field — per-email failures are ScanFailure rows.
     await step.run("emit-completed", async () => {
+      const failedCount = emailIds.length - result.processed - result.excluded;
       await inngest.send({
         name: "extraction.batch.completed",
         data: {
@@ -173,7 +399,7 @@ export const extractBatch = inngest.createFunction(
           totalBatches,
           processedCount: result.processed,
           excludedCount: result.excluded,
-          failedCount: result.failed,
+          failedCount,
         },
       });
     });
@@ -197,37 +423,55 @@ export const checkExtractionComplete = inngest.createFunction(
     const { schemaId, scanJobId, totalBatches } = event.data;
 
     await step.run("check-completion", async () => {
-      // Read current scan job state
-      const scanJob = await prisma.scanJob.findUniqueOrThrow({
-        where: { id: scanJobId },
-      });
+      // Counters are now computed on demand from Email + ScanFailure +
+      // ExtractionCost rows via computeScanMetrics.
+      const metrics = await computeScanMetrics(scanJobId);
 
       const totalProcessed =
-        scanJob.processedEmails + scanJob.excludedEmails + scanJob.failedEmails;
+        metrics.processedEmails + metrics.excludedEmails + metrics.failedEmails;
 
-      if (totalProcessed >= scanJob.totalEmails) {
+      if (totalProcessed >= metrics.totalEmails) {
+        // Accounting invariant: every discovered email must be accounted for
+        // as processed, excluded, or failed (#16). A mismatch here means a
+        // pipeline stage silently dropped emails — log loudly so the next
+        // eval surfaces it.
+        //
+        // NOTE: until Phase 5 adds ScanFailure writes, failedEmails will
+        // read 0 and this invariant may report gaps during Phase 1.
+        if (totalProcessed !== metrics.totalEmails) {
+          logger.error({
+            service: "inngest",
+            operation: "checkExtractionComplete.accountingMismatch",
+            schemaId,
+            scanJobId,
+            totalEmails: metrics.totalEmails,
+            processed: metrics.processedEmails,
+            excluded: metrics.excludedEmails,
+            failed: metrics.failedEmails,
+            sum: totalProcessed,
+            gap: totalProcessed - metrics.totalEmails,
+          });
+        }
+
         // All emails processed — keep EXTRACTING phase, clustering will advance it
         await prisma.scanJob.update({
           where: { id: scanJobId },
           data: {
-            statusMessage: `Extraction done: ${scanJob.processedEmails} extracted, ${scanJob.excludedEmails} excluded, ${scanJob.failedEmails} failed. Starting clustering...`,
+            statusMessage: `Extraction done: ${metrics.processedEmails} extracted, ${metrics.excludedEmails} excluded, ${metrics.failedEmails} failed. Starting clustering...`,
           },
         });
 
-        // Update tag frequencies
-        const schema = await prisma.caseSchema.findUniqueOrThrow({
-          where: { id: schemaId },
-          select: { emailCount: true },
-        });
+        // Update tag frequencies — schema email count is now computed on demand.
+        const schemaMetrics = await computeSchemaMetrics(schemaId);
 
-        if (schema.emailCount > 0) {
+        if (schemaMetrics.emailCount > 0) {
           const tags = await prisma.schemaTag.findMany({
             where: { schemaId, isActive: true },
             select: { id: true, emailCount: true },
           });
 
           for (const tag of tags) {
-            const frequency = tag.emailCount / schema.emailCount;
+            const frequency = tag.emailCount / schemaMetrics.emailCount;
             await prisma.schemaTag.update({
               where: { id: tag.id },
               data: {
@@ -238,21 +482,37 @@ export const checkExtractionComplete = inngest.createFunction(
           }
         }
 
-        // Emit completion event for clustering stage
-        await inngest.send({
-          name: "extraction.all.completed",
-          data: { schemaId, scanJobId },
+        // CAS guard: only emit extraction.all.completed once, even if
+        // multiple checkExtractionComplete invocations race. Per lessons
+        // learned (Bug 3): each transition must have exactly one owner.
+        const marked = await prisma.scanJob.updateMany({
+          where: { id: scanJobId, extractionCompleteEmitted: false },
+          data: { extractionCompleteEmitted: true },
         });
 
-        logger.info({
-          service: "inngest",
-          operation: "extractionComplete",
-          schemaId,
-          totalEmails: scanJob.totalEmails,
-          processed: scanJob.processedEmails,
-          excluded: scanJob.excludedEmails,
-          failed: scanJob.failedEmails,
-        });
+        if (marked.count === 1) {
+          await inngest.send({
+            name: "extraction.all.completed",
+            data: { schemaId, scanJobId },
+          });
+
+          logger.info({
+            service: "inngest",
+            operation: "extractionComplete",
+            schemaId,
+            totalEmails: metrics.totalEmails,
+            processed: metrics.processedEmails,
+            excluded: metrics.excludedEmails,
+            failed: metrics.failedEmails,
+          });
+        } else {
+          logger.info({
+            service: "inngest",
+            operation: "extractionComplete.alreadyEmitted",
+            schemaId,
+            scanJobId,
+          });
+        }
       }
     });
   },
@@ -271,34 +531,51 @@ export const runCoarseClustering = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = event.data.event.data as { schemaId: string; scanJobId: string };
+      await handleDownstreamScanFailure({
+        step,
+        schemaId: original.schemaId,
+        scanJobId: original.scanJobId,
+        phase: "EXTRACTING",
+        error,
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, scanJobId } = event.data;
 
-    // 1. Update phase to CLUSTERING
-    await step.run("update-phase", async () => {
-      await prisma.scanJob.update({
-        where: { id: scanJobId },
-        data: {
-          phase: "CLUSTERING",
-          statusMessage: "Pass 1: Coarse clustering by entity...",
+    // 1. CAS-advance EXTRACTING → CLUSTERING and run the clustering pass
+    //    inside the work callback so the phase can't be observed half-advanced.
+    const result = await step.run("advance-and-coarse-cluster", async () => {
+      const res = await advanceScanPhase({
+        scanJobId,
+        from: "EXTRACTING",
+        to: "CLUSTERING",
+        work: async () => {
+          await prisma.scanJob.update({
+            where: { id: scanJobId },
+            data: { statusMessage: "Pass 1: Coarse clustering by entity..." },
+          });
+          return await coarseCluster(schemaId, scanJobId);
         },
       });
+      if (res === "skipped") {
+        // Non-Inngest re-entry on an already-advanced scan. We have no
+        // fresh result to propagate, so fail loudly rather than hang.
+        throw new Error(
+          `runCoarseClustering: scan ${scanJobId} was already past EXTRACTING — unexpected re-entry`,
+        );
+      }
+      return res;
     });
 
-    // 2. Run coarse clustering
-    const result = await step.run("coarse-cluster", async () => {
-      return await coarseCluster(schemaId, scanJobId);
-    });
-
-    // 3. Update scan job counts
+    // 3. Update scan job status message only — clustersCreated / casesCreated
+    //    / casesMerged counters are now computed on demand from Case rows.
     await step.run("update-counts", async () => {
       await prisma.scanJob.update({
         where: { id: scanJobId },
         data: {
-          clustersCreated: result.clustersCreated,
-          casesCreated: result.casesCreated,
-          casesMerged: result.casesMerged,
           statusMessage: `Coarse clustering done: ${result.casesCreated} clusters created, ${result.casesMerged} merged. Starting case splitting...`,
         },
       });
@@ -339,6 +616,16 @@ export const runCaseSplitting = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = event.data.event.data as { schemaId: string; scanJobId: string };
+      await handleDownstreamScanFailure({
+        step,
+        schemaId: original.schemaId,
+        scanJobId: original.scanJobId,
+        phase: "CLUSTERING",
+        error,
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, scanJobId, coarseClusterIds } = event.data;
@@ -361,12 +648,11 @@ export const runCaseSplitting = inngest.createFunction(
     // 3. Combine cluster IDs from both passes
     const allClusterIds = [...coarseClusterIds, ...splitResult.clusterIds];
 
-    // 4. Update counts
+    // 4. Update status message only — casesCreated is computed on demand.
     await step.run("update-counts", async () => {
       await prisma.scanJob.update({
         where: { id: scanJobId },
         data: {
-          casesCreated: { increment: splitResult.casesCreated },
           statusMessage: `Case splitting done: ${splitResult.casesCreated} cases split`,
         },
       });
@@ -517,6 +803,28 @@ export const runSynthesis = inngest.createFunction(
       key: "event.data.schemaId",
     },
     retries: 2,
+    onFailure: async ({ event, error, step }) => {
+      const original = event.data.event.data as { schemaId: string };
+      // Unlike clustering events, clustering.completed doesn't carry scanJobId
+      // directly -- runSynthesis looks it up via findFirst. Resolve it the
+      // same way here so the failure signal references the right scan job.
+      const scanJobId = await step.run("resolve-scan-job-on-failure", async () => {
+        const scanJob = await prisma.scanJob.findFirst({
+          where: { schemaId: original.schemaId, status: "RUNNING" },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        return scanJob?.id ?? null;
+      });
+      if (!scanJobId) return;
+      await handleDownstreamScanFailure({
+        step,
+        schemaId: original.schemaId,
+        scanJobId,
+        phase: "SYNTHESIZING",
+        error,
+      });
+    },
   },
   async ({ event, step }) => {
     const { schemaId, clusterIds } = event.data;
@@ -531,14 +839,18 @@ export const runSynthesis = inngest.createFunction(
       return scanJob?.id ?? null;
     });
 
-    // 2. Update phase to SYNTHESIZING
+    // 2. CAS-advance CLUSTERING → SYNTHESIZING.
     if (scanJobId) {
-      await step.run("update-phase", async () => {
-        await prisma.scanJob.update({
-          where: { id: scanJobId },
-          data: {
-            phase: "SYNTHESIZING",
-            statusMessage: "Generating case summaries and actions...",
+      await step.run("advance-to-synthesizing", async () => {
+        await advanceScanPhase({
+          scanJobId,
+          from: "CLUSTERING",
+          to: "SYNTHESIZING",
+          work: async () => {
+            await prisma.scanJob.update({
+              where: { id: scanJobId },
+              data: { statusMessage: "Generating case summaries and actions..." },
+            });
           },
         });
       });
@@ -594,28 +906,79 @@ export const runSynthesis = inngest.createFunction(
     const synthesizedCount = results.filter((r) => r.status === "ok").length;
     const failedCount = results.filter((r) => r.status === "failed").length;
 
-    // 5. Update scan job to COMPLETED
+    // 5. CAS-advance SYNTHESIZING → COMPLETED with the accounting invariant
+    //    check. Now that ScanFailure writes are wired up (this task, Phase 5),
+    //    the accounting log should show gap=0 in the happy path.
     if (scanJobId) {
-      await step.run("complete-job", async () => {
-        await prisma.scanJob.update({
-          where: { id: scanJobId },
-          data: {
-            phase: "COMPLETED",
-            status: "COMPLETED",
-            completedAt: new Date(),
-            statusMessage: `Pipeline complete: ${synthesizedCount} cases synthesized${failedCount > 0 ? `, ${failedCount} failed` : ""}`,
+      await step.run("advance-to-completed", async () => {
+        const finalMetrics = await computeScanMetrics(scanJobId);
+        const accounted =
+          finalMetrics.processedEmails + finalMetrics.excludedEmails + finalMetrics.failedEmails;
+        if (accounted !== finalMetrics.totalEmails) {
+          // Accounting invariant (#16): every discovered email must be
+          // accounted for. A gap here means a pipeline stage silently
+          // dropped emails — log loudly so the next eval surfaces it.
+          logger.error({
+            service: "inngest",
+            operation: "runSynthesis.accountingMismatch",
+            schemaId,
+            scanJobId,
+            totalEmails: finalMetrics.totalEmails,
+            processed: finalMetrics.processedEmails,
+            excluded: finalMetrics.excludedEmails,
+            failed: finalMetrics.failedEmails,
+            accounted,
+            gap: finalMetrics.totalEmails - accounted,
+          });
+        }
+
+        await advanceScanPhase({
+          scanJobId,
+          from: "SYNTHESIZING",
+          to: "COMPLETED",
+          work: async () => {
+            await prisma.scanJob.update({
+              where: { id: scanJobId },
+              data: {
+                status: "COMPLETED",
+                completedAt: new Date(),
+                statusMessage: `Pipeline complete: ${synthesizedCount} cases synthesized${failedCount > 0 ? `, ${failedCount} failed` : ""}`,
+              },
+            });
           },
+        });
+      });
+
+      // 5b. Stamp the schema's `lastScannedAt` watermark. This is the
+      //     signal the `cronDailyScans` function (Task 17) filters on
+      //     to decide which schemas are stale enough to re-scan. Before
+      //     this step landed, `lastScannedAt` was a dead column that
+      //     nothing ever wrote, making any cron filter a no-op.
+      //
+      //     Runs as a separate `step.run` from the CAS advance so a
+      //     race loss on the phase transition doesn't partially commit
+      //     the watermark. On Inngest replay the update is idempotent —
+      //     writing the same timestamp twice is a no-op.
+      await step.run("stamp-last-scanned-at", async () => {
+        await prisma.caseSchema.update({
+          where: { id: schemaId },
+          data: { lastScannedAt: new Date() },
         });
       });
     }
 
-    // 6. Transition schema from ONBOARDING to ACTIVE
-    await step.run("activate-schema", async () => {
-      await prisma.caseSchema.updateMany({
-        where: { id: schemaId, status: "ONBOARDING" },
-        data: { status: "ACTIVE" },
+    // 6. Emit scan.completed so the runOnboarding orchestrator (Task 9)
+    //    can flip CaseSchema.phase to AWAITING_REVIEW / COMPLETED. Until
+    //    that orchestrator lands, we ALSO keep the direct status→ACTIVE
+    //    update as a dual-write so existing polling clients still work.
+    if (scanJobId) {
+      await step.run("emit-scan-completed", async () => {
+        await inngest.send({
+          name: "scan.completed",
+          data: { schemaId, scanJobId, synthesizedCount, failedCount },
+        });
       });
-    });
+    }
 
     // 7. Emit synthesis.case.completed events
     await step.run("emit-events", async () => {
@@ -639,4 +1002,20 @@ export const runSynthesis = inngest.createFunction(
   },
 );
 
-export const functions = [fanOutExtraction, extractBatch, checkExtractionComplete, runCoarseClustering, runCaseSplitting, runSynthesis, runClusteringCalibration, resynthesizeOnFeedback, dailyQualitySnapshot];
+export const functions = [
+  runOnboarding, // Function A — consumes onboarding.session.started, advances to AWAITING_REVIEW
+  runOnboardingPipeline, // Function B — consumes onboarding.review.confirmed, drives pipeline to COMPLETED
+  runScan, // Parent workflow — consumes scan.requested, emits scan.emails.discovered
+  fanOutExtraction,
+  extractBatch,
+  checkExtractionComplete,
+  runCoarseClustering,
+  runCaseSplitting,
+  runSynthesis,
+  runClusteringCalibration,
+  resynthesizeOnFeedback,
+  dailyQualitySnapshot,
+  dailyStatusDecay,
+  cronDailyScans, // Task 17 — periodic re-scan emitter (event-triggered for v1)
+  drainOnboardingOutbox, // #33 — transactional outbox drain for POST /api/onboarding/start
+];

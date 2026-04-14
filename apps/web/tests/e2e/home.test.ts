@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("home page loads", async ({ page }) => {
+test("landing page loads with Denim branding", async ({ page }) => {
   await page.goto("/");
-  await expect(page).toHaveTitle(/Case Engine/);
+  await expect(page).toHaveTitle(/Denim|Case Engine/);
 });

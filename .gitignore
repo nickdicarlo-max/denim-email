@@ -54,6 +54,10 @@ docs/test-results/fixtures/
 docs/test-results/*.json
 *.test-output.json
 
+# === EVAL FIXTURES ===
+# Real email exports (Gmail API JSON) — contains personal data
+Denim_Samples_Individual/
+
 # === TEST ARTIFACTS ===
 coverage/
 .nyc_output/

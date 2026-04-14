@@ -23,3 +23,6 @@ export type {
   FrequencyEmailInput,
   CoarseClusterInput,
 } from "./clustering/frequency-analysis";
+
+export { computeNextActionDate, computeCaseDecay } from "./actions/lifecycle";
+export type { CaseDecayInput, CaseDecayResult, ActionDateInput } from "./actions/lifecycle";

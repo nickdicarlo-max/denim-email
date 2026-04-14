@@ -11,6 +11,7 @@ const tunedConfigSchema = z.object({
   mergeThreshold: z.number().positive(),
   subjectMatchScore: z.number().positive(),
   actorAffinityScore: z.number().positive(),
+  tagMatchScore: z.number().nonnegative().default(15),
   timeDecayFreshDays: z.number().positive(),
 });
 

@@ -16,7 +16,7 @@ function buildTagTaxonomy(schema: SynthesisSchemaContext): string {
     return "No tags defined.";
   }
   return schema.tags
-    .map((t) => `  - "${t.name}": ${t.description}`)
+    .map((t: { name: string; description: string }) => `  - "${t.name}": ${t.description}`)
     .join("\n");
 }
 
@@ -25,7 +25,7 @@ function buildEntityList(schema: SynthesisSchemaContext): string {
     return "No entities defined.";
   }
   return schema.entities
-    .map((e) => `  - "${e.name}" (${e.type})`)
+    .map((e: { name: string; type: string }) => `  - "${e.name}" (${e.type})`)
     .join("\n");
 }
 
@@ -34,7 +34,7 @@ function buildFieldDefinitions(schema: SynthesisSchemaContext): string {
     return "No extracted fields defined.";
   }
   return schema.extractedFields
-    .map((f) => `  - "${f.name}" (${f.type}): ${f.description}`)
+    .map((f: { name: string; type: string; description: string }) => `  - "${f.name}" (${f.type}): ${f.description}`)
     .join("\n");
 }
 
@@ -49,8 +49,11 @@ Your job:
 2. Generate a three-part SUMMARY using the labels below:
    - "${schema.summaryLabels.beginning}": How this case started or what initiated it.
    - "${schema.summaryLabels.middle}": Key activity, exchanges, or developments.
-   - "${schema.summaryLabels.end}": Current status, next steps, or resolution.
+   - "${schema.summaryLabels.end}": Status as of today (${today}). State what is pending or resolved, including the date so readers know when this was assessed. Example: "As of Mar 31: awaiting signed form; registration closes Apr 4."
    Each section should be 1-3 sentences.
+   TIME-NEUTRAL LANGUAGE: Your summaries will be displayed for days or weeks after generation. Use absolute dates, not relative time references.
+   WRONG: "Meeting tomorrow", "due this Friday", "recently received", "coming up soon", "waiting for approval"
+   RIGHT: "Meeting on Thu Apr 3", "due Fri Apr 4", "received Mar 20", "scheduled for Apr 12", "approval pending as of Mar 28"
 3. Select 2-3 DISPLAY TAGS from the taxonomy below that best represent this case to a human reader.
 4. Identify the PRIMARY ACTOR — the main external counterparty (person or organization) in this case. Set to null if unclear.
 5. Extract ACTION ITEMS from the emails. These are tasks, events, payments, deadlines, or responses that need attention.
@@ -58,6 +61,15 @@ Your job:
    - If an email says something is "done", "completed", "signed", or "sent", that action should not appear as pending.
    - Include due dates, event times, locations, and amounts when mentioned.
    - Each action needs a confidence score (0-1) reflecting how clearly it was stated.
+   - Extract eventEndTime when the email specifies a duration or end time.
+     "Practice 5:30-7pm" -> eventStartTime: "2026-04-01T17:30:00Z", eventEndTime: "2026-04-01T19:00:00Z"
+     "Awards ceremony at 2pm" -> eventStartTime only (no end time mentioned, leave eventEndTime null)
+     Including end times lets the user see how long events take.
+   - Action TITLES must include absolute dates, not relative references.
+     WRONG: "Register by Friday", "Practice tomorrow", "Pay fee next week"
+     RIGHT: "Register by Fri Apr 4", "Practice Tue Apr 1 5:30 PM", "Pay $150 fee by Thu Apr 3"
+   - For EVENT actions, include the day, date, and time in the title.
+     Example: "Tournament Sat Apr 5 10 AM - 12 PM" (not just "Tournament Saturday")
 6. Determine the case STATUS:
    - "OPEN" — active, needs attention
    - "IN_PROGRESS" — work is underway
@@ -71,6 +83,13 @@ Your job:
    - "UPCOMING" — action/event more than 7 days out, or ongoing recurring activity
    - "NO_ACTION" — relevant content but nothing the user needs to do (completed, informational, expired)
    - "IRRELEVANT" — emails don't substantively relate to the entity; likely misclassified noise
+9. Assess the emotional MOOD of this case:
+   - "CELEBRATORY" — awards, honors, achievements, milestones, graduations, winning, accomplishments. Moments to celebrate.
+   - "POSITIVE" — good news, confirmations, successful completions, thank-you messages. Pleasant but not milestone-level.
+   - "NEUTRAL" — standard logistics, scheduling, routine updates. Most cases are this.
+   - "URGENT" — problems requiring immediate attention, emergencies, escalations, complaints.
+   - "NEGATIVE" — bad news, cancellations, denials, disputes, failures.
+   Default to "NEUTRAL" unless the emails clearly indicate otherwise.
 
 DELIBERATE INACTION: If the email describes something the user explicitly declined,
 chose not to do, or allowed to expire (e.g., "membership expired, will NOT auto-renew",
@@ -91,6 +110,14 @@ RECURRING EVENTS:
 - Identify the NEXT upcoming event date and location as the primary action item. Past events should not appear as actions.
 - Set status to IN_PROGRESS if upcoming events exist, RESOLVED if all events have passed.
 
+FINANCIAL AMOUNTS:
+When multiple emails discuss the same charge (quote, invoice, payment), report the
+FINAL or CONFIRMED amount ONCE, not the sum of every mention. Email threads typically
+reference the same dollar figure repeatedly (original quote, approval, confirmation,
+invoice) -- these are the SAME charge, not separate charges.
+
+For the "cost" extracted field, report the single most recent/authoritative amount.
+
 CRITICAL RULES:
 1. Return ONLY valid JSON matching the required schema exactly. No explanations, no markdown, no extra text.
 2. Title must be under 60 characters.
@@ -104,6 +131,7 @@ Required JSON shape:
 {
   "title": string,
   "emoji": string,
+  "mood": "CELEBRATORY" | "POSITIVE" | "NEUTRAL" | "URGENT" | "NEGATIVE",
   "summary": {
     "beginning": string,
     "middle": string,
@@ -132,7 +160,14 @@ Required JSON shape:
 }
 
 function buildUserPrompt(emails: SynthesisEmailInput[]): string {
-  const emailBlocks = emails
+  // Cap at 30 most recent emails to manage context window
+  const sortedEmails = [...emails].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
+  const cappedEmails = sortedEmails.slice(0, 30);
+  const wasTruncated = emails.length > 30;
+
+  const emailBlocks = cappedEmails
     .map(
       (e, i) =>
         `--- EMAIL ${i + 1} (id: ${e.id}) ---
@@ -145,7 +180,7 @@ Summary: ${e.summary}`,
     )
     .join("\n\n");
 
-  return `Synthesize the following ${emails.length} email(s) into a single case:
+  return `Synthesize the following ${cappedEmails.length} email(s) into a single case:${wasTruncated ? `\n(Note: This case has ${emails.length} total emails. Showing the ${cappedEmails.length} most recent.)` : ""}
 
 ${emailBlocks}
 

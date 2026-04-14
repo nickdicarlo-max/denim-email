@@ -1,7 +1,7 @@
+import { redirect } from "next/navigation";
 import { GetStartedButton } from "@/components/landing/get-started-button";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
 
 export default async function Home() {
   let redirectTo: string | null = null;
@@ -16,7 +16,7 @@ export default async function Home() {
       const schemaCount = await prisma.caseSchema.count({
         where: { userId: user.id },
       });
-      redirectTo = schemaCount > 0 ? "/dashboard" : "/interview";
+      redirectTo = schemaCount > 0 ? "/feed" : "/onboarding/category";
     }
   } catch {
     // Auth errors (no session) — fall through to landing page
@@ -40,8 +40,8 @@ export default async function Home() {
           Your email, organized into cases
         </h1>
         <p className="mt-4 text-lg text-secondary max-w-lg leading-relaxed">
-          Connect your Gmail and let AI turn scattered threads into clear,
-          actionable cases — no folders, no labels, no rules to maintain.
+          Connect your Gmail and let AI turn scattered threads into clear, actionable cases — no
+          folders, no labels, no rules to maintain.
         </p>
         <div className="mt-8">
           <GetStartedButton />

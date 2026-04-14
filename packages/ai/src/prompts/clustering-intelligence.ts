@@ -14,6 +14,7 @@ export interface ClusteringIntelligencePromptResult {
 
 export interface ClusteringIntelligenceInput {
   domain: string;
+  today: string;
   entityGroups: EntityGroupInput[];
   emails: {
     id: string;
@@ -27,21 +28,25 @@ export interface ClusteringIntelligenceInput {
   }[];
   currentConfig: {
     mergeThreshold: number;
-    tagMatchScore: number;
+    threadMatchScore: number;
     subjectMatchScore: number;
     actorAffinityScore: number;
+    timeDecayFreshDays: number;
   };
 }
 
 function buildSystemPrompt(input: ClusteringIntelligenceInput): string {
   const groupLines = input.entityGroups.map((g, i) => {
-    const whats = g.whats.map((w) => `"${w}"`).join(", ");
-    const whos = g.whos.map((w) => `"${w}"`).join(", ");
+    const whats = g.whats.map((w: string) => `"${w}"`).join(", ");
+    const whos = g.whos.map((w: string) => `"${w}"`).join(", ");
     return `  Group ${i + 1}: ${[whats, whos].filter(Boolean).join(" + ")}`;
   });
 
   return `You are a clustering intelligence engine for a "${input.domain}" case management system.
 You have a list of extracted emails that need to be organized into CASES (groups of related emails).
+
+TODAY'S DATE: ${input.today}
+Use this to assess temporal patterns — are emails recurring weekly, seasonal, or one-time?
 
 A CASE represents a coherent topic where "what's next?" has one clear answer.
 
@@ -60,13 +65,32 @@ KEY PRINCIPLES:
 4. EXCLUDE NOISE: Newsletters, promotional emails, AI summaries that mention entity names
    but aren't actually about those entities should be suggested for exclusion.
 
-GRAVITY MODEL PARAMETERS (current values):
-- mergeThreshold: ${input.currentConfig.mergeThreshold} (higher = harder to merge, lower = easier)
-- tagMatchScore: ${input.currentConfig.tagMatchScore} (points for matching tags)
-- subjectMatchScore: ${input.currentConfig.subjectMatchScore} (points for similar subjects)
-- actorAffinityScore: ${input.currentConfig.actorAffinityScore} (points for same sender)
+GRAVITY MODEL SCORING FORMULA:
+The deterministic clustering model scores each email against each existing case:
+  threadScore  = shares Gmail threadId with case? → ${input.currentConfig.threadMatchScore} points, else 0
+  subjectScore = Jaro-Winkler similarity of normalized subjects × ${input.currentConfig.subjectMatchScore}
+                 (0 if similarity < 0.7)
+  actorScore   = same sender entity as case? → ${input.currentConfig.actorAffinityScore} points, else 0
+  timeDecay    = 1.0 if email is within ${input.currentConfig.timeDecayFreshDays} days, then linear decay to 0.2 at 365 days
 
-You can suggest overrides to these parameters based on the email patterns you see.
+  finalScore = (threadScore + subjectScore + actorScore) × timeDecay
+
+  if finalScore >= ${input.currentConfig.mergeThreshold} → MERGE into existing case
+  else → CREATE new case
+
+CURRENT PARAMETER VALUES:
+  mergeThreshold:     ${input.currentConfig.mergeThreshold} (the gate — higher = more cases, lower = more merging)
+  threadMatchScore:   ${input.currentConfig.threadMatchScore} (threaded emails auto-merge since this exceeds the threshold)
+  subjectMatchScore:  ${input.currentConfig.subjectMatchScore} (max points for subject similarity — main signal for non-threaded emails)
+  actorAffinityScore: ${input.currentConfig.actorAffinityScore} (bonus for same sender — usually not enough alone to trigger a merge)
+  timeDecayFreshDays: ${input.currentConfig.timeDecayFreshDays} (emails within this window score at full strength)
+
+KEY INSIGHT: threadMatchScore (${input.currentConfig.threadMatchScore}) already exceeds mergeThreshold (${input.currentConfig.mergeThreshold}),
+so any emails sharing a Gmail thread will auto-merge. Your config tuning mainly affects NON-THREADED emails
+where subjectMatchScore + actorAffinityScore determine the merge decision.
+
+You can suggest overrides to mergeThreshold, subjectMatchScore, actorAffinityScore, and timeDecayFreshDays
+based on the email patterns you see. Explain your reasoning.
 
 CRITICAL RULES:
 1. Return ONLY valid JSON matching the required schema exactly.
@@ -87,7 +111,9 @@ Required JSON shape:
   ],
   "configOverrides": {
     "mergeThreshold": number | null,
-    "senderAffinityWeight": number | null,
+    "subjectMatchScore": number | null,
+    "actorAffinityScore": number | null,
+    "timeDecayFreshDays": number | null,
     "reasoning": string
   },
   "excludeSuggestions": string[],

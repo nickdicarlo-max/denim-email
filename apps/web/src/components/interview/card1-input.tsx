@@ -2,7 +2,6 @@
 
 import { useRef, useState } from "react";
 import { Button } from "../ui/button";
-import { CardShell } from "../ui/card-shell";
 import { Input } from "../ui/input";
 import { ProgressDots } from "../ui/progress-dots";
 import { DOMAIN_CONFIGS, type DomainId, ROLE_OPTIONS, type RoleId } from "./domain-config";
@@ -129,74 +128,96 @@ export function Card1Input({ onNext }: Card1Props) {
 
   const handleContinue = () => {
     if (!role || !domain) return;
-    // Filter out empty groups
     const validGroups = groups.filter((g) => g.whats.length > 0);
-    // Derive flat lists for backward compat
     const whats = validGroups.flatMap((g) => g.whats);
     const whos = validGroups.flatMap((g) => g.whos);
-    onNext({ role, domain, whats, whos, groups: validGroups, sharedWhos: sharedWhos.length > 0 ? sharedWhos : undefined, goals });
+    onNext({
+      role,
+      domain,
+      whats,
+      whos,
+      groups: validGroups,
+      sharedWhos: sharedWhos.length > 0 ? sharedWhos : undefined,
+      goals,
+    });
   };
 
   const totalWhats = groups.reduce((sum, g) => sum + g.whats.length, 0);
   const canContinue = totalWhats >= 1;
 
   return (
-    <CardShell className="flex flex-col h-full p-5 md:p-6 max-w-md mx-auto">
-      <ProgressDots current={0} total={4} />
+    <div className="min-h-screen bg-surface flex flex-col">
+      {/* Top bar */}
+      <div className="px-6 pt-6 pb-4 max-w-2xl mx-auto w-full">
+        <ProgressDots current={0} total={4} />
+      </div>
 
-      <div className="flex-1 overflow-auto">
-        {/* Header */}
-        <div className="mb-4 mt-3">
-          <h2 className="text-xl font-bold text-primary mb-1.5 tracking-tight leading-tight">
-            {step === 1 ? "Let's organize one topic at a time." : "Name the key players"}
-          </h2>
-          <p className="text-sm text-secondary leading-snug">
-            {step === 1
-              ? "First, tell me about yourself."
-              : "Group the things you track with the people involved. You don't have to list them all."}
-          </p>
-        </div>
-
-        {/* Step 1: Role selection */}
+      {/* Main content area */}
+      <div className="flex-1 overflow-auto px-6 pb-8 max-w-2xl mx-auto w-full">
         {step === 1 ? (
-          <div className="flex flex-col gap-1.5">
-            {ROLE_OPTIONS.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => handleSelectRole(r)}
-                className="p-3 rounded-md border-[1.5px] border-border bg-white cursor-pointer flex items-center gap-3 hover:border-accent hover:bg-accent-soft transition text-left"
-              >
-                <span className="text-lg">{r.icon}</span>
-                <span className="text-base font-medium text-primary">{r.label}</span>
-              </button>
-            ))}
+          /* ─── Step 1: Pick a Category ─── */
+          <div className="animate-fadeIn">
+            {/* Editorial headline */}
+            <div className="mb-8 md:mb-10">
+              <h1 className="font-serif text-2xl md:text-[32px] md:leading-[40px] font-bold text-primary tracking-wide mb-3">
+                What would you like to organize?
+              </h1>
+              <p className="text-base text-secondary leading-relaxed">
+                Pick the category that best describes the emails you want to turn into actionable
+                cases.
+              </p>
+            </div>
+
+            {/* Category cards */}
+            <div className="grid gap-3 md:grid-cols-2 md:gap-4">
+              {ROLE_OPTIONS.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => handleSelectRole(r)}
+                  className="group relative p-5 md:p-6 rounded-lg bg-white text-left cursor-pointer transition-all hover:shadow-lg hover:scale-[1.01] active:scale-[0.99]"
+                >
+                  {/* Icon */}
+                  <span className="material-symbols-outlined text-accent text-[28px] mb-3 block">
+                    {r.materialIcon}
+                  </span>
+                  {/* Label */}
+                  <h3 className="text-md font-semibold text-primary mb-1">{r.label}</h3>
+                  {/* Description */}
+                  <p className="text-sm text-secondary">{r.description}</p>
+                </button>
+              ))}
+            </div>
+
+            {/* Step indicator */}
+            <p className="text-center text-xs text-muted mt-8 tracking-widest uppercase">
+              Step 1 of 3
+            </p>
           </div>
         ) : (
-          /* Step 2: Groups (what + who per group + goals) */
+          /* ─── Step 2: Things + People ─── */
           <div className="animate-fadeIn">
-            {/* Role badge - click to go back */}
+            {/* Editorial headline */}
+            <div className="mb-6">
+              <h1 className="font-serif text-xl md:text-2xl font-bold text-primary tracking-wide mb-2">
+                Name the key players
+              </h1>
+              <p className="text-base text-secondary leading-relaxed">
+                Group the things you track with the people involved. You don't have to list them
+                all.
+              </p>
+            </div>
+
+            {/* Role badge — click to go back */}
             <button
               type="button"
               onClick={handleBack}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-accent-soft text-accent-text text-sm font-medium mb-4 cursor-pointer border border-transparent hover:border-accent transition"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium mb-6 cursor-pointer transition-all hover:bg-accent-container"
             >
-              <svg
-                aria-hidden="true"
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="opacity-50"
-              >
-                <path d="M19 12H5" />
-                <path d="m12 19-7-7 7-7" />
-              </svg>
-              <span>{selectedRole?.icon}</span>
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+              <span className="material-symbols-outlined text-[18px]">
+                {selectedRole?.materialIcon}
+              </span>
               {selectedRole?.label}
             </button>
 
@@ -204,14 +225,12 @@ export function Card1Input({ onNext }: Card1Props) {
               <>
                 {/* Group cards */}
                 {groups.map((group, gi) => (
-                  <div
-                    key={gi}
-                    className="mb-3 p-3 rounded-lg border-[1.5px] border-border bg-white"
-                  >
+                  <div key={gi} className="mb-4 p-5 md:p-6 rounded-lg bg-white">
                     {/* Group header */}
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-xs font-semibold uppercase tracking-wider text-accent-text">
-                        {groups.length > 1 ? `Group ${gi + 1} — ` : ""}{dc.whatLabel}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-xs font-semibold uppercase tracking-widest text-accent-text">
+                        {groups.length > 1 ? `Group ${gi + 1} — ` : ""}
+                        {dc.whatLabel}
                       </div>
                       {groups.length > 1 && (
                         <button
@@ -227,11 +246,11 @@ export function Card1Input({ onNext }: Card1Props) {
 
                     {/* WHAT pills */}
                     {group.whats.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mb-2">
+                      <div className="flex flex-wrap gap-2 mb-3">
                         {group.whats.map((name, wi) => (
                           <span
                             key={name}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium"
                           >
                             {name}
                             <button
@@ -240,20 +259,7 @@ export function Card1Input({ onNext }: Card1Props) {
                               className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
                               aria-label={`Remove ${name}`}
                             >
-                              <svg
-                                aria-hidden="true"
-                                width="14"
-                                height="14"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <path d="M18 6 6 18" />
-                                <path d="m6 6 12 12" />
-                              </svg>
+                              <span className="material-symbols-outlined text-[16px]">close</span>
                             </button>
                           </span>
                         ))}
@@ -261,9 +267,11 @@ export function Card1Input({ onNext }: Card1Props) {
                     )}
 
                     {/* WHAT input */}
-                    <div className="flex gap-2 mb-2">
+                    <div className="flex gap-2 mb-3">
                       <Input
-                        ref={(el) => { whatRefs.current[gi] = el; }}
+                        ref={(el) => {
+                          whatRefs.current[gi] = el;
+                        }}
                         value={currentWhats[gi] ?? ""}
                         onChange={(e) =>
                           setCurrentWhats((prev) => ({ ...prev, [gi]: e.target.value }))
@@ -282,13 +290,13 @@ export function Card1Input({ onNext }: Card1Props) {
                         fullWidth={false}
                         onClick={() => handleAddWhat(gi)}
                         disabled={!(currentWhats[gi] ?? "").trim()}
-                        className="whitespace-nowrap px-4"
+                        className="whitespace-nowrap px-5"
                       >
                         Add
                       </Button>
                     </div>
 
-                    {/* WHO section - appears after at least one WHAT */}
+                    {/* WHO section */}
                     {group.whats.length > 0 && (
                       <>
                         {!showWho[gi] ? (
@@ -298,37 +306,26 @@ export function Card1Input({ onNext }: Card1Props) {
                               setShowWho((prev) => ({ ...prev, [gi]: true }));
                               setTimeout(() => whoRefs.current[gi]?.focus(), 100);
                             }}
-                            className="flex items-center gap-1.5 w-full p-2 rounded-md border-[1.5px] border-dashed border-border bg-transparent cursor-pointer text-sm font-medium text-secondary hover:border-warning hover:text-warning-text transition"
+                            className="flex items-center gap-2 w-full p-3 rounded-sm bg-surface-mid text-sm font-medium text-secondary cursor-pointer hover:text-upcoming-text hover:bg-upcoming-soft transition-all"
                           >
-                            <svg
-                              aria-hidden="true"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M12 5v14" />
-                              <path d="M5 12h14" />
-                            </svg>
+                            <span className="material-symbols-outlined text-[18px]">
+                              person_add
+                            </span>
                             Add people who email you about {group.whats[0] || "this"}
                           </button>
                         ) : (
                           <div className="animate-fadeIn">
-                            <div className="text-xs font-semibold uppercase tracking-wider text-warning-text mb-1">
+                            <div className="text-xs font-semibold uppercase tracking-widest text-upcoming-text mb-2">
                               {dc.whoLabel}
                             </div>
 
                             {/* WHO pills */}
                             {group.whos.length > 0 && (
-                              <div className="flex flex-wrap gap-1.5 mb-2">
+                              <div className="flex flex-wrap gap-2 mb-3">
                                 {group.whos.map((name, wi) => (
                                   <span
                                     key={name}
-                                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-warning-soft text-warning-text text-sm font-medium"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-upcoming-soft text-upcoming-text text-sm font-medium"
                                   >
                                     {name}
                                     <button
@@ -337,20 +334,9 @@ export function Card1Input({ onNext }: Card1Props) {
                                       className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
                                       aria-label={`Remove ${name}`}
                                     >
-                                      <svg
-                                        aria-hidden="true"
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        strokeWidth="2"
-                                        strokeLinecap="round"
-                                        strokeLinejoin="round"
-                                      >
-                                        <path d="M18 6 6 18" />
-                                        <path d="m6 6 12 12" />
-                                      </svg>
+                                      <span className="material-symbols-outlined text-[16px]">
+                                        close
+                                      </span>
                                     </button>
                                   </span>
                                 ))}
@@ -360,7 +346,9 @@ export function Card1Input({ onNext }: Card1Props) {
                             {/* WHO input */}
                             <div className="flex gap-2">
                               <Input
-                                ref={(el) => { whoRefs.current[gi] = el; }}
+                                ref={(el) => {
+                                  whoRefs.current[gi] = el;
+                                }}
                                 value={currentWhos[gi] ?? ""}
                                 onChange={(e) =>
                                   setCurrentWhos((prev) => ({ ...prev, [gi]: e.target.value }))
@@ -379,7 +367,7 @@ export function Card1Input({ onNext }: Card1Props) {
                                 fullWidth={false}
                                 onClick={() => handleAddWho(gi)}
                                 disabled={!(currentWhos[gi] ?? "").trim()}
-                                className="whitespace-nowrap px-4"
+                                className="whitespace-nowrap px-5"
                               >
                                 Add
                               </Button>
@@ -391,34 +379,21 @@ export function Card1Input({ onNext }: Card1Props) {
                   </div>
                 ))}
 
-                {/* Add another group button */}
+                {/* Add another group */}
                 {totalWhats >= 1 && (
                   <button
                     type="button"
                     onClick={handleAddGroup}
-                    className="flex items-center gap-1.5 w-full p-2.5 rounded-md border-[1.5px] border-dashed border-border bg-transparent cursor-pointer text-sm font-medium text-secondary hover:border-accent hover:text-accent-text transition mb-3"
+                    className="flex items-center gap-2 w-full p-3 rounded-sm bg-surface-mid text-sm font-medium text-secondary cursor-pointer hover:text-accent-text hover:bg-accent-soft transition-all mb-4"
                   >
-                    <svg
-                      aria-hidden="true"
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <path d="M12 5v14" />
-                      <path d="M5 12h14" />
-                    </svg>
+                    <span className="material-symbols-outlined text-[18px]">add</span>
                     Add another group
                   </button>
                 )}
 
-                {/* People who email you (ungrouped WHOs) */}
+                {/* Shared WHOs */}
                 {totalWhats >= 1 && (
-                  <div className="mb-3">
+                  <div className="mb-4">
                     {!showSharedWhos ? (
                       <button
                         type="button"
@@ -426,42 +401,27 @@ export function Card1Input({ onNext }: Card1Props) {
                           setShowSharedWhos(true);
                           setTimeout(() => sharedWhoRef.current?.focus(), 100);
                         }}
-                        className="flex items-center gap-1.5 w-full p-2.5 rounded-md border-[1.5px] border-dashed border-warning bg-transparent cursor-pointer text-sm font-medium text-warning-text hover:bg-warning-soft transition"
+                        className="flex items-center gap-2 w-full p-3 rounded-sm bg-surface-mid text-sm font-medium text-secondary cursor-pointer hover:text-upcoming-text hover:bg-upcoming-soft transition-all"
                       >
-                        <svg
-                          aria-hidden="true"
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                          <circle cx="9" cy="7" r="4" />
-                          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                        </svg>
+                        <span className="material-symbols-outlined text-[18px]">group_add</span>
                         Add people who email you about this
                       </button>
                     ) : (
-                      <div className="p-3 rounded-lg border-[1.5px] border-warning bg-white animate-fadeIn">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-warning-text mb-1.5">
+                      <div className="p-5 rounded-lg bg-white animate-fadeIn">
+                        <div className="text-xs font-semibold uppercase tracking-widest text-upcoming-text mb-2">
                           People who email you
                         </div>
-                        <p className="text-xs text-muted mb-2">
-                          Names of people who email you about this topic. We&apos;ll search their emails to discover more.
+                        <p className="text-xs text-muted mb-3">
+                          Names of people who email you about this topic. We&apos;ll search their
+                          emails to discover more.
                         </p>
 
-                        {/* Shared WHO pills */}
                         {sharedWhos.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5 mb-2">
+                          <div className="flex flex-wrap gap-2 mb-3">
                             {sharedWhos.map((name, i) => (
                               <span
                                 key={name}
-                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-warning-soft text-warning-text text-sm font-medium"
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-upcoming-soft text-upcoming-text text-sm font-medium"
                               >
                                 {name}
                                 <button
@@ -470,16 +430,15 @@ export function Card1Input({ onNext }: Card1Props) {
                                   className="flex opacity-60 hover:opacity-100 transition cursor-pointer"
                                   aria-label={`Remove ${name}`}
                                 >
-                                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M18 6 6 18" /><path d="m6 6 12 12" />
-                                  </svg>
+                                  <span className="material-symbols-outlined text-[16px]">
+                                    close
+                                  </span>
                                 </button>
                               </span>
                             ))}
                           </div>
                         )}
 
-                        {/* Shared WHO input */}
                         <div className="flex gap-2">
                           <Input
                             ref={sharedWhoRef}
@@ -499,7 +458,7 @@ export function Card1Input({ onNext }: Card1Props) {
                             fullWidth={false}
                             onClick={handleAddSharedWho}
                             disabled={!currentSharedWho.trim()}
-                            className="whitespace-nowrap px-4"
+                            className="whitespace-nowrap px-5"
                           >
                             Add
                           </Button>
@@ -509,37 +468,24 @@ export function Card1Input({ onNext }: Card1Props) {
                   </div>
                 )}
 
-                {/* Reassurance + Goals (show after at least one what) */}
+                {/* Reassurance + Goals */}
                 {totalWhats >= 1 && (
                   <>
-                    {/* Reassurance */}
-                    <div className="p-2.5 rounded-md bg-subtle text-sm text-muted leading-snug flex items-start gap-2">
-                      <svg
-                        aria-hidden="true"
-                        width="16"
-                        height="16"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className="shrink-0 mt-0.5 text-accent"
-                      >
-                        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-                      </svg>
+                    <div className="p-4 rounded-sm bg-surface-mid text-sm text-secondary leading-relaxed flex items-start gap-3">
+                      <span className="material-symbols-outlined text-accent text-[20px] shrink-0 mt-0.5">
+                        auto_awesome
+                      </span>
                       <span>{dc.reassurance}</span>
                     </div>
 
-                    {/* Goals */}
-                    <div className="mt-4">
-                      <div className="text-xs font-semibold uppercase tracking-wider text-success-text mb-1.5">
+                    <div className="mt-6">
+                      <div className="text-xs font-semibold uppercase tracking-widest text-success-text mb-2">
                         What matters most to you?
                       </div>
-                      <div className="text-sm text-muted mb-2">
+                      <p className="text-sm text-muted mb-3">
                         Pick any that apply. This helps us know what to surface first.
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
+                      </p>
+                      <div className="flex flex-wrap gap-2">
                         {dc.goals.map((g) => {
                           const selected = goals.includes(g.id);
                           return (
@@ -548,10 +494,10 @@ export function Card1Input({ onNext }: Card1Props) {
                               type="button"
                               onClick={() => toggleGoal(g.id)}
                               className={[
-                                "inline-flex items-center gap-1 px-3 py-1.5 rounded-full border-[1.5px] text-sm font-medium cursor-pointer transition",
+                                "inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium cursor-pointer transition-all",
                                 selected
-                                  ? "border-success bg-success-soft text-success-text"
-                                  : "border-border bg-white text-secondary hover:border-success hover:text-success-text",
+                                  ? "bg-success-soft text-success-text shadow-sm"
+                                  : "bg-surface-mid text-secondary hover:text-success-text hover:bg-success-soft",
                               ].join(" ")}
                             >
                               <span className="text-sm">{g.icon}</span>
@@ -569,29 +515,17 @@ export function Card1Input({ onNext }: Card1Props) {
         )}
       </div>
 
-      {/* Bottom CTA */}
+      {/* Bottom CTA — sticky */}
       {canContinue && (
-        <div className="mt-3 animate-fadeIn">
+        <div className="px-6 py-4 max-w-2xl mx-auto w-full animate-fadeIn">
           <Button variant="primary" onClick={handleContinue}>
             Continue
-            <svg
-              aria-hidden="true"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="inline-block ml-2"
-            >
-              <path d="M5 12h14" />
-              <path d="m12 5 7 7-7 7" />
-            </svg>
+            <span className="material-symbols-outlined text-[18px] ml-2 align-middle">
+              arrow_forward
+            </span>
           </Button>
         </div>
       )}
-    </CardShell>
+    </div>
   );
 }

@@ -12,16 +12,14 @@
  * Does NOT require a running dev server or live AI calls.
  * Run: pnpm --filter web vitest run --config vitest.integration.config.ts tests/integration/flows/entity-groups.test.ts
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+
+import { buildExtractionPrompt } from "@denim/ai";
+import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { createTestUser, cleanupTestUser, type TestUser } from "../helpers/test-user";
 import { finalizeSchema } from "@/lib/services/interview";
 import { FinalizeConfirmationsSchema } from "@/lib/validation/interview";
-import { buildExtractionPrompt } from "@denim/ai";
-import type { SchemaHypothesis, HypothesisValidation } from "@denim/types";
-
-let testUser: TestUser;
-const createdSchemaIds: string[] = [];
+import { cleanupTestUser, createTestUser, type TestUser } from "../helpers/test-user";
 
 // Minimal hypothesis fixture — no live Claude call needed
 const FIXTURE_HYPOTHESIS: SchemaHypothesis = {
@@ -40,21 +38,89 @@ const FIXTURE_HYPOTHESIS: SchemaHypothesis = {
     },
   ],
   entities: [
-    { name: "Soccer", type: "PRIMARY", secondaryTypeName: null, aliases: ["ZSA Soccer"], confidence: 1.0, source: "user_input" },
-    { name: "Dance", type: "PRIMARY", secondaryTypeName: null, aliases: [], confidence: 1.0, source: "user_input" },
-    { name: "Lanier", type: "PRIMARY", secondaryTypeName: null, aliases: ["Lanier Middle School"], confidence: 1.0, source: "user_input" },
-    { name: "St Agnes", type: "PRIMARY", secondaryTypeName: null, aliases: ["Saint Agnes"], confidence: 1.0, source: "user_input" },
-    { name: "Ziad Allan", type: "SECONDARY", secondaryTypeName: "Coach", aliases: [], confidence: 1.0, source: "user_input" },
+    {
+      name: "Soccer",
+      type: "PRIMARY",
+      secondaryTypeName: null,
+      aliases: ["ZSA Soccer"],
+      confidence: 1.0,
+      source: "user_input",
+    },
+    {
+      name: "Dance",
+      type: "PRIMARY",
+      secondaryTypeName: null,
+      aliases: [],
+      confidence: 1.0,
+      source: "user_input",
+    },
+    {
+      name: "Lanier",
+      type: "PRIMARY",
+      secondaryTypeName: null,
+      aliases: ["Lanier Middle School"],
+      confidence: 1.0,
+      source: "user_input",
+    },
+    {
+      name: "St Agnes",
+      type: "PRIMARY",
+      secondaryTypeName: null,
+      aliases: ["Saint Agnes"],
+      confidence: 1.0,
+      source: "user_input",
+    },
+    {
+      name: "Ziad Allan",
+      type: "SECONDARY",
+      secondaryTypeName: "Coach",
+      aliases: [],
+      confidence: 1.0,
+      source: "user_input",
+    },
   ],
   tags: [
-    { name: "Schedule", description: "Schedule changes", expectedFrequency: "high", isActionable: false },
-    { name: "Action Required", description: "Needs parent action", expectedFrequency: "high", isActionable: true },
-    { name: "Game/Match", description: "Game information", expectedFrequency: "medium", isActionable: false },
-    { name: "Practice", description: "Practice info", expectedFrequency: "high", isActionable: false },
-    { name: "Payment", description: "Fees or payments", expectedFrequency: "medium", isActionable: true },
+    {
+      name: "Schedule",
+      description: "Schedule changes",
+      expectedFrequency: "high",
+      isActionable: false,
+    },
+    {
+      name: "Action Required",
+      description: "Needs parent action",
+      expectedFrequency: "high",
+      isActionable: true,
+    },
+    {
+      name: "Game/Match",
+      description: "Game information",
+      expectedFrequency: "medium",
+      isActionable: false,
+    },
+    {
+      name: "Practice",
+      description: "Practice info",
+      expectedFrequency: "high",
+      isActionable: false,
+    },
+    {
+      name: "Payment",
+      description: "Fees or payments",
+      expectedFrequency: "medium",
+      isActionable: true,
+    },
   ],
   extractedFields: [
-    { name: "eventDate", type: "DATE", description: "Event date", source: "BODY", format: "date", showOnCard: true, aggregation: "LATEST" },
+    {
+      name: "eventDate",
+      type: "DATE",
+      description: "Event date",
+      source: "BODY",
+      format: "date",
+      showOnCard: true,
+      aggregation: "LATEST",
+    },
   ],
   summaryLabels: { beginning: "What", middle: "Details", end: "Action Needed" },
   clusteringConfig: {
@@ -62,6 +128,7 @@ const FIXTURE_HYPOTHESIS: SchemaHypothesis = {
     threadMatchScore: 100,
     subjectMatchScore: 20,
     actorAffinityScore: 10,
+    tagMatchScore: 15,
     timeDecayDays: { fresh: 60 },
     reminderCollapseEnabled: true,
     reminderSubjectSimilarity: 0.85,
@@ -171,146 +238,10 @@ describe("Entity Groups: Zod Validation", () => {
   });
 });
 
-describe("Entity Groups: HTTP Finalize Route (requires running dev server)", () => {
-  let api: ReturnType<typeof import("../helpers/api-client").createApiClient>;
-
-  beforeAll(async () => {
-    testUser = await createTestUser();
-    const { createApiClient } = await import("../helpers/api-client");
-    api = createApiClient(testUser.accessToken);
-  }, 60_000);
-
-  afterAll(async () => {
-    for (const schemaId of createdSchemaIds) {
-      await prisma.caseSchema.deleteMany({ where: { id: schemaId } });
-    }
-    if (testUser?.userId) {
-      await cleanupTestUser(testUser.userId);
-    }
-    await prisma.$disconnect();
-  }, 30_000);
-
-  it("POST /api/interview/finalize with groups creates EntityGroup rows in DB", async () => {
-    // This is the exact payload shape the client sends
-    const res = await api.post("/api/interview/finalize", {
-      hypothesis: FIXTURE_HYPOTHESIS,
-      validation: FIXTURE_VALIDATION,
-      confirmations: {
-        confirmedEntities: [],
-        removedEntities: [],
-        confirmedTags: [],
-        removedTags: [],
-        schemaName: "HTTP Groups Test",
-        groups: [
-          { whats: ["Soccer"], whos: ["Ziad Allan"] },
-          { whats: ["Dance", "Lanier"], whos: [] },
-          { whats: ["St Agnes"], whos: [] },
-        ],
-      },
-    });
-
-    // Should succeed (Gmail discovery may fail without token, but schema creation succeeds)
-    expect(res.status).toBe(200);
-    const schemaId = (res.data as any).data?.schemaId;
-    expect(schemaId).toBeTruthy();
-    createdSchemaIds.push(schemaId);
-
-    // Verify EntityGroup rows via DB
-    const groups = await prisma.entityGroup.findMany({
-      where: { schemaId },
-      orderBy: { index: "asc" },
-      include: {
-        entities: { select: { name: true, type: true }, orderBy: { name: "asc" } },
-      },
-    });
-
-    expect(groups).toHaveLength(3);
-    expect(groups[0].entities.map((e) => e.name).sort()).toEqual(["Soccer", "Ziad Allan"]);
-    expect(groups[1].entities.map((e) => e.name).sort()).toEqual(["Dance", "Lanier"]);
-    expect(groups[2].entities.map((e) => e.name)).toEqual(["St Agnes"]);
-
-    // Verify Ziad is only associated with Soccer
-    const ziad = await prisma.entity.findFirst({
-      where: { schemaId, name: "Ziad Allan" },
-      select: { associatedPrimaryIds: true, groupId: true },
-    });
-    expect(ziad!.groupId).toBeTruthy();
-    const assocIds = ziad!.associatedPrimaryIds as string[];
-    expect(assocIds).toHaveLength(1);
-
-    const soccer = await prisma.entity.findFirst({
-      where: { schemaId, name: "Soccer", type: "PRIMARY" },
-      select: { id: true },
-    });
-    expect(assocIds[0]).toBe(soccer!.id);
-  }, 60_000);
-
-  it("POST /api/interview/finalize rejects invalid groups with 400", async () => {
-    const res = await api.post("/api/interview/finalize", {
-      hypothesis: FIXTURE_HYPOTHESIS,
-      validation: FIXTURE_VALIDATION,
-      confirmations: {
-        confirmedEntities: [],
-        removedEntities: [],
-        confirmedTags: [],
-        removedTags: [],
-        groups: [{ whats: [], whos: [] }], // Invalid: empty whats
-      },
-    });
-
-    expect(res.status).toBe(400);
-    const body = res.data as { error?: string };
-    expect(body.error).toContain("Invalid confirmations");
-  }, 30_000);
-
-  it("POST /api/interview/finalize rejects oversized entity names with 400", async () => {
-    const res = await api.post("/api/interview/finalize", {
-      hypothesis: FIXTURE_HYPOTHESIS,
-      validation: FIXTURE_VALIDATION,
-      confirmations: {
-        confirmedEntities: [],
-        removedEntities: [],
-        confirmedTags: [],
-        removedTags: [],
-        groups: [{ whats: ["a".repeat(256)], whos: [] }],
-      },
-    });
-
-    expect(res.status).toBe(400);
-  }, 30_000);
-
-  it("POST /api/interview/finalize without groups uses blanket association", async () => {
-    const res = await api.post("/api/interview/finalize", {
-      hypothesis: FIXTURE_HYPOTHESIS,
-      validation: FIXTURE_VALIDATION,
-      confirmations: {
-        confirmedEntities: [],
-        removedEntities: [],
-        confirmedTags: [],
-        removedTags: [],
-        // No groups field
-      },
-    });
-
-    expect(res.status).toBe(200);
-    const schemaId = (res.data as any).data?.schemaId;
-    expect(schemaId).toBeTruthy();
-    createdSchemaIds.push(schemaId);
-
-    // Auto-promote creates EntityGroup rows for ungrouped PRIMARY entities
-    // (Soccer, Lanier, St Agnes, Dance = 4 groups)
-    const groups = await prisma.entityGroup.findMany({ where: { schemaId } });
-    expect(groups.length).toBeGreaterThanOrEqual(1);
-
-    // Ziad should be blanket-associated with all primaries (SECONDARY, no group)
-    const ziad = await prisma.entity.findFirst({
-      where: { schemaId, name: "Ziad Allan" },
-      select: { associatedPrimaryIds: true, groupId: true },
-    });
-    expect(ziad!.groupId).toBeNull();
-    expect((ziad!.associatedPrimaryIds as string[]).length).toBeGreaterThanOrEqual(2);
-  }, 60_000);
-});
+// HTTP Finalize Route describe block removed in Task 15 — the
+// /api/interview/finalize route was deleted. The Zod-validation +
+// direct-service blocks below cover the same logic without needing
+// a running dev server.
 
 describe("Entity Groups: Direct Service Tests", () => {
   let serviceTestUser: TestUser;
@@ -343,12 +274,9 @@ describe("Entity Groups: Direct Service Tests", () => {
       ],
     };
 
-    const schemaId = await finalizeSchema(
-      FIXTURE_HYPOTHESIS,
-      FIXTURE_VALIDATION,
-      confirmations,
-      { userId: serviceTestUser.userId },
-    );
+    const schemaId = await finalizeSchema(FIXTURE_HYPOTHESIS, FIXTURE_VALIDATION, confirmations, {
+      userId: serviceTestUser.userId,
+    });
     serviceSchemaIds.push(schemaId);
 
     // --- Verify EntityGroup rows ---
@@ -435,13 +363,27 @@ describe("Entity Groups: Direct Service Tests", () => {
     const schema = await prisma.caseSchema.findUniqueOrThrow({
       where: { id: schemaId },
       include: {
-        tags: { where: { isActive: true }, select: { name: true, description: true, isActive: true } },
-        entities: { where: { isActive: true }, select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true } },
+        tags: {
+          where: { isActive: true },
+          select: { name: true, description: true, isActive: true },
+        },
+        entities: {
+          where: { isActive: true },
+          select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
+        },
         extractedFields: { select: { name: true, type: true, description: true, source: true } },
-        exclusionRules: { where: { isActive: true }, select: { ruleType: true, pattern: true, isActive: true } },
+        exclusionRules: {
+          where: { isActive: true },
+          select: { ruleType: true, pattern: true, isActive: true },
+        },
         entityGroups: {
           orderBy: { index: "asc" },
-          include: { entities: { where: { isActive: true }, select: { name: true, type: true, isActive: true } } },
+          include: {
+            entities: {
+              where: { isActive: true },
+              select: { name: true, type: true, isActive: true },
+            },
+          },
         },
       },
     });
@@ -511,12 +453,9 @@ describe("Entity Groups: Direct Service Tests", () => {
       // No groups field
     };
 
-    const schemaId = await finalizeSchema(
-      FIXTURE_HYPOTHESIS,
-      FIXTURE_VALIDATION,
-      confirmations,
-      { userId: serviceTestUser.userId },
-    );
+    const schemaId = await finalizeSchema(FIXTURE_HYPOTHESIS, FIXTURE_VALIDATION, confirmations, {
+      userId: serviceTestUser.userId,
+    });
     serviceSchemaIds.push(schemaId);
 
     // Auto-promote creates EntityGroup rows for ungrouped PRIMARY entities

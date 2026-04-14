@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - button "Open Next.js Dev Tools" [ref=e34] [cursor=pointer]:
+    - img [ref=e35]
+  - alert [ref=e38]
+  - generic [ref=e161]:
+    - generic [ref=e162]: search
+    - heading "Searching your inbox" [level=1] [ref=e163]
+    - paragraph [ref=e164]: Looking for emails that match what you told us about.

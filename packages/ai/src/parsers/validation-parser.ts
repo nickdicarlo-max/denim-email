@@ -8,6 +8,11 @@ const DiscoveredEntitySchema = z.object({
   confidence: z.number().min(0).max(1),
   source: z.string(),
   emailCount: z.number().int().nonnegative().default(0),
+  emailIndices: z.array(z.number()).default([]),
+  likelyAliasOf: z.string().nullable().default(null),
+  aliasConfidence: z.number().nullable().default(null),
+  aliasReason: z.string().nullable().default(null),
+  relatedUserThing: z.string().nullable().default(null),
 });
 
 const SuggestedTagSchema = z.object({

@@ -1,8 +1,9 @@
-import { decryptTokens, encryptTokens } from "@/lib/gmail/tokens";
-import { logger } from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
 import { AuthError, ExternalAPIError } from "@denim/types";
 import { z } from "zod";
+import { decryptTokens, encryptTokens } from "@/lib/gmail/tokens";
+import { logger } from "@/lib/logger";
+import { withLogging } from "@/lib/logger-helpers";
+import { prisma } from "@/lib/prisma";
 
 const StoredTokensSchema = z.object({
   access_token: z.string(),
@@ -145,77 +146,72 @@ async function refreshAndStore(
     throw new ExternalAPIError("Google OAuth credentials not configured", "google");
   }
 
-  const startMs = Date.now();
-  logger.info({
-    service: "gmail-tokens",
-    operation: "refreshToken",
-    userId,
-  });
-
-  const response = await fetchWithRetry("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: tokens.refresh_token,
-      grant_type: "refresh_token",
-    }),
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    // 400 with "invalid_grant" means refresh token was revoked
-    if (response.status === 400 && body.includes("invalid_grant")) {
-      // Clear the invalid tokens
-      await prisma.user.update({
-        where: { id: userId },
-        data: { googleTokens: null },
+  return withLogging<string>(
+    {
+      service: "gmail-tokens",
+      operation: "refreshToken",
+      context: { userId },
+    },
+    async () => {
+      const response = await fetchWithRetry("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          refresh_token: tokens.refresh_token,
+          grant_type: "refresh_token",
+        }),
       });
-      throw new AuthError("Gmail access revoked, please reconnect.");
-    }
-    throw new ExternalAPIError(`Token refresh failed (${response.status})`, "google", body);
-  }
 
-  const data = await response.json();
-  const newTokens: StoredTokens = {
-    access_token: data.access_token,
-    // Google may rotate the refresh token
-    refresh_token: data.refresh_token ?? tokens.refresh_token,
-    expiry_date: Date.now() + (data.expires_in ?? 3600) * 1000,
-    scope: data.scope ?? tokens.scope,
-  };
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        // 400 with "invalid_grant" means refresh token was revoked
+        if (response.status === 400 && body.includes("invalid_grant")) {
+          // Clear the invalid tokens
+          await prisma.user.update({
+            where: { id: userId },
+            data: { googleTokens: null },
+          });
+          throw new AuthError("Gmail access revoked, please reconnect.");
+        }
+        throw new ExternalAPIError(`Token refresh failed (${response.status})`, "google", body);
+      }
 
-  const newEncrypted = encryptTokens(newTokens);
+      const data = await response.json();
+      const newTokens: StoredTokens = {
+        access_token: data.access_token,
+        // Google may rotate the refresh token
+        refresh_token: data.refresh_token ?? tokens.refresh_token,
+        expiry_date: Date.now() + (data.expires_in ?? 3600) * 1000,
+        scope: data.scope ?? tokens.scope,
+      };
 
-  // Optimistic lock: only update if the stored blob hasn't changed since we read it.
-  // Compare against the original encrypted string we read from DB (not re-encrypted,
-  // since AES-GCM uses random IVs so re-encrypting the same data gives different output).
-  const updated = await prisma.$executeRaw`
-    UPDATE users SET "googleTokens" = ${newEncrypted}, "updatedAt" = NOW()
-    WHERE id = ${userId} AND "googleTokens" = ${originalEncrypted}
-  `;
+      const newEncrypted = encryptTokens(newTokens);
 
-  if (updated === 0) {
-    // Another request already refreshed — re-read the fresh token
-    const freshUser = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { googleTokens: true },
-    });
-    if (!freshUser?.googleTokens) {
-      throw new AuthError("Gmail not connected. Please connect Gmail first.");
-    }
-    return parseTokens(freshUser.googleTokens).access_token;
-  }
+      // Optimistic lock: only update if the stored blob hasn't changed since we read it.
+      // Compare against the original encrypted string we read from DB (not re-encrypted,
+      // since AES-GCM uses random IVs so re-encrypting the same data gives different output).
+      const updated = await prisma.$executeRaw`
+        UPDATE users SET "googleTokens" = ${newEncrypted}, "updatedAt" = NOW()
+        WHERE id = ${userId} AND "googleTokens" = ${originalEncrypted}
+      `;
 
-  logger.info({
-    service: "gmail-tokens",
-    operation: "refreshToken.complete",
-    userId,
-    durationMs: Date.now() - startMs,
-  });
+      if (updated === 0) {
+        // Another request already refreshed — re-read the fresh token
+        const freshUser = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { googleTokens: true },
+        });
+        if (!freshUser?.googleTokens) {
+          throw new AuthError("Gmail not connected. Please connect Gmail first.");
+        }
+        return parseTokens(freshUser.googleTokens).access_token;
+      }
 
-  return newTokens.access_token;
+      return newTokens.access_token;
+    },
+  );
 }
 
 /**

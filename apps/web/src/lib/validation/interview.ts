@@ -13,9 +13,13 @@ export const InterviewInputSchema = z.object({
   domain: z.string().trim().min(1, "Domain is required"),
   whats: z.array(entityNameString).min(1, "At least one primary entity is required"),
   whos: z.array(entityNameString),
-  groups: z.array(EntityGroupSchema).min(1, "At least one entity group is required").max(20),
+  // groups and goals are optional in the simplified onboarding flow.
+  // When empty, the prompt builder falls back to flat whats/whos and skips
+  // goal-based field adjustments.
+  groups: z.array(EntityGroupSchema).max(20).default([]),
   sharedWhos: z.array(entityNameString).optional(),
-  goals: z.array(z.string()).min(1, "At least one goal is required"),
+  goals: z.array(z.string()).default([]),
+  customDescription: z.string().trim().max(500).optional(),
 });
 
 export const FinalizeConfirmationsSchema = z.object({

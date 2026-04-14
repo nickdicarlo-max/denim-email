@@ -1,0 +1,1061 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - heading "Denim" [level=1] [ref=e4]
+      - generic [ref=e5]: account_circle
+    - generic [ref=e41]:
+      - button "All" [ref=e42] [cursor=pointer]
+      - button "Girls Activites Nick Test March 21 2026" [ref=e43] [cursor=pointer]
+      - button "Kids Activities" [ref=e44] [cursor=pointer]
+      - button "North 40 Test 1 – 1501 Sylvan / 3305 Cardinal / 851 Peavy" [ref=e45] [cursor=pointer]
+      - button "March 23 Soccer Test After Dependency Update" [ref=e46] [cursor=pointer]
+      - button "School Parent – Soccer / St Agnes / Lanier / Dance" [ref=e47] [cursor=pointer]
+      - button "Property Management – Portfolio Pro Advisors" [ref=e48] [cursor=pointer]
+      - button "Girls Activities Test 2 March 22" [ref=e49] [cursor=pointer]
+      - button "Property Management" [ref=e50] [cursor=pointer]
+    - generic [ref=e51]:
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - generic [ref=e54]: date_range
+          - heading "This Week" [level=2] [ref=e55]
+        - generic [ref=e56]:
+          - link "St. Agnes School (Stagnes) Stagnes Academic Awards Ceremony – Apr 14 Tue, Apr 14 · 7:00 PM check_box_outline_blank Attend Stagnes Academic Awards Mar 18" [active] [ref=e57] [cursor=pointer]:
+            - /url: /feed/cmn1x8suh00nlqey47n2dg1kh
+            - generic [ref=e58]:
+              - generic [ref=e60]: St. Agnes School (Stagnes)
+              - heading "Stagnes Academic Awards Ceremony – Apr 14" [level=3] [ref=e62]
+              - paragraph [ref=e63]: Tue, Apr 14 · 7:00 PM
+              - generic [ref=e64]:
+                - generic [ref=e65]: check_box_outline_blank
+                - generic [ref=e66]: Attend Stagnes Academic Awards
+              - paragraph [ref=e67]: Mar 18
+          - link "2310 Healey 2310 Healey - Tenant Non-Renewal & Eviction Timothy Bishop · Sun, Mar 15 check_box_outline_blank Ensure tenant vacates by lease expiration +1 more Feb 17 – 12d active" [ref=e68] [cursor=pointer]:
+            - /url: /feed/cmn20s9yx00izqe5c8tufwa1c
+            - generic [ref=e69]:
+              - generic [ref=e71]: 2310 Healey
+              - heading "2310 Healey - Tenant Non-Renewal & Eviction" [level=3] [ref=e73]
+              - paragraph [ref=e74]: Timothy Bishop · Sun, Mar 15
+              - generic [ref=e75]:
+                - generic [ref=e76]: check_box_outline_blank
+                - generic [ref=e77]: Ensure tenant vacates by lease expiration
+                - generic [ref=e78]: +1 more
+              - paragraph [ref=e79]: Feb 17 – 12d active
+          - link "1501 Sylvan 2310 Healey - Tenant Non-Renewal & Eviction Vivek Gupta · Sun, Mar 15 check_box_outline_blank Tenant vacate deadline - lease expiration +2 more Feb 14 – 9d active" [ref=e80] [cursor=pointer]:
+            - /url: /feed/cmn0ikr6u013dqenwt72zatb2
+            - generic [ref=e81]:
+              - generic [ref=e83]: 1501 Sylvan
+              - heading "2310 Healey - Tenant Non-Renewal & Eviction" [level=3] [ref=e85]
+              - paragraph [ref=e86]: Vivek Gupta · Sun, Mar 15
+              - generic [ref=e87]:
+                - generic [ref=e88]: check_box_outline_blank
+                - generic [ref=e89]: Tenant vacate deadline - lease expiration
+                - generic [ref=e90]: +2 more
+              - paragraph [ref=e91]: Feb 14 – 9d active
+      - generic [ref=e92]:
+        - generic [ref=e93]:
+          - generic [ref=e94]: upcoming
+          - heading "Upcoming" [level=2] [ref=e95]
+        - generic [ref=e96]:
+          - link "1501 Sylvan 205 Freedom Trail – Running Toilet Repair Krystin Jernigan check_box_outline_blank Confirm toilet repair completed by Newcomer Plumbing Mar 19" [ref=e97] [cursor=pointer]:
+            - /url: /feed/cmn0illim01h3qenwt19pkx5p
+            - generic [ref=e98]:
+              - generic [ref=e100]: 1501 Sylvan
+              - heading "205 Freedom Trail – Running Toilet Repair" [level=3] [ref=e102]
+              - paragraph [ref=e103]: Krystin Jernigan
+              - generic [ref=e104]:
+                - generic [ref=e105]: check_box_outline_blank
+                - generic [ref=e106]: Confirm toilet repair completed by Newcomer Plumbing
+              - paragraph [ref=e107]: Mar 19
+          - link "205 Freedom 205 Freedom Trail - Running Toilet Repair Krystin Jernigan check_box_outline_blank Newcomer Plumbing to fix running toilet in master bathroom Mar 19" [ref=e108] [cursor=pointer]:
+            - /url: /feed/cmn20sjyb00nlqe5coa4j9pno
+            - generic [ref=e109]:
+              - generic [ref=e111]: 205 Freedom
+              - heading "205 Freedom Trail - Running Toilet Repair" [level=3] [ref=e113]
+              - paragraph [ref=e114]: Krystin Jernigan
+              - generic [ref=e115]:
+                - generic [ref=e116]: check_box_outline_blank
+                - generic [ref=e117]: Newcomer Plumbing to fix running toilet in master bathroom
+              - paragraph [ref=e118]: Mar 19
+          - link "205 Freedom 205 Freedom Trl Inspection Report Timothy Bishop check_box_outline_blank Repair sidewalk at 205 Freedom Trl +1 more Mar 18" [ref=e119] [cursor=pointer]:
+            - /url: /feed/cmn20sjk700nfqe5ca20uewa0
+            - generic [ref=e120]:
+              - generic [ref=e122]: 205 Freedom
+              - heading "205 Freedom Trl Inspection Report" [level=3] [ref=e124]
+              - paragraph [ref=e125]: Timothy Bishop
+              - generic [ref=e126]:
+                - generic [ref=e127]: check_box_outline_blank
+                - generic [ref=e128]: Repair sidewalk at 205 Freedom Trl
+                - generic [ref=e129]: +1 more
+              - paragraph [ref=e130]: Mar 18
+          - link "1501 Sylvan 205 Freedom Trl Property Inspection Findings Timothy Bishop check_box_outline_blank Address light fixture replacement +1 more Mar 18" [ref=e131] [cursor=pointer]:
+            - /url: /feed/cmn0ill2r01gxqenw0nhsn3bu
+            - generic [ref=e132]:
+              - generic [ref=e134]: 1501 Sylvan
+              - heading "205 Freedom Trl Property Inspection Findings" [level=3] [ref=e136]
+              - paragraph [ref=e137]: Timothy Bishop
+              - generic [ref=e138]:
+                - generic [ref=e139]: check_box_outline_blank
+                - generic [ref=e140]: Address light fixture replacement
+                - generic [ref=e141]: +1 more
+              - paragraph [ref=e142]: Mar 18
+          - link "1501 Sylvan 1501 Sylvan - Lease Renewal Decision Apr 2026 Vivek Gupta · Wed, Apr 29 check_box_outline_blank Send lease renewal offer to tenant at $1,725/month Mar 17" [ref=e143] [cursor=pointer]:
+            - /url: /feed/cmn20siow00n1qe5camfaisq6
+            - generic [ref=e144]:
+              - generic [ref=e146]: 1501 Sylvan
+              - heading "1501 Sylvan - Lease Renewal Decision Apr 2026" [level=3] [ref=e148]
+              - paragraph [ref=e149]: Vivek Gupta · Wed, Apr 29
+              - generic [ref=e150]:
+                - generic [ref=e151]: check_box_outline_blank
+                - generic [ref=e152]: Send lease renewal offer to tenant at $1,725/month
+              - paragraph [ref=e153]: Mar 17
+          - link "1501 Sylvan 1501 Sylvan - Lease Renewal Decision Apr 2026 Vivek Gupta · Wed, Apr 29 check_box_outline_blank Send 1-year lease renewal offer at $1,725/month +1 more Mar 17" [ref=e154] [cursor=pointer]:
+            - /url: /feed/cmn0ilk8701gjqenwzoha7skr
+            - generic [ref=e155]:
+              - generic [ref=e157]: 1501 Sylvan
+              - heading "1501 Sylvan - Lease Renewal Decision Apr 2026" [level=3] [ref=e159]
+              - paragraph [ref=e160]: Vivek Gupta · Wed, Apr 29
+              - generic [ref=e161]:
+                - generic [ref=e162]: check_box_outline_blank
+                - generic [ref=e163]: Send 1-year lease renewal offer at $1,725/month
+                - generic [ref=e164]: +1 more
+              - paragraph [ref=e165]: Mar 17
+          - link "1501 Sylvan 1906 Crockett Property Inspection Report Timothy Bishop check_box_outline_blank Address cracking tile in kitchen/laundry Mar 16" [ref=e166] [cursor=pointer]:
+            - /url: /feed/cmn0ilji601g7qenwvio6zipi
+            - generic [ref=e167]:
+              - generic [ref=e169]: 1501 Sylvan
+              - heading "1906 Crockett Property Inspection Report" [level=3] [ref=e171]
+              - paragraph [ref=e172]: Timothy Bishop
+              - generic [ref=e173]:
+                - generic [ref=e174]: check_box_outline_blank
+                - generic [ref=e175]: Address cracking tile in kitchen/laundry
+              - paragraph [ref=e176]: Mar 16
+          - link "1501 Sylvan 2310 Healey Drive – Bullet Hole Roof Repair Invoice Timothy Bishop check_box_outline_blank Review and pay roof repair invoice Mar 15 – 2d active" [ref=e177] [cursor=pointer]:
+            - /url: /feed/cmn0ili0e01fjqenwbqpmt7zv
+            - generic [ref=e178]:
+              - generic [ref=e180]: 1501 Sylvan
+              - heading "2310 Healey Drive – Bullet Hole Roof Repair Invoice" [level=3] [ref=e182]
+              - paragraph [ref=e183]: Timothy Bishop
+              - generic [ref=e184]:
+                - generic [ref=e185]: check_box_outline_blank
+                - generic [ref=e186]: Review and pay roof repair invoice
+              - paragraph [ref=e187]: Mar 15 – 2d active
+          - link "2310 Healey 2310 Healey Drive – Roof Repair Bullet Damage Timothy Bishop check_box_outline_blank Review and confirm roof repair invoice payment Mar 15 – 2d active" [ref=e188] [cursor=pointer]:
+            - /url: /feed/cmn20shpr00mlqe5crqvpt1my
+            - generic [ref=e189]:
+              - generic [ref=e191]: 2310 Healey
+              - heading "2310 Healey Drive – Roof Repair Bullet Damage" [level=3] [ref=e193]
+              - paragraph [ref=e194]: Timothy Bishop
+              - generic [ref=e195]:
+                - generic [ref=e196]: check_box_outline_blank
+                - generic [ref=e197]: Review and confirm roof repair invoice payment
+              - paragraph [ref=e198]: Mar 15 – 2d active
+          - link "1501 Sylvan North 40 Partners LLC 2025 Tax Returns Vivek Gupta check_box_outline_blank File state tax returns for North 40 Partners LLC Mar 15 – 32d active" [ref=e199] [cursor=pointer]:
+            - /url: /feed/cmn0ikvjb015dqenwzewu1nig
+            - generic [ref=e200]:
+              - generic [ref=e202]: 1501 Sylvan
+              - heading "North 40 Partners LLC 2025 Tax Returns" [level=3] [ref=e204]
+              - paragraph [ref=e205]: Vivek Gupta
+              - generic [ref=e206]:
+                - generic [ref=e207]: check_box_outline_blank
+                - generic [ref=e208]: File state tax returns for North 40 Partners LLC
+              - paragraph [ref=e209]: Mar 15 – 32d active
+          - link "205 Freedom North 40 Partners LLC 2025 Tax Returns Filing Vivek Gupta check_box_outline_blank Complete state tax filings for North 40 Partners LLC Mar 15 – 32d active" [ref=e210] [cursor=pointer]:
+            - /url: /feed/cmn20scp300k9qe5ccev2wmsz
+            - generic [ref=e211]:
+              - generic [ref=e213]: 205 Freedom
+              - heading "North 40 Partners LLC 2025 Tax Returns Filing" [level=3] [ref=e214]
+              - paragraph [ref=e215]: Vivek Gupta
+              - generic [ref=e216]:
+                - generic [ref=e217]: check_box_outline_blank
+                - generic [ref=e218]: Complete state tax filings for North 40 Partners LLC
+              - paragraph [ref=e219]: Mar 15 – 32d active
+          - link "1501 Sylvan 205 Freedom Trail – Failed City Inspection Krystin Jernigan check_box_outline_blank Provide guidance on tenant-related inspection items +2 more Mar 11" [ref=e220] [cursor=pointer]:
+            - /url: /feed/cmn0ilh0q01f3qenwkae0zz5a
+            - generic [ref=e221]:
+              - generic [ref=e223]: 1501 Sylvan
+              - heading "205 Freedom Trail – Failed City Inspection" [level=3] [ref=e225]
+              - paragraph [ref=e226]: Krystin Jernigan
+              - generic [ref=e227]:
+                - generic [ref=e228]: check_box_outline_blank
+                - generic [ref=e229]: Provide guidance on tenant-related inspection items
+                - generic [ref=e230]: +2 more
+              - paragraph [ref=e231]: Mar 11
+          - link "205 Freedom 205 Freedom Trail - Failed City Inspection Krystin Jernigan check_box_outline_blank Complete repairs from failed city inspection +1 more Mar 11" [ref=e232] [cursor=pointer]:
+            - /url: /feed/cmn20sgrv00m5qe5cyg8oi89g
+            - generic [ref=e233]:
+              - generic [ref=e235]: 205 Freedom
+              - heading "205 Freedom Trail - Failed City Inspection" [level=3] [ref=e237]
+              - paragraph [ref=e238]: Krystin Jernigan
+              - generic [ref=e239]:
+                - generic [ref=e240]: check_box_outline_blank
+                - generic [ref=e241]: Complete repairs from failed city inspection
+                - generic [ref=e242]: +1 more
+              - paragraph [ref=e243]: Mar 11
+          - link "1501 Sylvan 3910 Bucknell Drive Foundation & Subfloor Repair Timothy Bishop check_box_outline_blank Schedule property visit with Timothy or Mo +1 more Mar 4 – 14d active" [ref=e244] [cursor=pointer]:
+            - /url: /feed/cmn0il32f018rqenw1v9sp56q
+            - generic [ref=e245]:
+              - generic [ref=e247]: 1501 Sylvan
+              - heading "3910 Bucknell Drive Foundation & Subfloor Repair" [level=3] [ref=e249]
+              - paragraph [ref=e250]: Timothy Bishop
+              - generic [ref=e251]:
+                - generic [ref=e252]: check_box_outline_blank
+                - generic [ref=e253]: Schedule property visit with Timothy or Mo
+                - generic [ref=e254]: +1 more
+              - paragraph [ref=e255]: Mar 4 – 14d active
+          - link "Soccer ZSA U11/12 Girls Spring 2026 League Games Sun, Mar 29 · 11:00 AM · McGovern Park check_box_outline_blank League Game vs. Rise ECNL +2 more Mar 2 – 28d active" [ref=e256] [cursor=pointer]:
+            - /url: /feed/cmmyufzd1008xqe80ock3z8hr
+            - generic [ref=e257]:
+              - generic [ref=e259]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 League Games" [level=3] [ref=e261]
+              - paragraph [ref=e262]: Sun, Mar 29 · 11:00 AM · McGovern Park
+              - generic [ref=e263]:
+                - generic [ref=e264]: check_box_outline_blank
+                - generic [ref=e265]: League Game vs. Rise ECNL
+                - generic [ref=e266]: +2 more
+              - paragraph [ref=e267]: Mar 2 – 28d active
+          - link "Soccer ZSA U11/12 Girls Game vs Houston Select Sat, Apr 25 · 7:00 PM · Rice School check_box_outline_blank Update availability for game vs Houston Select +1 more Mar 2" [ref=e268] [cursor=pointer]:
+            - /url: /feed/cmn0hkum100e2qenwd8rc6xg3
+            - generic [ref=e269]:
+              - generic [ref=e271]: Soccer
+              - heading "ZSA U11/12 Girls Game vs Houston Select" [level=3] [ref=e273]
+              - paragraph [ref=e274]: Sat, Apr 25 · 7:00 PM · Rice School
+              - generic [ref=e275]:
+                - generic [ref=e276]: check_box_outline_blank
+                - generic [ref=e277]: Update availability for game vs Houston Select
+                - generic [ref=e278]: +1 more
+              - paragraph [ref=e279]: Mar 2
+          - link "Soccer ZSA U11/12 Girls Game vs. Houston Select - Apr 26 Sun, Apr 26 · 12:30 PM · Rice School / La Escuela Rice check_box_outline_blank Game vs. Houston Select Mar 2" [ref=e280] [cursor=pointer]:
+            - /url: /feed/cmn3zgzg1007r5oqehs8k568d
+            - generic [ref=e281]:
+              - generic [ref=e283]: Soccer
+              - heading "ZSA U11/12 Girls Game vs. Houston Select - Apr 26" [level=3] [ref=e285]
+              - paragraph [ref=e286]: Sun, Apr 26 · 12:30 PM · Rice School / La Escuela Rice
+              - generic [ref=e287]:
+                - generic [ref=e288]: check_box_outline_blank
+                - generic [ref=e289]: Game vs. Houston Select
+              - paragraph [ref=e290]: Mar 2
+          - link "Soccer ZSA U11/12 Girls Game vs. Houston Select Sun, Apr 26 · 12:30 PM · Rice School check_box_outline_blank Game vs. Houston Select at Rice School Mar 2" [ref=e291] [cursor=pointer]:
+            - /url: /feed/cmn1x7ybf00kyqey4as9t47nq
+            - generic [ref=e292]:
+              - generic [ref=e294]: Soccer
+              - heading "ZSA U11/12 Girls Game vs. Houston Select" [level=3] [ref=e296]
+              - paragraph [ref=e297]: Sun, Apr 26 · 12:30 PM · Rice School
+              - generic [ref=e298]:
+                - generic [ref=e299]: check_box_outline_blank
+                - generic [ref=e300]: Game vs. Houston Select at Rice School
+              - paragraph [ref=e301]: Mar 2
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Game vs. Rise Club Sun, Apr 19 · 9:30 AM · Rice School check_box_outline_blank Soccer Game vs. Rise Club Mar 2" [ref=e302] [cursor=pointer]:
+            - /url: /feed/cmn1x7xyy00ksqey4yci67sqv
+            - generic [ref=e303]:
+              - generic [ref=e305]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Game vs. Rise Club" [level=3] [ref=e307]
+              - paragraph [ref=e308]: Sun, Apr 19 · 9:30 AM · Rice School
+              - generic [ref=e309]:
+                - generic [ref=e310]: check_box_outline_blank
+                - generic [ref=e311]: Soccer Game vs. Rise Club
+              - paragraph [ref=e312]: Mar 2
+          - link "Soccer ZSA U11/12 Girls Game vs. Rise Club – Apr 19 Sun, Apr 19 · 9:30 AM · Rice School, Houston check_box_outline_blank Game vs. Rise Club Mar 2" [ref=e313] [cursor=pointer]:
+            - /url: /feed/cmn0hku8a00dwqenwlfgxk9js
+            - generic [ref=e314]:
+              - generic [ref=e316]: Soccer
+              - heading "ZSA U11/12 Girls Game vs. Rise Club – Apr 19" [level=3] [ref=e318]
+              - paragraph [ref=e319]: Sun, Apr 19 · 9:30 AM · Rice School, Houston
+              - generic [ref=e320]:
+                - generic [ref=e321]: check_box_outline_blank
+                - generic [ref=e322]: Game vs. Rise Club
+              - paragraph [ref=e323]: Mar 2
+          - link "Soccer ZSA U11/12 Girls Game vs. Rise Club – Apr 19 Sun, Apr 19 · 9:30 AM · Rice School, Houston, TX check_box_outline_blank Sign up for volunteer assignments +1 more Mar 2" [ref=e324] [cursor=pointer]:
+            - /url: /feed/cmn3zgz8s007o5oqe0ygrnvq8
+            - generic [ref=e325]:
+              - generic [ref=e327]: Soccer
+              - heading "ZSA U11/12 Girls Game vs. Rise Club – Apr 19" [level=3] [ref=e329]
+              - paragraph [ref=e330]: Sun, Apr 19 · 9:30 AM · Rice School, Houston, TX
+              - generic [ref=e331]:
+                - generic [ref=e332]: check_box_outline_blank
+                - generic [ref=e333]: Sign up for volunteer assignments
+                - generic [ref=e334]: +1 more
+              - paragraph [ref=e335]: Mar 2
+          - link "2310 Healey 2310 Healey Drive – Recurring Roof Leak Krystin Jernigan check_box_outline_blank Confirm roof leak repair completion by H3 Contracting Mar 2" [ref=e336] [cursor=pointer]:
+            - /url: /feed/cmn20sfby00lhqe5cv2ow0fs8
+            - generic [ref=e337]:
+              - generic [ref=e339]: 2310 Healey
+              - heading "2310 Healey Drive – Recurring Roof Leak" [level=3] [ref=e341]
+              - paragraph [ref=e342]: Krystin Jernigan
+              - generic [ref=e343]:
+                - generic [ref=e344]: check_box_outline_blank
+                - generic [ref=e345]: Confirm roof leak repair completion by H3 Contracting
+              - paragraph [ref=e346]: Mar 2
+          - link "1501 Sylvan 2310 Healey Drive – Recurring Roof Leak Krystin Jernigan check_box_outline_blank H3 Contracting to complete roof leak repair Mar 2" [ref=e347] [cursor=pointer]:
+            - /url: /feed/cmn0ile1d01drqenwo2lifn42
+            - generic [ref=e348]:
+              - generic [ref=e350]: 1501 Sylvan
+              - heading "2310 Healey Drive – Recurring Roof Leak" [level=3] [ref=e352]
+              - paragraph [ref=e353]: Krystin Jernigan
+              - generic [ref=e354]:
+                - generic [ref=e355]: check_box_outline_blank
+                - generic [ref=e356]: H3 Contracting to complete roof leak repair
+              - paragraph [ref=e357]: Mar 2
+          - link "1501 Sylvan 1906 Crockett St – Leaking Bathroom Faucet Krystin Jernigan check_box_outline_blank Newcomer Plumbing to repair leaking bathroom faucet Mar 2" [ref=e358] [cursor=pointer]:
+            - /url: /feed/cmn0ildo201dlqenwm149qqwi
+            - generic [ref=e359]:
+              - generic [ref=e361]: 1501 Sylvan
+              - heading "1906 Crockett St – Leaking Bathroom Faucet" [level=3] [ref=e363]
+              - paragraph [ref=e364]: Krystin Jernigan
+              - generic [ref=e365]:
+                - generic [ref=e366]: check_box_outline_blank
+                - generic [ref=e367]: Newcomer Plumbing to repair leaking bathroom faucet
+              - paragraph [ref=e368]: Mar 2
+          - link "1501 Sylvan 3910 Bucknell Vacancy, Renovations & Foundation Work Timothy Bishop · $4.7k check_box_outline_blank Obtain and review renovation cost estimates +2 more Feb 28 – 3d active" [ref=e369] [cursor=pointer]:
+            - /url: /feed/cmn0ilcxp01d9qenwbv0v0f9f
+            - generic [ref=e370]:
+              - generic [ref=e372]: 1501 Sylvan
+              - heading "3910 Bucknell Vacancy, Renovations & Foundation Work" [level=3] [ref=e374]
+              - paragraph [ref=e375]: Timothy Bishop · $4.7k
+              - generic [ref=e376]:
+                - generic [ref=e377]: check_box_outline_blank
+                - generic [ref=e378]: Obtain and review renovation cost estimates
+                - generic [ref=e379]: +2 more
+              - paragraph [ref=e380]: Feb 28 – 3d active
+          - link "1501 Sylvan 1906 Crockett St – Tile Replacement & Subfloor Inspection Nick DiCarlo check_box_outline_blank Schedule foundation/subfloor inspection at 1906 Crockett St +1 more Feb 24 – 1d active" [ref=e381] [cursor=pointer]:
+            - /url: /feed/cmn0ilaln01c7qenwieun3x0w
+            - generic [ref=e382]:
+              - generic [ref=e384]: 1501 Sylvan
+              - heading "1906 Crockett St – Tile Replacement & Subfloor Inspection" [level=3] [ref=e386]
+              - paragraph [ref=e387]: Nick DiCarlo
+              - generic [ref=e388]:
+                - generic [ref=e389]: check_box_outline_blank
+                - generic [ref=e390]: Schedule foundation/subfloor inspection at 1906 Crockett St
+                - generic [ref=e391]: +1 more
+              - paragraph [ref=e392]: Feb 24 – 1d active
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practice Update check_box_outline_blank Update child's availability for practice +1 more Feb 24" [ref=e393] [cursor=pointer]:
+            - /url: /feed/cmn3zgy0z00755oqezr0k02dq
+            - generic [ref=e394]:
+              - generic [ref=e396]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practice Update" [level=3] [ref=e398]
+              - generic [ref=e399]:
+                - generic [ref=e400]: check_box_outline_blank
+                - generic [ref=e401]: Update child's availability for practice
+                - generic [ref=e402]: +1 more
+              - paragraph [ref=e403]: Feb 24
+          - link "Dance Pia Spring Dance Show – May 5, 2026 Tue, May 5 · 6:30 PM check_box_outline_blank Pia Spring Dance Show Feb 24" [ref=e404] [cursor=pointer]:
+            - /url: /feed/cmmyug2jj00afqe80b0fl7n0a
+            - generic [ref=e405]:
+              - generic [ref=e407]: Dance
+              - heading "Pia Spring Dance Show – May 5, 2026" [level=3] [ref=e409]
+              - paragraph [ref=e410]: Tue, May 5 · 6:30 PM
+              - generic [ref=e411]:
+                - generic [ref=e412]: check_box_outline_blank
+                - generic [ref=e413]: Pia Spring Dance Show
+              - paragraph [ref=e414]: Feb 24
+          - link "Dance Pia Spring Dance Show – May 5, 2026 Tue, May 5 · 6:30 PM check_box_outline_blank Attend Pia Spring Dance Show Feb 24" [ref=e415] [cursor=pointer]:
+            - /url: /feed/cmn1x8uf100o5qey4w4o2fexz
+            - generic [ref=e416]:
+              - generic [ref=e418]: Dance
+              - heading "Pia Spring Dance Show – May 5, 2026" [level=3] [ref=e420]
+              - paragraph [ref=e421]: Tue, May 5 · 6:30 PM
+              - generic [ref=e422]:
+                - generic [ref=e423]: check_box_outline_blank
+                - generic [ref=e424]: Attend Pia Spring Dance Show
+              - paragraph [ref=e425]: Feb 24
+          - link "Dance Pia Spring Dance Show – Time Updated Tue, May 5 · 6:30 PM check_box_outline_blank Pia Spring Dance Show Feb 24" [ref=e426] [cursor=pointer]:
+            - /url: /feed/cmmxtbfbg006vqej8ih9licn8
+            - generic [ref=e427]:
+              - generic [ref=e429]: Dance
+              - heading "Pia Spring Dance Show – Time Updated" [level=3] [ref=e430]
+              - paragraph [ref=e431]: Tue, May 5 · 6:30 PM
+              - generic [ref=e432]:
+                - generic [ref=e433]: check_box_outline_blank
+                - generic [ref=e434]: Pia Spring Dance Show
+              - paragraph [ref=e435]: Feb 24
+          - link "Dance Pia Spring Dance Show – May 5, 2026 Tue, May 5 · 6:30 PM check_box_outline_blank Attend Pia Spring Dance Show Feb 24" [ref=e436] [cursor=pointer]:
+            - /url: /feed/cmn0hlkbm00flqenwdje6c442
+            - generic [ref=e437]:
+              - generic [ref=e439]: Dance
+              - heading "Pia Spring Dance Show – May 5, 2026" [level=3] [ref=e441]
+              - paragraph [ref=e442]: Tue, May 5 · 6:30 PM
+              - generic [ref=e443]:
+                - generic [ref=e444]: check_box_outline_blank
+                - generic [ref=e445]: Attend Pia Spring Dance Show
+              - paragraph [ref=e446]: Feb 24
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Soccer Games Sun, Mar 8 · 5:00 PM · McGovern Park check_box_outline_blank Game vs Houston Select +2 more Feb 23 – 3d active" [ref=e447] [cursor=pointer]:
+            - /url: /feed/cmn0hljgd00f9qenwtyd6oez4
+            - generic [ref=e448]:
+              - generic [ref=e450]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Soccer Games" [level=3] [ref=e452]
+              - paragraph [ref=e453]: Sun, Mar 8 · 5:00 PM · McGovern Park
+              - generic [ref=e454]:
+                - generic [ref=e455]: check_box_outline_blank
+                - generic [ref=e456]: Game vs Houston Select
+                - generic [ref=e457]: +2 more
+              - paragraph [ref=e458]: Feb 23 – 3d active
+          - link "1501 Sylvan 2919 Sunset Pt - Water Heater Replacement Timothy Bishop check_box_outline_blank Proceed with electric water heater replacement at 2919 Sunset Pt Feb 20" [ref=e459] [cursor=pointer]:
+            - /url: /feed/cmn0il99701blqenwuvvg360s
+            - generic [ref=e460]:
+              - generic [ref=e462]: 1501 Sylvan
+              - heading "2919 Sunset Pt - Water Heater Replacement" [level=3] [ref=e464]
+              - paragraph [ref=e465]: Timothy Bishop
+              - generic [ref=e466]:
+                - generic [ref=e467]: check_box_outline_blank
+                - generic [ref=e468]: Proceed with electric water heater replacement at 2919 Sunset Pt
+              - paragraph [ref=e469]: Feb 20
+          - link "851 Peavy 851 Peavy – Tenant Application Approved w/ Pets Vivek Gupta · $1.0k · Thu, Apr 23 check_box_outline_blank Collect $1,000 refundable pet deposit at move-in +1 more Feb 20" [ref=e470] [cursor=pointer]:
+            - /url: /feed/cmn0il8f301b7qenwfjnl866p
+            - generic [ref=e471]:
+              - generic [ref=e473]: 851 Peavy
+              - heading "851 Peavy – Tenant Application Approved w/ Pets" [level=3] [ref=e475]
+              - paragraph [ref=e476]: Vivek Gupta · $1.0k · Thu, Apr 23
+              - generic [ref=e477]:
+                - generic [ref=e478]: check_box_outline_blank
+                - generic [ref=e479]: Collect $1,000 refundable pet deposit at move-in
+                - generic [ref=e480]: +1 more
+              - paragraph [ref=e481]: Feb 20
+          - link "1501 Sylvan 851 Peavy RD Showing Request & Lease Applications Timothy Bishop check_box_outline_blank Receive application reports for 851 Peavy RD Feb 19" [ref=e482] [cursor=pointer]:
+            - /url: /feed/cmn0il7xx01azqenw1rpz43hj
+            - generic [ref=e483]:
+              - generic [ref=e485]: 1501 Sylvan
+              - heading "851 Peavy RD Showing Request & Lease Applications" [level=3] [ref=e487]
+              - paragraph [ref=e488]: Timothy Bishop
+              - generic [ref=e489]:
+                - generic [ref=e490]: check_box_outline_blank
+                - generic [ref=e491]: Receive application reports for 851 Peavy RD
+              - paragraph [ref=e492]: Feb 19
+          - link "1501 Sylvan 2919 Sunset Point – Lease Application Approved Vivek Gupta check_box_outline_blank Proceed with lease application for 2919 Sunset Point Feb 19" [ref=e493] [cursor=pointer]:
+            - /url: /feed/cmn0il7ki01atqenwxiqxqpw8
+            - generic [ref=e494]:
+              - generic [ref=e496]: 1501 Sylvan
+              - heading "2919 Sunset Point – Lease Application Approved" [level=3] [ref=e498]
+              - paragraph [ref=e499]: Vivek Gupta
+              - generic [ref=e500]:
+                - generic [ref=e501]: check_box_outline_blank
+                - generic [ref=e502]: Proceed with lease application for 2919 Sunset Point
+              - paragraph [ref=e503]: Feb 19
+          - link "851 Peavy 851 Peavy - Tenant Application Approval Vivek Gupta check_box_outline_blank Coordinate bathroom tile repair at 851 Peavy Feb 19" [ref=e504] [cursor=pointer]:
+            - /url: /feed/cmn0il5cs019tqenwwy317y4h
+            - generic [ref=e505]:
+              - generic [ref=e507]: 851 Peavy
+              - heading "851 Peavy - Tenant Application Approval" [level=3] [ref=e509]
+              - paragraph [ref=e510]: Vivek Gupta
+              - generic [ref=e511]:
+                - generic [ref=e512]: check_box_outline_blank
+                - generic [ref=e513]: Coordinate bathroom tile repair at 851 Peavy
+              - paragraph [ref=e514]: Feb 19
+          - link "205 Freedom Commercial Property Insurance Policy Consolidation Shane Bowen · Tue, Jun 30 check_box_outline_blank Reassess commercial property insurance consolidation at 205 Freedom Trail renewal Feb 19 – 2d active" [ref=e515] [cursor=pointer]:
+            - /url: /feed/cmn20sem500l5qe5cv76u479b
+            - generic [ref=e516]:
+              - generic [ref=e518]: 205 Freedom
+              - heading "Commercial Property Insurance Policy Consolidation" [level=3] [ref=e520]
+              - paragraph [ref=e521]: Shane Bowen · Tue, Jun 30
+              - generic [ref=e522]:
+                - generic [ref=e523]: check_box_outline_blank
+                - generic [ref=e524]: Reassess commercial property insurance consolidation at 205 Freedom Trail renewal
+              - paragraph [ref=e525]: Feb 19 – 2d active
+          - link "1501 Sylvan Commercial Property Insurance Proposal Review Shane Bowen · Tue, Jun 30 check_box_outline_blank Shop for renewed insurance policies in July/August +2 more Feb 19 – 2d active" [ref=e526] [cursor=pointer]:
+            - /url: /feed/cmn0il1do017zqenw4jfpwwm2
+            - generic [ref=e527]:
+              - generic [ref=e529]: 1501 Sylvan
+              - heading "Commercial Property Insurance Proposal Review" [level=3] [ref=e531]
+              - paragraph [ref=e532]: Shane Bowen · Tue, Jun 30
+              - generic [ref=e533]:
+                - generic [ref=e534]: check_box_outline_blank
+                - generic [ref=e535]: Shop for renewed insurance policies in July/August
+                - generic [ref=e536]: +2 more
+              - paragraph [ref=e537]: Feb 19 – 2d active
+          - 'link "1501 Sylvan 3910 Bucknell: Early Lease Termination & Property Issues Vivek Gupta check_box_outline_blank Decide on waiving $1,850 sublet fee for early lease termination +2 more Feb 18" [ref=e538] [cursor=pointer]':
+            - /url: /feed/cmn0il4zu019nqenwn0sr09n5
+            - generic [ref=e539]:
+              - generic [ref=e541]: 1501 Sylvan
+              - 'heading "3910 Bucknell: Early Lease Termination & Property Issues" [level=3] [ref=e543]'
+              - paragraph [ref=e544]: Vivek Gupta
+              - generic [ref=e545]:
+                - generic [ref=e546]: check_box_outline_blank
+                - generic [ref=e547]: Decide on waiving $1,850 sublet fee for early lease termination
+                - generic [ref=e548]: +2 more
+              - paragraph [ref=e549]: Feb 18
+          - link "851 Peavy 851 Peavy - Application Closed, 2 Active Remaining Applications check_box_outline_blank Review remaining active applications for 851 Peavy Feb 18" [ref=e550] [cursor=pointer]:
+            - /url: /feed/cmn0il4nc019hqenwml46bve0
+            - generic [ref=e551]:
+              - generic [ref=e553]: 851 Peavy
+              - heading "851 Peavy - Application Closed, 2 Active Remaining" [level=3] [ref=e555]
+              - paragraph [ref=e556]: Applications
+              - generic [ref=e557]:
+                - generic [ref=e558]: check_box_outline_blank
+                - generic [ref=e559]: Review remaining active applications for 851 Peavy
+              - paragraph [ref=e560]: Feb 18
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practice Update check_box_outline_blank Update child's availability for practice +1 more Feb 15" [ref=e561] [cursor=pointer]:
+            - /url: /feed/cmn3zgvkd00615oqemo1xv27u
+            - generic [ref=e562]:
+              - generic [ref=e564]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practice Update" [level=3] [ref=e566]
+              - generic [ref=e567]:
+                - generic [ref=e568]: check_box_outline_blank
+                - generic [ref=e569]: Update child's availability for practice
+                - generic [ref=e570]: +1 more
+              - paragraph [ref=e571]: Feb 15
+          - link "851 Peavy 851 Peavy RD – Lease Showings & Bathroom Feedback Showings - C21 Judge Fite Property Mgmt. check_box_outline_blank Assess and address master bathroom condition at 851 Peavy Feb 14 – 3d active" [ref=e572] [cursor=pointer]:
+            - /url: /feed/cmn0im7yx01iaqenw8fr9s7iq
+            - generic [ref=e573]:
+              - generic [ref=e575]: 851 Peavy
+              - heading "851 Peavy RD – Lease Showings & Bathroom Feedback" [level=3] [ref=e577]
+              - paragraph [ref=e578]: Showings - C21 Judge Fite Property Mgmt.
+              - generic [ref=e579]:
+                - generic [ref=e580]: check_box_outline_blank
+                - generic [ref=e581]: Assess and address master bathroom condition at 851 Peavy
+              - paragraph [ref=e582]: Feb 14 – 3d active
+          - link "1501 Sylvan Insurance Renewal Search – North 40 Partners Portfolio Vivek Gupta check_box_outline_blank Secure new landlord insurance policy for portfolio Feb 11 – 6d active" [ref=e583] [cursor=pointer]:
+            - /url: /feed/cmn0ikpuf012rqenw44nqdljv
+            - generic [ref=e584]:
+              - generic [ref=e586]: 1501 Sylvan
+              - heading "Insurance Renewal Search – North 40 Partners Portfolio" [level=3] [ref=e588]
+              - paragraph [ref=e589]: Vivek Gupta
+              - generic [ref=e590]:
+                - generic [ref=e591]: check_box_outline_blank
+                - generic [ref=e592]: Secure new landlord insurance policy for portfolio
+              - paragraph [ref=e593]: Feb 11 – 6d active
+          - link "205 Freedom 205 Freedom Trail Insurance Replacement Search Vivek Gupta check_box_outline_blank Obtain and review insurance quotes for 205 Freedom Trail Feb 11 – 6d active" [ref=e594] [cursor=pointer]:
+            - /url: /feed/cmn20s8my00idqe5cxurvwr92
+            - generic [ref=e595]:
+              - generic [ref=e597]: 205 Freedom
+              - heading "205 Freedom Trail Insurance Replacement Search" [level=3] [ref=e598]
+              - paragraph [ref=e599]: Vivek Gupta
+              - generic [ref=e600]:
+                - generic [ref=e601]: check_box_outline_blank
+                - generic [ref=e602]: Obtain and review insurance quotes for 205 Freedom Trail
+              - paragraph [ref=e603]: Feb 11 – 6d active
+          - link "1501 Sylvan 2919 Sunset Point Applicant Repair & Rent Requests Vivek Gupta check_box_outline_blank Applicant to proceed with lease signing at 2919 Sunset Point Feb 10" [ref=e604] [cursor=pointer]:
+            - /url: /feed/cmn0iku41014pqenw02w18z4d
+            - generic [ref=e605]:
+              - generic [ref=e607]: 1501 Sylvan
+              - heading "2919 Sunset Point Applicant Repair & Rent Requests" [level=3] [ref=e609]
+              - paragraph [ref=e610]: Vivek Gupta
+              - generic [ref=e611]:
+                - generic [ref=e612]: check_box_outline_blank
+                - generic [ref=e613]: Applicant to proceed with lease signing at 2919 Sunset Point
+              - paragraph [ref=e614]: Feb 10
+          - link "205 Freedom 205 Freedom Trail – Leaking Sink Repair Krystin Jernigan check_box_outline_blank Confirm sink repair completed by Newcomer Plumbing Feb 9" [ref=e615] [cursor=pointer]:
+            - /url: /feed/cmn20sc0000jxqe5chktshv47
+            - generic [ref=e616]:
+              - generic [ref=e618]: 205 Freedom
+              - heading "205 Freedom Trail – Leaking Sink Repair" [level=3] [ref=e620]
+              - paragraph [ref=e621]: Krystin Jernigan
+              - generic [ref=e622]:
+                - generic [ref=e623]: check_box_outline_blank
+                - generic [ref=e624]: Confirm sink repair completed by Newcomer Plumbing
+              - paragraph [ref=e625]: Feb 9
+          - link "1501 Sylvan 205 Freedom Trail – Leaking Sink Repair Krystin Jernigan check_box_outline_blank Confirm sink repair completed by Newcomer Plumbing Feb 9" [ref=e626] [cursor=pointer]:
+            - /url: /feed/cmn0iktqw014jqenwj8djbyq5
+            - generic [ref=e627]:
+              - generic [ref=e629]: 1501 Sylvan
+              - heading "205 Freedom Trail – Leaking Sink Repair" [level=3] [ref=e631]
+              - paragraph [ref=e632]: Krystin Jernigan
+              - generic [ref=e633]:
+                - generic [ref=e634]: check_box_outline_blank
+                - generic [ref=e635]: Confirm sink repair completed by Newcomer Plumbing
+              - paragraph [ref=e636]: Feb 9
+          - link "205 Freedom 2025 Federal Tax Return – North 40 Partners, LLC Vivek Gupta check_box_outline_blank Complete 2025 Federal Tax Return for North 40 Partners, LLC Feb 9 – 4d active" [ref=e637] [cursor=pointer]:
+            - /url: /feed/cmn20s98m00inqe5ccywz33y5
+            - generic [ref=e638]:
+              - generic [ref=e640]: 205 Freedom
+              - heading "2025 Federal Tax Return – North 40 Partners, LLC" [level=3] [ref=e642]
+              - paragraph [ref=e643]: Vivek Gupta
+              - generic [ref=e644]:
+                - generic [ref=e645]: check_box_outline_blank
+                - generic [ref=e646]: Complete 2025 Federal Tax Return for North 40 Partners, LLC
+              - paragraph [ref=e647]: Feb 9 – 4d active
+          - link "1501 Sylvan 2025 Federal Tax Return – North 40 Partners, LLC Vivek Gupta check_box_outline_blank Provide HUD-1 Closing Statement for 205 Freedom Trail Feb 9 – 4d active" [ref=e648] [cursor=pointer]:
+            - /url: /feed/cmn0ikqgf0131qenw0dvw30xk
+            - generic [ref=e649]:
+              - generic [ref=e651]: 1501 Sylvan
+              - heading "2025 Federal Tax Return – North 40 Partners, LLC" [level=3] [ref=e653]
+              - paragraph [ref=e654]: Vivek Gupta
+              - generic [ref=e655]:
+                - generic [ref=e656]: check_box_outline_blank
+                - generic [ref=e657]: Provide HUD-1 Closing Statement for 205 Freedom Trail
+              - paragraph [ref=e658]: Feb 9 – 4d active
+          - link "851 Peavy 851 Peavy - Tenant Vacating & Re-Listing You've been added as a Landlord/Manager check_box_outline_blank Review and confirm repair invoice for 851 Peavy +2 more Feb 9 – 14d active" [ref=e659] [cursor=pointer]:
+            - /url: /feed/cmn0im96h01isqenwojhofaxd
+            - generic [ref=e660]:
+              - generic [ref=e662]: 851 Peavy
+              - heading "851 Peavy - Tenant Vacating & Re-Listing" [level=3] [ref=e664]
+              - paragraph [ref=e665]: You've been added as a Landlord/Manager
+              - generic [ref=e666]:
+                - generic [ref=e667]: check_box_outline_blank
+                - generic [ref=e668]: Review and confirm repair invoice for 851 Peavy
+                - generic [ref=e669]: +2 more
+              - paragraph [ref=e670]: Feb 9 – 14d active
+          - link "1501 Sylvan 851 Peavy - Tenant Vacating & Re-Marketing Nick DiCarlo · Fri, Feb 27 check_box_outline_blank List 851 Peavy for rent at agreed marketing price +1 more Feb 6 – 1d active" [ref=e671] [cursor=pointer]:
+            - /url: /feed/cmn0ikovm012bqenwdd1e0gch
+            - generic [ref=e672]:
+              - generic [ref=e674]: 1501 Sylvan
+              - heading "851 Peavy - Tenant Vacating & Re-Marketing" [level=3] [ref=e676]
+              - paragraph [ref=e677]: Nick DiCarlo · Fri, Feb 27
+              - generic [ref=e678]:
+                - generic [ref=e679]: check_box_outline_blank
+                - generic [ref=e680]: List 851 Peavy for rent at agreed marketing price
+                - generic [ref=e681]: +1 more
+              - paragraph [ref=e682]: Feb 6 – 1d active
+          - link "1501 Sylvan North 40 Partners LLC Insurance for Rental Properties Terri Livingood check_box_outline_blank Follow up with Terri Livingood on insurance options Feb 5" [ref=e683] [cursor=pointer]:
+            - /url: /feed/cmn20sbmg00jrqe5cf8t2jt0w
+            - generic [ref=e684]:
+              - generic [ref=e686]: 1501 Sylvan
+              - heading "North 40 Partners LLC Insurance for Rental Properties" [level=3] [ref=e688]
+              - paragraph [ref=e689]: Terri Livingood
+              - generic [ref=e690]:
+                - generic [ref=e691]: check_box_outline_blank
+                - generic [ref=e692]: Follow up with Terri Livingood on insurance options
+              - paragraph [ref=e693]: Feb 5
+          - link "1501 Sylvan 2025 Tax Filing Spreadsheet Review & CPA Submission Shane Bowen check_box_outline_blank Submit 2025 tax filing spreadsheet to CPA Feb 3 – 3d active" [ref=e694] [cursor=pointer]:
+            - /url: /feed/cmn0ikmkm0119qenwhxi9q8z8
+            - generic [ref=e695]:
+              - generic [ref=e697]: 1501 Sylvan
+              - heading "2025 Tax Filing Spreadsheet Review & CPA Submission" [level=3] [ref=e699]
+              - paragraph [ref=e700]: Shane Bowen
+              - generic [ref=e701]:
+                - generic [ref=e702]: check_box_outline_blank
+                - generic [ref=e703]: Submit 2025 tax filing spreadsheet to CPA
+              - paragraph [ref=e704]: Feb 3 – 3d active
+          - link "205 Freedom 2025 Tax Filing Spreadsheet Review & CPA Submission Shane Bowen check_box_outline_blank Submit finalized 2025 tax filing documents to CPA Feb 3 – 3d active" [ref=e705] [cursor=pointer]:
+            - /url: /feed/cmn20s77x00hpqe5cvg2rotff
+            - generic [ref=e706]:
+              - generic [ref=e708]: 205 Freedom
+              - heading "2025 Tax Filing Spreadsheet Review & CPA Submission" [level=3] [ref=e710]
+              - paragraph [ref=e711]: Shane Bowen
+              - generic [ref=e712]:
+                - generic [ref=e713]: check_box_outline_blank
+                - generic [ref=e714]: Submit finalized 2025 tax filing documents to CPA
+              - paragraph [ref=e715]: Feb 3 – 3d active
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Competitive Rise League check_box_outline_blank Update Availability for Spring 2026 Competitive Rise League Feb 2" [ref=e716] [cursor=pointer]:
+            - /url: /feed/cmn0hkivk008uqenwn603v2f8
+            - generic [ref=e717]:
+              - generic [ref=e719]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Competitive Rise League" [level=3] [ref=e721]
+              - generic [ref=e722]:
+                - generic [ref=e723]: check_box_outline_blank
+                - generic [ref=e724]: Update Availability for Spring 2026 Competitive Rise League
+              - paragraph [ref=e725]: Feb 2
+          - link "2310 Healey Roof Ages Documentation for Insurance Quoting Vivek Gupta check_box_outline_blank Create roof age spreadsheet for Jason Feb 1" [ref=e726] [cursor=pointer]:
+            - /url: /feed/cmn20s85d00i5qe5c92dqeel8
+            - generic [ref=e727]:
+              - generic [ref=e729]: 2310 Healey
+              - heading "Roof Ages Documentation for Insurance Quoting" [level=3] [ref=e731]
+              - paragraph [ref=e732]: Vivek Gupta
+              - generic [ref=e733]:
+                - generic [ref=e734]: check_box_outline_blank
+                - generic [ref=e735]: Create roof age spreadsheet for Jason
+              - paragraph [ref=e736]: Feb 1
+          - 'link "1501 Sylvan Vivek Gupta: Tax Form & 1206 Fairmont Billing Issues Vivek Gupta check_box_outline_blank Respond to Vivek Gupta''s tax form and billing discrepancy questions Feb 1" [ref=e737] [cursor=pointer]':
+            - /url: /feed/cmn0iknkh011pqenw6uoq4z79
+            - generic [ref=e738]:
+              - generic [ref=e740]: 1501 Sylvan
+              - 'heading "Vivek Gupta: Tax Form & 1206 Fairmont Billing Issues" [level=3] [ref=e742]'
+              - paragraph [ref=e743]: Vivek Gupta
+              - generic [ref=e744]:
+                - generic [ref=e745]: check_box_outline_blank
+                - generic [ref=e746]: Respond to Vivek Gupta's tax form and billing discrepancy questions
+              - paragraph [ref=e747]: Feb 1
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Competitive Rise Practice check_box_outline_blank Update availability for Rise practice Jan 31" [ref=e748] [cursor=pointer]:
+            - /url: /feed/cmn0hkhef0086qenwp3c219e9
+            - generic [ref=e749]:
+              - generic [ref=e751]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Competitive Rise Practice" [level=3] [ref=e753]
+              - generic [ref=e754]:
+                - generic [ref=e755]: check_box_outline_blank
+                - generic [ref=e756]: Update availability for Rise practice
+              - paragraph [ref=e757]: Jan 31
+          - link "Soccer US Soccer Circle Insider Membership Renewal check_box_outline_blank Renew U.S. Soccer Circle Insider Membership Jan 27" [ref=e758] [cursor=pointer]:
+            - /url: /feed/cmmxtbadd005jqej8qb68lu1r
+            - generic [ref=e759]:
+              - generic [ref=e761]: Soccer
+              - heading "US Soccer Circle Insider Membership Renewal" [level=3] [ref=e762]
+              - generic [ref=e763]:
+                - generic [ref=e764]: check_box_outline_blank
+                - generic [ref=e765]: Renew U.S. Soccer Circle Insider Membership
+              - paragraph [ref=e766]: Jan 27
+      - generic [ref=e767]:
+        - generic [ref=e768]:
+          - generic [ref=e769]: check_circle
+          - heading "No Action Needed" [level=2] [ref=e770]
+        - generic [ref=e771]:
+          - link "Soccer ZSA U11/12 Girls Soccer Practice – Mar 25 Wed, Mar 25 · 6:00 PM · SJS Scotty Caven Field check_box_outline_blank Attend Practice – March 25 Mar 23" [ref=e772] [cursor=pointer]:
+            - /url: /feed/cmn3zh0s200895oqe4vnek3sf
+            - generic [ref=e773]:
+              - generic [ref=e775]: Soccer
+              - heading "ZSA U11/12 Girls Soccer Practice – Mar 25" [level=3] [ref=e777]
+              - paragraph [ref=e778]: Wed, Mar 25 · 6:00 PM · SJS Scotty Caven Field
+              - generic [ref=e779]:
+                - generic [ref=e780]: check_box_outline_blank
+                - generic [ref=e781]: Attend Practice – March 25
+              - paragraph [ref=e782]: Mar 23
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practices Wed, Mar 25 · 6:00 PM · SJS Scotty Caven Field, Houston, TX check_box_outline_blank Practice – Wednesday, March 25 Mar 20" [ref=e783] [cursor=pointer]:
+            - /url: /feed/cmn3zh0bg00845oqe2g3b8i84
+            - generic [ref=e784]:
+              - generic [ref=e786]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practices" [level=3] [ref=e787]
+              - paragraph [ref=e788]: Wed, Mar 25 · 6:00 PM · SJS Scotty Caven Field, Houston, TX
+              - generic [ref=e789]:
+                - generic [ref=e790]: check_box_outline_blank
+                - generic [ref=e791]: Practice – Wednesday, March 25
+              - paragraph [ref=e792]: Mar 20
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practices Sun, Mar 22 · 4:30 PM · SJS Scotty Caven Field check_box_outline_blank Practice – Sunday March 22 +2 more Mar 20" [ref=e793] [cursor=pointer]:
+            - /url: /feed/cmn0hkvh000egqenwlz9y3d4g
+            - generic [ref=e794]:
+              - generic [ref=e796]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practices" [level=3] [ref=e797]
+              - paragraph [ref=e798]: Sun, Mar 22 · 4:30 PM · SJS Scotty Caven Field
+              - generic [ref=e799]:
+                - generic [ref=e800]: check_box_outline_blank
+                - generic [ref=e801]: Practice – Sunday March 22
+                - generic [ref=e802]: +2 more
+              - paragraph [ref=e803]: Mar 20
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practices Sun, Mar 22 · 4:30 PM · SJS Scotty Caven Field, Houston, TX check_box_outline_blank Practice – Sunday, March 22 +2 more Mar 20" [ref=e804] [cursor=pointer]:
+            - /url: /feed/cmn1x80ko00m0qey466mpvm57
+            - generic [ref=e805]:
+              - generic [ref=e807]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practices" [level=3] [ref=e809]
+              - paragraph [ref=e810]: Sun, Mar 22 · 4:30 PM · SJS Scotty Caven Field, Houston, TX
+              - generic [ref=e811]:
+                - generic [ref=e812]: check_box_outline_blank
+                - generic [ref=e813]: Practice – Sunday, March 22
+                - generic [ref=e814]: +2 more
+              - paragraph [ref=e815]: Mar 20
+          - link "Martial Arts / Belt Testing Martial Arts Belt Test & Ceremony – Mar 28 Sat, Mar 28 · 11:30 AM · Premier Martial Arts Houston-Meyerland check_box_outline_blank Attend Belt Test & Ceremony Mar 20" [ref=e816] [cursor=pointer]:
+            - /url: /feed/cmn1x8ux100obqey4ffnesg40
+            - generic [ref=e817]:
+              - generic [ref=e819]: Martial Arts / Belt Testing
+              - heading "Martial Arts Belt Test & Ceremony – Mar 28" [level=3] [ref=e821]
+              - paragraph [ref=e822]: Sat, Mar 28 · 11:30 AM · Premier Martial Arts Houston-Meyerland
+              - generic [ref=e823]:
+                - generic [ref=e824]: check_box_outline_blank
+                - generic [ref=e825]: Attend Belt Test & Ceremony
+              - paragraph [ref=e826]: Mar 20
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Competitive Practices Wed, Mar 18 · 6:00 PM · SJS Scotty Caven Field check_box_outline_blank Practice – March 18, 2026 +1 more Mar 16 – 52d active" [ref=e827] [cursor=pointer]:
+            - /url: /feed/cmmyufv81006zqe8012zrh12k
+            - generic [ref=e828]:
+              - generic [ref=e830]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Competitive Practices" [level=3] [ref=e832]
+              - paragraph [ref=e833]: Wed, Mar 18 · 6:00 PM · SJS Scotty Caven Field
+              - generic [ref=e834]:
+                - generic [ref=e835]: check_box_outline_blank
+                - generic [ref=e836]: Practice – March 18, 2026
+                - generic [ref=e837]: +1 more
+              - paragraph [ref=e838]: Mar 16 – 52d active
+          - link "1501 Sylvan 851 Peavy - Turnover Repairs & New Tenant Move-In Vivek Gupta · Sun, Mar 22 check_box_outline_blank Complete tenant damage and owner-recommended repairs before move-in +1 more Mar 16 – 1d active" [ref=e839] [cursor=pointer]:
+            - /url: /feed/cmn0ilizw01fzqenwsvfjwbgd
+            - generic [ref=e840]:
+              - generic [ref=e842]: 1501 Sylvan
+              - heading "851 Peavy - Turnover Repairs & New Tenant Move-In" [level=3] [ref=e844]
+              - paragraph [ref=e845]: Vivek Gupta · Sun, Mar 22
+              - generic [ref=e846]:
+                - generic [ref=e847]: check_box_outline_blank
+                - generic [ref=e848]: Complete tenant damage and owner-recommended repairs before move-in
+                - generic [ref=e849]: +1 more
+              - paragraph [ref=e850]: Mar 16 – 1d active
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practices Wed, Mar 18 · 6:00 PM · SJS Scotty Caven Field, Houston check_box_outline_blank Soccer Practice – Wednesday, March 18 Mar 13" [ref=e851] [cursor=pointer]:
+            - /url: /feed/cmn1x7z0o00laqey4so75vsub
+            - generic [ref=e852]:
+              - generic [ref=e854]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practices" [level=3] [ref=e856]
+              - paragraph [ref=e857]: Wed, Mar 18 · 6:00 PM · SJS Scotty Caven Field, Houston
+              - generic [ref=e858]:
+                - generic [ref=e859]: check_box_outline_blank
+                - generic [ref=e860]: Soccer Practice – Wednesday, March 18
+              - paragraph [ref=e861]: Mar 13
+          - link "2310 Healey 2310 Healey - Tenant Move-Out Extension to Mar 31 Timothy Bishop · Mon, Mar 30 check_box_outline_blank Tenant vacates 2310 Healey Mar 13" [ref=e862] [cursor=pointer]:
+            - /url: /feed/cmn20sh4s00mbqe5cnitopgym
+            - generic [ref=e863]:
+              - generic [ref=e865]: 2310 Healey
+              - heading "2310 Healey - Tenant Move-Out Extension to Mar 31" [level=3] [ref=e867]
+              - paragraph [ref=e868]: Timothy Bishop · Mon, Mar 30
+              - generic [ref=e869]:
+                - generic [ref=e870]: check_box_outline_blank
+                - generic [ref=e871]: Tenant vacates 2310 Healey
+              - paragraph [ref=e872]: Mar 13
+          - link "1501 Sylvan 2310 Healey – Tenant Vacate Extension to Mar 31 Timothy Bishop · Mon, Mar 30 check_box_outline_blank Tenant vacates 2310 Healey Mar 13" [ref=e873] [cursor=pointer]:
+            - /url: /feed/cmn0ilhe701f9qenwvhr3paqt
+            - generic [ref=e874]:
+              - generic [ref=e876]: 1501 Sylvan
+              - heading "2310 Healey – Tenant Vacate Extension to Mar 31" [level=3] [ref=e878]
+              - paragraph [ref=e879]: Timothy Bishop · Mon, Mar 30
+              - generic [ref=e880]:
+                - generic [ref=e881]: check_box_outline_blank
+                - generic [ref=e882]: Tenant vacates 2310 Healey
+              - paragraph [ref=e883]: Mar 13
+          - link "1501 Sylvan 1501 Sylvan – $950 Unpaid Rent Balance Extension Maurice Gallardo · $950 · Tue, Mar 17 check_box_outline_blank Tenant payment of $950 outstanding rent balance Mar 10 – 1d active" [ref=e884] [cursor=pointer]:
+            - /url: /feed/cmn0ilfep01edqenwvlkofy9p
+            - generic [ref=e885]:
+              - generic [ref=e887]: 1501 Sylvan
+              - heading "1501 Sylvan – $950 Unpaid Rent Balance Extension" [level=3] [ref=e889]
+              - paragraph [ref=e890]: Maurice Gallardo · $950 · Tue, Mar 17
+              - generic [ref=e891]:
+                - generic [ref=e892]: check_box_outline_blank
+                - generic [ref=e893]: Tenant payment of $950 outstanding rent balance
+              - paragraph [ref=e894]: Mar 10 – 1d active
+          - link "1501 Sylvan 1501 Sylvan - Tenant Rent Balance of $950 Maurice Gallardo · $950 · Tue, Mar 17 check_box_outline_blank Tenant to pay $950 outstanding rent balance Mar 10 – 1d active" [ref=e895] [cursor=pointer]:
+            - /url: /feed/cmn20sg9v00lxqe5csnwpw7ya
+            - generic [ref=e896]:
+              - generic [ref=e898]: 1501 Sylvan
+              - heading "1501 Sylvan - Tenant Rent Balance of $950" [level=3] [ref=e899]
+              - paragraph [ref=e900]: Maurice Gallardo · $950 · Tue, Mar 17
+              - generic [ref=e901]:
+                - generic [ref=e902]: check_box_outline_blank
+                - generic [ref=e903]: Tenant to pay $950 outstanding rent balance
+              - paragraph [ref=e904]: Mar 10 – 1d active
+          - link "1501 Sylvan 2919 Sunset Point Lane – Repair Invoices Krystin Jernigan Mar 10" [ref=e905] [cursor=pointer]:
+            - /url: /feed/cmn0ilgmu01exqenw2i96adhr
+            - generic [ref=e906]:
+              - generic [ref=e908]: 1501 Sylvan
+              - heading "2919 Sunset Point Lane – Repair Invoices" [level=3] [ref=e910]
+              - paragraph [ref=e911]: Krystin Jernigan
+              - paragraph [ref=e912]: Mar 10
+          - link "1501 Sylvan 1906 Crockett St – Repair Invoices Krystin Jernigan check_box_outline_blank Review and respond to repair invoices Mar 10" [ref=e913] [cursor=pointer]:
+            - /url: /feed/cmn0ilg9y01erqenwr2c2ntzw
+            - generic [ref=e914]:
+              - generic [ref=e916]: 1501 Sylvan
+              - heading "1906 Crockett St – Repair Invoices" [level=3] [ref=e918]
+              - paragraph [ref=e919]: Krystin Jernigan
+              - generic [ref=e920]:
+                - generic [ref=e921]: check_box_outline_blank
+                - generic [ref=e922]: Review and respond to repair invoices
+              - paragraph [ref=e923]: Mar 10
+          - link "1501 Sylvan 3910 Bucknell Drive – Repair Invoice Krystin Jernigan Mar 10" [ref=e924] [cursor=pointer]:
+            - /url: /feed/cmn0ilfwu01elqenwcxr16ygq
+            - generic [ref=e925]:
+              - generic [ref=e927]: 1501 Sylvan
+              - heading "3910 Bucknell Drive – Repair Invoice" [level=3] [ref=e929]
+              - paragraph [ref=e930]: Krystin Jernigan
+              - paragraph [ref=e931]: Mar 10
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Competitive Practices Sun, Mar 1 · 4:15 PM · SJS Scotty Caven Field, Houston check_box_outline_blank Practice on March 1, 2026 Feb 23" [ref=e932] [cursor=pointer]:
+            - /url: /feed/cmn0hlibo00etqenw6id6zo8u
+            - generic [ref=e933]:
+              - generic [ref=e935]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Competitive Practices" [level=3] [ref=e937]
+              - paragraph [ref=e938]: Sun, Mar 1 · 4:15 PM · SJS Scotty Caven Field, Houston
+              - generic [ref=e939]:
+                - generic [ref=e940]: check_box_outline_blank
+                - generic [ref=e941]: Practice on March 1, 2026
+              - paragraph [ref=e942]: Feb 23
+          - link "Soccer ZSA U11/12 Girls Spring Game vs. Rise ECNL Sun, Mar 29 · 11:00 AM · McGovern Park, Houston, TX check_box_outline_blank ZSA U11/12 Girls Game vs. Rise ECNL Feb 23" [ref=e943] [cursor=pointer]:
+            - /url: /feed/cmn1x7uno00j8qey48yepkf0n
+            - generic [ref=e944]:
+              - generic [ref=e946]: Soccer
+              - heading "ZSA U11/12 Girls Spring Game vs. Rise ECNL" [level=3] [ref=e948]
+              - paragraph [ref=e949]: Sun, Mar 29 · 11:00 AM · McGovern Park, Houston, TX
+              - generic [ref=e950]:
+                - generic [ref=e951]: check_box_outline_blank
+                - generic [ref=e952]: ZSA U11/12 Girls Game vs. Rise ECNL
+              - paragraph [ref=e953]: Feb 23
+          - link "Soccer ZSA U11/12 Girls Game vs. Rise ECNL – Mar 29 Sun, Mar 29 · 11:00 AM · McGovern Park check_box_outline_blank Sign up for volunteer assignments for the game +1 more Feb 23" [ref=e954] [cursor=pointer]:
+            - /url: /feed/cmn3zgxnw006z5oqenhw67wjh
+            - generic [ref=e955]:
+              - generic [ref=e957]: Soccer
+              - heading "ZSA U11/12 Girls Game vs. Rise ECNL – Mar 29" [level=3] [ref=e958]
+              - paragraph [ref=e959]: Sun, Mar 29 · 11:00 AM · McGovern Park
+              - generic [ref=e960]:
+                - generic [ref=e961]: check_box_outline_blank
+                - generic [ref=e962]: Sign up for volunteer assignments for the game
+                - generic [ref=e963]: +1 more
+              - paragraph [ref=e964]: Feb 23
+          - link "1501 Sylvan 2919 Sunset Point Lane - Weekly Listing Activity Timothy Manson-Bishop Feb 23" [ref=e965] [cursor=pointer]:
+            - /url: /feed/cmn0il9vl01bvqenwusnfxfa3
+            - generic [ref=e966]:
+              - generic [ref=e968]: 1501 Sylvan
+              - heading "2919 Sunset Point Lane - Weekly Listing Activity" [level=3] [ref=e970]
+              - paragraph [ref=e971]: Timothy Manson-Bishop
+              - paragraph [ref=e972]: Feb 23
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Soccer Practices Sun, Mar 1 · 4:15 PM · SJS Randall Field, 3408 W Alabama St, Houston, TX 77027 check_box_outline_blank Soccer Practice at SJS Randall Field Feb 22" [ref=e973] [cursor=pointer]:
+            - /url: /feed/cmn1x7td600imqey4959owf1k
+            - generic [ref=e974]:
+              - generic [ref=e976]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Soccer Practices" [level=3] [ref=e978]
+              - paragraph [ref=e979]: Sun, Mar 1 · 4:15 PM · SJS Randall Field, 3408 W Alabama St, Houston, TX 77027
+              - generic [ref=e980]:
+                - generic [ref=e981]: check_box_outline_blank
+                - generic [ref=e982]: Soccer Practice at SJS Randall Field
+              - paragraph [ref=e983]: Feb 22
+          - link "1501 Sylvan North 40 Partners Financial Position – Feb 2026 Vivek Gupta Feb 16" [ref=e984] [cursor=pointer]:
+            - /url: /feed/cmn20se9100kzqe5c4apvuej7
+            - generic [ref=e985]:
+              - generic [ref=e987]: 1501 Sylvan
+              - heading "North 40 Partners Financial Position – Feb 2026" [level=3] [ref=e989]
+              - paragraph [ref=e990]: Vivek Gupta
+              - paragraph [ref=e991]: Feb 16
+          - link "1501 Sylvan North 40 Partners Financial Position Update Vivek Gupta Feb 16" [ref=e992] [cursor=pointer]:
+            - /url: /feed/cmn0il109017tqenwohfbuqgp
+            - generic [ref=e993]:
+              - generic [ref=e995]: 1501 Sylvan
+              - heading "North 40 Partners Financial Position Update" [level=3] [ref=e997]
+              - paragraph [ref=e998]: Vivek Gupta
+              - paragraph [ref=e999]: Feb 16
+          - link "1501 Sylvan 851 Peavy Road - Bi-Weekly Listing Activity Report Timothy Manson-Bishop Feb 15" [ref=e1000] [cursor=pointer]:
+            - /url: /feed/cmn0ikzdq0175qenw1lhficrl
+            - generic [ref=e1001]:
+              - generic [ref=e1003]: 1501 Sylvan
+              - heading "851 Peavy Road - Bi-Weekly Listing Activity Report" [level=3] [ref=e1005]
+              - paragraph [ref=e1006]: Timothy Manson-Bishop
+              - paragraph [ref=e1007]: Feb 15
+          - link "205 Freedom 205 Freedom Trail - Repair Invoice Pmbilling check_box_outline_blank Review repair invoice for 205 Freedom Trail Feb 11" [ref=e1008] [cursor=pointer]:
+            - /url: /feed/cmn20sccj00k3qe5cg0b2vuf7
+            - generic [ref=e1009]:
+              - generic [ref=e1011]: 205 Freedom
+              - heading "205 Freedom Trail - Repair Invoice" [level=3] [ref=e1013]
+              - paragraph [ref=e1014]: Pmbilling
+              - generic [ref=e1015]:
+                - generic [ref=e1016]: check_box_outline_blank
+                - generic [ref=e1017]: Review repair invoice for 205 Freedom Trail
+              - paragraph [ref=e1018]: Feb 11
+          - link "2310 Healey Commercial Property Insurance Proposal – North 40 Partners Jason Olson · Sun, Feb 8 check_box_outline_blank Await final insurance quote from The Phoenix Insurance Feb 6 – 9d active" [ref=e1019] [cursor=pointer]:
+            - /url: /feed/cmn20s4x100gnqe5cnmgoorfx
+            - generic [ref=e1020]:
+              - generic [ref=e1022]: 2310 Healey
+              - heading "Commercial Property Insurance Proposal – North 40 Partners" [level=3] [ref=e1024]
+              - paragraph [ref=e1025]: Jason Olson · Sun, Feb 8
+              - generic [ref=e1026]:
+                - generic [ref=e1027]: check_box_outline_blank
+                - generic [ref=e1028]: Await final insurance quote from The Phoenix Insurance
+              - paragraph [ref=e1029]: Feb 6 – 9d active
+          - link "1501 Sylvan Commercial Insurance Proposal – North 40 Partners, LLC Jason Olson · Sun, Feb 8 check_box_outline_blank Receive final commercial insurance quote from Jason Olson +1 more Feb 6 – 9d active" [ref=e1030] [cursor=pointer]:
+            - /url: /feed/cmn0ikk9z0107qenw67ajxkns
+            - generic [ref=e1031]:
+              - generic [ref=e1033]: 1501 Sylvan
+              - heading "Commercial Insurance Proposal – North 40 Partners, LLC" [level=3] [ref=e1035]
+              - paragraph [ref=e1036]: Jason Olson · Sun, Feb 8
+              - generic [ref=e1037]:
+                - generic [ref=e1038]: check_box_outline_blank
+                - generic [ref=e1039]: Receive final commercial insurance quote from Jason Olson
+                - generic [ref=e1040]: +1 more
+              - paragraph [ref=e1041]: Feb 6 – 9d active
+          - link "Soccer ZSA U11/12 Girls Spring 2026 Practices Sun, Feb 8 · 3:00 PM · SJS Randall Field, Houston, TX check_box_outline_blank Practice on February 8, 2026 Feb 5 – 10d active" [ref=e1042] [cursor=pointer]:
+            - /url: /feed/cmn3zhay2008e5oqe4kajyzve
+            - generic [ref=e1043]:
+              - generic [ref=e1045]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 Practices" [level=3] [ref=e1047]
+              - paragraph [ref=e1048]: Sun, Feb 8 · 3:00 PM · SJS Randall Field, Houston, TX
+              - generic [ref=e1049]:
+                - generic [ref=e1050]: check_box_outline_blank
+                - generic [ref=e1051]: Practice on February 8, 2026
+              - paragraph [ref=e1052]: Feb 5 – 10d active
+          - link "1501 Sylvan Commercial Property Insurance Proposal – North 40 Partners Terri Livingood · Fri, Feb 13 check_box_outline_blank Secure consolidated insurance proposal before policy renewals +2 more Feb 5 – 8d active" [ref=e1053] [cursor=pointer]:
+            - /url: /feed/cmn0im6ag01hmqenwo21ic8t0
+            - generic [ref=e1054]:
+              - generic [ref=e1056]: 1501 Sylvan
+              - heading "Commercial Property Insurance Proposal – North 40 Partners" [level=3] [ref=e1058]
+              - paragraph [ref=e1059]: Terri Livingood · Fri, Feb 13
+              - generic [ref=e1060]:
+                - generic [ref=e1061]: check_box_outline_blank
+                - generic [ref=e1062]: Secure consolidated insurance proposal before policy renewals
+                - generic [ref=e1063]: +2 more
+              - paragraph [ref=e1064]: Feb 5 – 8d active
+          - link "Soccer ZSA U11/12 Girls Spring 2026 League Games Fri, Feb 20 · 6:00 PM · McGovern Park, Houston, TX check_box_outline_blank League Game at McGovern Park Feb 2" [ref=e1065] [cursor=pointer]:
+            - /url: /feed/cmn1x8qtr00mvqey47tu4otw9
+            - generic [ref=e1066]:
+              - generic [ref=e1068]: Soccer
+              - heading "ZSA U11/12 Girls Spring 2026 League Games" [level=3] [ref=e1070]
+              - paragraph [ref=e1071]: Fri, Feb 20 · 6:00 PM · McGovern Park, Houston, TX
+              - generic [ref=e1072]:
+                - generic [ref=e1073]: check_box_outline_blank
+                - generic [ref=e1074]: League Game at McGovern Park
+              - paragraph [ref=e1075]: Feb 2
+          - link "1501 Sylvan 2919 Sunset Point Lane – Weekly Listing Report Timothy Manson-Bishop Feb 2" [ref=e1076] [cursor=pointer]:
+            - /url: /feed/cmn0ikoiu0125qenwyv5t8y4o
+            - generic [ref=e1077]:
+              - generic [ref=e1079]: 1501 Sylvan
+              - heading "2919 Sunset Point Lane – Weekly Listing Report" [level=3] [ref=e1081]
+              - paragraph [ref=e1082]: Timothy Manson-Bishop
+              - paragraph [ref=e1083]: Feb 2
+          - link "Soccer ZSA U11/12 Girls Soccer Practice Due Sun, Feb 1 check_box_outline_blank Update availability for practice Feb 1" [ref=e1084] [cursor=pointer]:
+            - /url: /feed/cmmxtbblz0061qej8zjcpctws
+            - generic [ref=e1085]:
+              - generic [ref=e1087]: Soccer
+              - heading "ZSA U11/12 Girls Soccer Practice" [level=3] [ref=e1088]
+              - paragraph [ref=e1089]: Due Sun, Feb 1
+              - generic [ref=e1090]:
+                - generic [ref=e1091]: check_box_outline_blank
+                - generic [ref=e1092]: Update availability for practice
+              - paragraph [ref=e1093]: Feb 1
+          - link "1501 Sylvan Roof Age Info Compiled for Insurance Quoting Vivek Gupta check_box_outline_blank Create roof age tracking spreadsheet Feb 1" [ref=e1094] [cursor=pointer]:
+            - /url: /feed/cmn0iko1r011xqenw95nbdmw5
+            - generic [ref=e1095]:
+              - generic [ref=e1097]: 1501 Sylvan
+              - heading "Roof Age Info Compiled for Insurance Quoting" [level=3] [ref=e1099]
+              - paragraph [ref=e1100]: Vivek Gupta
+              - generic [ref=e1101]:
+                - generic [ref=e1102]: check_box_outline_blank
+                - generic [ref=e1103]: Create roof age tracking spreadsheet
+              - paragraph [ref=e1104]: Feb 1
+          - link "Lanier IB Learner Profile Award Ceremony at Lanier Thu, Feb 5 · 8:30 AM · Lanier Middle School check_box_outline_blank Attend IB Learner Profile Award Ceremony Jan 30" [ref=e1105] [cursor=pointer]:
+            - /url: /feed/cmmyug1ot00a1qe80id0w45k5
+            - generic [ref=e1106]:
+              - generic [ref=e1108]: Lanier
+              - heading "IB Learner Profile Award Ceremony at Lanier" [level=3] [ref=e1110]
+              - paragraph [ref=e1111]: Thu, Feb 5 · 8:30 AM · Lanier Middle School
+              - generic [ref=e1112]:
+                - generic [ref=e1113]: check_box_outline_blank
+                - generic [ref=e1114]: Attend IB Learner Profile Award Ceremony
+              - paragraph [ref=e1115]: Jan 30
+          - link "Lanier IB Learner Profile Award Ceremony – Nick DiCarlo Thu, Feb 5 · 8:30 AM · Lanier Middle School check_box_outline_blank Attend IB Learner Profile Award Ceremony Jan 30" [ref=e1116] [cursor=pointer]:
+            - /url: /feed/cmmxtbb3u005vqej8gy3hfp0v
+            - generic [ref=e1117]:
+              - generic [ref=e1119]: Lanier
+              - heading "IB Learner Profile Award Ceremony – Nick DiCarlo" [level=3] [ref=e1121]
+              - paragraph [ref=e1122]: Thu, Feb 5 · 8:30 AM · Lanier Middle School
+              - generic [ref=e1123]:
+                - generic [ref=e1124]: check_box_outline_blank
+                - generic [ref=e1125]: Attend IB Learner Profile Award Ceremony
+              - paragraph [ref=e1126]: Jan 30
+          - link "St Agnes Dads & Donuts at St. Agnes – Jan 30 Fri, Jan 30 · 9:00 AM · St. Agnes Academy check_box_outline_blank Dads & Donuts Event at St. Agnes Academy Jan 27" [ref=e1127] [cursor=pointer]:
+            - /url: /feed/cmmyug0ze009pqe8091rkhhlz
+            - generic [ref=e1128]:
+              - generic [ref=e1130]: St Agnes
+              - heading "Dads & Donuts at St. Agnes – Jan 30" [level=3] [ref=e1132]
+              - paragraph [ref=e1133]: Fri, Jan 30 · 9:00 AM · St. Agnes Academy
+              - generic [ref=e1134]:
+                - generic [ref=e1135]: check_box_outline_blank
+                - generic [ref=e1136]: Dads & Donuts Event at St. Agnes Academy
+              - paragraph [ref=e1137]: Jan 27
+          - link "St Agnes Dads & Donuts Event at St. Agnes – Jan 30 Fri, Jan 30 · 9:00 AM · St. Agnes Academy check_box_outline_blank Attend Dads & Donuts at St. Agnes Academy Jan 27" [ref=e1138] [cursor=pointer]:
+            - /url: /feed/cmmxtbaqs005pqej8nqdik63v
+            - generic [ref=e1139]:
+              - generic [ref=e1141]: St Agnes
+              - heading "Dads & Donuts Event at St. Agnes – Jan 30" [level=3] [ref=e1143]
+              - paragraph [ref=e1144]: Fri, Jan 30 · 9:00 AM · St. Agnes Academy
+              - generic [ref=e1145]:
+                - generic [ref=e1146]: check_box_outline_blank
+                - generic [ref=e1147]: Attend Dads & Donuts at St. Agnes Academy
+              - paragraph [ref=e1148]: Jan 27
+          - link "1501 Sylvan 2919 Sunset Point Ln – Weekly Listing Activity Timothy Manson-Bishop Jan 26" [ref=e1149] [cursor=pointer]:
+            - /url: /feed/cmn0im7hk01i4qenw3v9p2u6y
+            - generic [ref=e1150]:
+              - generic [ref=e1152]: 1501 Sylvan
+              - heading "2919 Sunset Point Ln – Weekly Listing Activity" [level=3] [ref=e1154]
+              - paragraph [ref=e1155]: Timothy Manson-Bishop
+              - paragraph [ref=e1156]: Jan 26
+          - link "Soccer U.S. Soccer Circle Insider Membership Renewal Due Sat, Jan 24 check_box_outline_blank Verify and resolve Circle Insider auto-renewal status Jan 24" [ref=e1157] [cursor=pointer]:
+            - /url: /feed/cmmxtb9um005bqej8ubkqxyq3
+            - generic [ref=e1158]:
+              - generic [ref=e1160]: Soccer
+              - heading "U.S. Soccer Circle Insider Membership Renewal" [level=3] [ref=e1162]
+              - paragraph [ref=e1163]: Due Sat, Jan 24
+              - generic [ref=e1164]:
+                - generic [ref=e1165]: check_box_outline_blank
+                - generic [ref=e1166]: Verify and resolve Circle Insider auto-renewal status
+              - paragraph [ref=e1167]: Jan 24
+    - navigation [ref=e19]:
+      - generic [ref=e20]:
+        - link "dynamic_feed Feed" [ref=e21] [cursor=pointer]:
+          - /url: /feed
+          - generic [ref=e22]: dynamic_feed
+          - generic [ref=e23]: Feed
+        - button "add_circle Note" [ref=e24] [cursor=pointer]:
+          - generic [ref=e25]: add_circle
+          - generic [ref=e26]: Note
+        - link "settings Settings" [ref=e27] [cursor=pointer]:
+          - /url: /settings
+          - generic [ref=e28]: settings
+          - generic [ref=e29]: Settings
+  - button "Open Next.js Dev Tools" [ref=e1168] [cursor=pointer]:
+    - generic [ref=e1171]:
+      - text: Rendering
+      - generic [ref=e1172]:
+        - generic [ref=e1173]: .
+        - generic [ref=e1174]: .
+        - generic [ref=e1175]: .
+  - alert [ref=e39]

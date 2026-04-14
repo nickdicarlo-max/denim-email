@@ -1,0 +1,7 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e105]:
+    - generic [ref=e106]: progress_activity
+    - paragraph [ref=e107]: Setting up your topic...
+  - button "Open Next.js Dev Tools" [ref=e56] [cursor=pointer]:
+    - img [ref=e57]
+  - alert [ref=e60]
