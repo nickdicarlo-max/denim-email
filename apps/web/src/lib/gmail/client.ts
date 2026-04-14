@@ -145,16 +145,22 @@ export class GmailClient {
   /**
    * Fetch recent emails and group by sender domain.
    * Returns messages and discovery summary sorted by count descending.
+   *
+   * @param maxResults - Max emails to fetch (default 200).
+   * @param newerThan - Optional Gmail `newer_than:` constraint, e.g. "56d".
+   *   When provided, restricts the random sample to recent emails.
    */
   async sampleScan(
     maxResults = 200,
+    newerThan?: string,
   ): Promise<{ messages: GmailMessageMeta[]; discoveries: ScanDiscovery[] }> {
     const start = Date.now();
     const operation = "sampleScan";
 
-    logger.info({ service: "gmail", operation, maxResults });
+    logger.info({ service: "gmail", operation, maxResults, newerThan });
 
-    const messages = await this.searchEmails("", maxResults);
+    const query = newerThan ? `newer_than:${newerThan}` : "";
+    const messages = await this.searchEmails(query, maxResults);
 
     // Group by sender domain
     const domainMap = new Map<
