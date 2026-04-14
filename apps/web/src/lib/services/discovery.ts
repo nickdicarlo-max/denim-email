@@ -21,6 +21,7 @@ import { logAICost } from "@/lib/ai/cost-tracker";
 import type { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 
 /** Strip markdown code fences from AI response. */
 function stripCodeFences(raw: string): string {
@@ -30,8 +31,6 @@ function stripCodeFences(raw: string): string {
     .trim();
 }
 
-const MAX_DISCOVERY_EMAILS = 200;
-const DISCOVERY_LOOKBACK = "56d";
 const BROAD_SCAN_LIMIT = 200;
 const BODY_SAMPLE_COUNT = 3;
 
@@ -62,8 +61,8 @@ export async function runDiscoveryQueries(
   queries: DiscoveryQuery[],
   options?: { maxEmails?: number; lookback?: string },
 ): Promise<DiscoveryResult> {
-  const maxEmails = options?.maxEmails ?? MAX_DISCOVERY_EMAILS;
-  const lookback = options?.lookback ?? DISCOVERY_LOOKBACK;
+  const maxEmails = options?.maxEmails ?? ONBOARDING_TUNABLES.discovery.maxTotalEmails;
+  const lookback = options?.lookback ?? ONBOARDING_TUNABLES.discovery.lookback;
   const allMessageIds = new Set<string>();
   let queriesRun = 0;
   let queriesSkipped = 0;
@@ -124,7 +123,7 @@ export async function broadInboxScan(
   }>;
 }> {
   // searchEmails returns GmailMessageMeta which includes all the fields we need
-  const messages = await gmailClient.searchEmails(`newer_than:${DISCOVERY_LOOKBACK}`, limit);
+  const messages = await gmailClient.searchEmails(`newer_than:${ONBOARDING_TUNABLES.discovery.lookback}`, limit);
 
   const metadata = messages.map((msg) => ({
     id: msg.id,
@@ -241,7 +240,7 @@ export async function sampleBodies(
   for (const domain of unknownDomains.slice(0, 5)) {
     try {
       const messages = await gmailClient.searchEmails(
-        `from:${domain} newer_than:${DISCOVERY_LOOKBACK}`,
+        `from:${domain} newer_than:${ONBOARDING_TUNABLES.discovery.lookback}`,
         sampleSize,
       );
 
