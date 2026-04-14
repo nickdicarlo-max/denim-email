@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-14 (doc cleanup; history moved to `docs/archive/denim_session_history.md`)
+Last updated: 2026-04-14 (E2E verification day — outbox confirm route, mid-scan PRIMARY discovery, 6 perf issues filed)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -145,37 +145,85 @@ JSONB in GET route vs. add column to Entity model).
 **Pending:** Task 14 manual E2E verification — fresh onboarding run to confirm
 <30s target and verify ZSA/TeamSnap/Pia appear under their topics.
 
-## What's Next (updated 2026-04-14)
+## 2026-04-14 Session Log
 
-### 2026-04-14 audit
-Ground-truth audit confirmed plan-to-code fidelity for both 2026-04-13 plans (review-screen-speed and pipeline-resequencing) — no hallucination. Real gap is verification, not correctness. Follow-ups filed: **#67** (outbox for confirm route), **#68** (Entity `@@unique([schemaId,name])`), **#69** (Inngest retries 0→2), **#70** (validation-parser tests), **#71** (happy-path test audit/delete), **#72** (CI integration job + Playwright onboarding E2E), **#73** (review screen 107s vs 45s target — observed in first live run). **#56** closed (resolved by Plan 1).
+### Audit (morning)
+Three parallel Explore agents ground-truthed both 2026-04-13 plans (review-screen-speed and pipeline-resequencing) against the code — every factual claim matched. **No hallucination.** Real gap was verification (no CI-level integration, no Playwright E2E, happy-path test suspected of testing wrong things per Nick's distrust). Issues filed from the audit: **#67–#73**.
 
-### Immediate: Task 14 manual E2E verification
-- Fresh onboarding run on `feature/ux-overhaul` to confirm <30s review-screen target
-- Verify ZSA U11/12 Girls, TeamSnap, Pia spring dance show appear under their user topics
-- Gates the merge to `main`
+### Commits landed on `feature/ux-overhaul`
+- **2b9f16e** `fix(onboarding): confirm route uses outbox + Function B owns phase advance`
+  - OnboardingOutbox PK now composite `(schemaId, eventName)` (raw-SQL migration via supabase-db skill)
+  - Drain function is event-generic (reads eventName + payload from row)
+  - POST confirm route: no more phase flip — single `prisma.$transaction` commits `persistSchemaRelations` + outbox row; optimistic fire-and-forget emit; drain cron (1-min tick) is the guaranteed recovery path
+  - Function B's existing `advanceSchemaPhase` + ScanJob creation now runs correctly (was being skipped)
+  - `phase-review.tsx` renders "Starting your scan…" during submission window
+  - Closes **#67** and **#74**
+- **fcc8420** `obs(onboarding): per-step wall-clock telemetry in Function A`
+  - `generate-hypothesis.complete` / `validate-hypothesis.complete` / `advance-to-awaiting-review.complete` / `runOnboarding.awaitingReview` all emit `stepDurationMs` + sub-step timings (dbReadMs, gmailTokenMs, gmailSampleScanMs, validateHypothesisMs, dbWriteMs)
+- **5e64991** `chore(skills): add onboarding-timing skill`
+  - `.claude/skills/onboarding-timing.md` — parses JSON logs into a timeline table (needs Claude Code restart to register as slash command)
+- **7e5043b** `fix(extraction): mid-scan PRIMARY entity discovery via Stage 3b upsert`
+  - Gemini's `detectedEntities` that name new PRIMARY entities (not in existing Entity list) are now upserted with a trust gate: sender ambiguous with 2+ associated primaries, OR subject literally contains the entity name, OR Gemini confidence ≥0.7
+  - Idempotent under existing `@@unique([schemaId, name, type])`
+  - Stage 4 refactored to reuse pre-resolved sender data (one fewer DB round-trip per email)
+  - Closes **#76**
 
-### Immediate: Verify clustering fixes with live pipeline run
-- Run a fresh GA schema to confirm MERGE cluster records appear (not just CREATEs)
-- Run a fresh PM schema to confirm threshold=30 produces merges
-- Verify case tags display on feed cards
-- Verify case-splitting writes PipelineIntelligence rows (success or error)
+### Live E2E runs — both 6/6 PASS
 
-### Immediate: Merge feature/ux-overhaul to Main
-- All 3 UX waves + pipeline fixes committed on `feature/ux-overhaul`
-- Typecheck clean, 133 unit tests passing
-- Ready for PR + merge to `main`
+| Schema | Domain | Emails | Cases | Duration | Key verification |
+|---|---|---|---|---|---|
+| `01KP6CF6QJPHS3Z4DHYDDK75CK` "Round 2 Girls Activities" | school_parent | 80 | 4 | ~4 min Function B | Entity grouping (ZSA/TeamSnap under soccer), 32 MERGEs (was 0 pre-#58), tag coverage 100%, outbox EMITTED |
+| `01KP6DVWDSW1V0W1AT1X9H0DKP` "Property Management" | property | 200 | 16 | ~9 min Function B | mergeThreshold=30 produced 18 MERGEs (min score 31.7, med 34.3 — threshold at the edge exactly as predicted), splits 16, PipelineIntelligence row written |
+
+### Issue hygiene
+
+**Closed (verified in live data):**
+- **#33** Start route outbox — baseline + confirmed by today's runs (both outbox events EMITTED attempts=1)
+- **#56** validateHypothesis wired back — already resolved by Plan 1
+- **#67** Confirm route outbox — by 2b9f16e
+- **#68** Entity uniqueness — already fixed in earlier commit 17fcec8 (expand-confirmed-domains uses upsert with `schemaId_name_type`)
+- **#74** PROCESSING_SCAN ownership — by 2b9f16e
+- **#76** Mid-scan PRIMARY discovery — by 7e5043b
+
+**Filed this session (still open):**
+- **#69** Inngest retries 0→2 (needs step-level idempotency audit first)
+- **#70** `validation-parser.test.ts` for `relatedUserThing` default-null + round-trip
+- **#71** Audit or delete `onboarding-happy-path.test.ts` (no longer trusted as gate)
+- **#72** CI integration job + Playwright onboarding E2E spec
+- **#73** Review screen render time — 107s first run, 48s second (Claude variance)
+- **#75** Post-scan orphan mining (topics the user never mentioned — Martial Arts belt-test from Amy DiCarlo)
+- **#77** Gemini batch extraction (pack 5-10 emails per call, est. 3-5x extract speedup)
+- **#78** Parallelize Claude synthesis + case-splitting (est. -3m on run 2)
+- **#79** Anthropic prompt caching on validateHypothesis (est. -10s on Function A)
+- **#80** Parallelize `generate-hypothesis` + `gmail.sampleScan` (est. -5s)
+- **#81** Parallelize discovery query execution in run-scan (est. -20s)
+- **#82** Live case count during synthesis (UX perceived-wait)
+
+### Combined perf estimate (if #77–#82 land)
+- Run 1 (80 emails, 4 cases): ~4min → ~1m30s
+- Run 2 (200 emails, 16 cases): ~9min → ~3m40s
+- Function A (user waits on Card 3): ~40s → ~25s
+
+### Updated issues with run data
+- **#19** Clustering non-determinism — substantially improved by #58 (32 MERGEs); remaining variance is Gemini
+- **#59** PM threshold=30 — validated at the edge on run 2 (min merge score 31.7)
+- **#25** Scanning UX — linked to all six speedup issues (#77–#82) as the perf umbrella
+- **#21, #35, #38, #16, #65** — commented with observed data
+
+## What's Next
+
+### Immediate
+- Merge `feature/ux-overhaul` to `main` — two clean E2E runs, 6/6 eval PASS each, nothing blocking
+- Sprint-plan #77–#82 (speedup) + UX Phase 4 items
 
 ### Open pipeline issues (prioritized)
-- **#59** PM threshold (partial) -- default lowered for new schemas, but existing
-  PM schemas in DB still have 45. Consider calibration prompt fix or data migration.
-- **#19** Clustering non-determinism -- partially resolved by #58 (merges no longer
-  silently dropped). Remaining variance is from AI extraction (Gemini non-determinism).
-- **#57** Raw email cache -- second topic re-fetches every email already pulled.
-- ~~**#56** Wire validateHypothesis back into runOnboarding.~~ Resolved by the 2026-04-13 review-screen work — `validateHypothesis` is threaded through Function A (see `onboarding.ts` validate-hypothesis step). Verify and close.
-- **#38** Eval Session 2 -- relevance filtering too conservative, review screen too passive.
-- **#35** Extraction relevance gate excludes valid emails.
-- **#16** Silent email dropping -- may be resolved; needs re-verification.
+- **#73** Review screen timing — partially addressed by Plan 1; timing variance remains (~48–107s)
+- **#59** PM threshold — default fixed for new schemas; existing at 45 may need data migration
+- **#57** Raw email cache — second topic re-fetches every email already pulled
+- **#38** Eval Session 2 — relevance filtering too conservative, review screen too passive (paired with #75 orphan mining)
+- **#35** Extraction relevance gate excludes valid emails (paired with #76 fix)
+- **#16** Silent email dropping — clean on 80 + 200 runs; needs larger-scan verification
+- **#19** Clustering non-determinism — extraction (Gemini) variance remains
 
 ### After Merge: Schema Additions
 - `UserNote` model -- for the "+ Note" button in bottom nav
