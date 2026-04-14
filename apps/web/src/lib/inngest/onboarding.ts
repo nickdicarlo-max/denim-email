@@ -20,35 +20,21 @@
  * This file does NOT call persistSchemaRelations — that is now called by
  * the POST /api/onboarding/:schemaId route (Task 4) when the user confirms.
  */
-import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
+import type { InterviewInput, SchemaHypothesis } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { NonRetriableError } from "inngest";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import {
-  extractTrustedDomains,
   generateHypothesis,
   resolveWhoEmails,
   validateHypothesis,
 } from "@/lib/services/interview";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
-
-/**
- * Maximum emails to pull per trusted-domain expansion query. Cap per domain
- * keeps the total validation cost bounded: N_domains * DOMAIN_EXPANSION_CAP
- * is the upper bound on extra emails the second validateHypothesis pass sees.
- */
-const DOMAIN_EXPANSION_CAP = 50;
-
-/**
- * Maximum number of trusted domains to expand. Protects against
- * pathological hypotheses that resolve to dozens of WHO email addresses
- * at distinct domains.
- */
-const MAX_DOMAINS_TO_EXPAND = 5;
 
 const SCAN_WAIT_TIMEOUT = "20m";
 
@@ -105,31 +91,15 @@ export const runOnboarding = inngest.createFunction(
         });
       });
 
-      // ---- Step 1b: validate hypothesis against real email samples -------
+      // ---- Step 1b: Pass 1 validation (broad random sample) -------------
       //
-      // Runs two validation passes against Gmail so discovered entities
-      // from the user's inbox can be surfaced on the review screen. This
-      // restores the behavior of the pre-refactor /api/interview/validate
-      // route (deleted in b5b42a9 -- see GitHub #56).
+      // Pre-confirm validation. Reads a small random sample from the last
+      // 8 weeks and asks Claude to identify confirmed entities, new
+      // discoveries, and noise. Pass 2 (targeted domain expansion) is
+      // deferred until after the user confirms — see
+      // expand-confirmed-domains in runOnboardingPipeline.
       //
-      // Pass 1 (broad): sampleScan(200) -> resolveWhoEmails (enrich WHO
-      //   aliases with real email addresses) -> validateHypothesis. Captures
-      //   discovered entities in whatever topics Claude finds across a
-      //   random sample of 200 messages.
-      //
-      // Pass 2 (domain expansion): for each trusted (non-generic) domain
-      //   that Pass 1 resolved for a WHO entity, query Gmail for ALL emails
-      //   from that domain (capped at DOMAIN_EXPANSION_CAP per domain) and
-      //   run validateHypothesis again on those. Catches entities that
-      //   didn't happen to make the initial random sample -- critical for
-      //   org-based discovery (e.g., "Timothy Bishop" -> judgefite.com ->
-      //   every other @judgefite.com sender).
-      //
-      // The merged validation result is stored on the schema row, read by
-      // the POST /api/onboarding/:schemaId confirm route which calls
-      // persistSchemaRelations to auto-confirm discovered entities.
-      //
-      // Runs OUTSIDE an advanceSchemaPhase CAS -- stays within the
+      // Runs OUTSIDE an advanceSchemaPhase CAS — stays within the
       // GENERATING_HYPOTHESIS phase for polling purposes. The phase advance
       // happens in the next step (advance-to-awaiting-review) after
       // validation has written its result back.
@@ -140,7 +110,7 @@ export const runOnboarding = inngest.createFunction(
         });
 
         // Idempotency guard: on Inngest retry, if validation already ran,
-        // skip it rather than spending two more Claude calls.
+        // skip it rather than spending another Claude call.
         if (schema.validation) {
           logger.info({
             service: "runOnboarding",
@@ -158,13 +128,17 @@ export const runOnboarding = inngest.createFunction(
           );
         }
 
-        // --- Pass 1: broad 200-email sample ----------------------------
         const accessToken = await getValidGmailToken(userId);
         const gmail = new GmailClient(accessToken);
-        const { messages } = await gmail.sampleScan(200);
+        const { messages } = await gmail.sampleScan(
+          ONBOARDING_TUNABLES.pass1.sampleSize,
+          ONBOARDING_TUNABLES.pass1.lookback,
+        );
 
         // Enrich hypothesis WHO aliases with resolved sender email
-        // addresses (mutates the hypothesis object in place).
+        // addresses (mutates the hypothesis object in place). Pass 2
+        // (post-confirm) reads these enriched aliases via
+        // extractExpansionTargets.
         resolveWhoEmails(hypothesis, messages);
 
         const pass1Samples = messages.map((m) => ({
@@ -184,88 +158,26 @@ export const runOnboarding = inngest.createFunction(
           secondaryNames: g.whos,
         }));
 
+        // userThings = the user's raw WHATs (e.g., ["soccer","dance",...]).
+        // We give these to Claude so it can fill relatedUserThing on each
+        // discovered entity. Prefer the flat `whats` if present; fall back
+        // to flattening the groups.
+        const userThings = inputs?.whats ?? inputs?.groups?.flatMap((g) => g.whats) ?? [];
+
         const pass1 = await validateHypothesis(hypothesis, pass1Samples, {
           userId,
           entityGroups,
+          userThings,
         });
-
-        // --- Pass 2: domain expansion ----------------------------------
-        // After resolveWhoEmails, hypothesis.entities contains WHO entries
-        // with real email addresses in their aliases. Extract the specific
-        // org domains (skipping gmail.com, outlook.com, etc.) and query
-        // Gmail for all senders at each domain. Run validateHypothesis
-        // again on those expanded samples.
-        const trustedDomains = extractTrustedDomains(hypothesis).slice(0, MAX_DOMAINS_TO_EXPAND);
-
-        const domainDiscoveries: HypothesisValidation["discoveredEntities"] = [];
-
-        for (const domain of trustedDomains) {
-          try {
-            const domainMessages = await gmail.searchEmails(
-              `from:${domain} newer_than:56d`,
-              DOMAIN_EXPANSION_CAP,
-            );
-            if (domainMessages.length === 0) continue;
-
-            const domainSamples = domainMessages.map((m) => ({
-              subject: m.subject,
-              senderDomain: m.senderDomain,
-              senderName: m.senderDisplayName || m.senderEmail,
-              snippet: m.snippet,
-            }));
-
-            const pass2 = await validateHypothesis(hypothesis, domainSamples, {
-              userId,
-              entityGroups,
-            });
-
-            // Merge discoveries from this domain into the running set.
-            // validateHypothesis may return already-confirmed entities too;
-            // we only accumulate new discoveries here.
-            for (const discovered of pass2.discoveredEntities) {
-              if (
-                !pass1.discoveredEntities.some((e) => e.name === discovered.name) &&
-                !domainDiscoveries.some((e) => e.name === discovered.name)
-              ) {
-                domainDiscoveries.push(discovered);
-              }
-            }
-
-            logger.info({
-              service: "runOnboarding",
-              operation: "domain-expansion",
-              schemaId,
-              domain,
-              emailsQueried: domainMessages.length,
-              newDiscoveriesFromDomain: pass2.discoveredEntities.length,
-            });
-          } catch (err) {
-            // Non-fatal: if one domain expansion fails (e.g., Gmail
-            // quota), log it and continue with the others.
-            logger.warn({
-              service: "runOnboarding",
-              operation: "domain-expansion.failed",
-              schemaId,
-              domain,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-
-        // --- Merge passes into single validation result ----------------
-        const mergedValidation: HypothesisValidation = {
-          ...pass1,
-          discoveredEntities: [...pass1.discoveredEntities, ...domainDiscoveries],
-        };
 
         await prisma.caseSchema.update({
           where: { id: schemaId },
           data: {
             // Write back the (possibly mutated) hypothesis with enriched
-            // WHO aliases so the confirm route sees the resolved email
-            // addresses when it calls persistSchemaRelations.
+            // WHO aliases so Pass 2 and persistSchemaRelations see the
+            // resolved email addresses.
             hypothesis: hypothesis as unknown as Prisma.InputJsonValue,
-            validation: mergedValidation as unknown as Prisma.InputJsonValue,
+            validation: pass1 as unknown as Prisma.InputJsonValue,
           },
         });
 
@@ -273,10 +185,10 @@ export const runOnboarding = inngest.createFunction(
           service: "runOnboarding",
           operation: "validate-hypothesis.complete",
           schemaId,
-          pass1Discovered: pass1.discoveredEntities.length,
-          pass2DomainsExpanded: trustedDomains.length,
-          pass2AdditionalDiscovered: domainDiscoveries.length,
-          totalDiscovered: mergedValidation.discoveredEntities.length,
+          sampleSize: ONBOARDING_TUNABLES.pass1.sampleSize,
+          lookback: ONBOARDING_TUNABLES.pass1.lookback,
+          discovered: pass1.discoveredEntities.length,
+          confidenceScore: pass1.confidenceScore,
         });
       });
 
