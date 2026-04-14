@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-13 (Pipeline resequencing landed on feature/ux-overhaul)
+Last updated: 2026-04-13 (Review screen speed + entity grouping landed on feature/ux-overhaul)
 
 ## Completed
 
@@ -643,6 +643,7 @@ Schema `cmn0i26tx00iaqenwee12mk4z` — pre-fix results showing the catch-all pro
 | UX Overhaul | **Complete** | All 3 waves done 2026-04-07. Branch: feature/ux-overhaul. Onboarding flow, cross-topic feed, settings hub, old route cleanup. |
 | Clustering Fixes (Apr 12) | **Complete** | Synthetic ID MERGE bug (#58), PM threshold (#59), case-splitting visibility (#60), case tags (#61), extraction race (#47) |
 | Pipeline Resequencing (Apr 13) | **Pending e2e test** | Review gate moved before pipeline (#64, #65). Split runOnboarding into Function A + B. User confirms entities before extraction/clustering/synthesis. |
+| Review Screen Speed + Entity Grouping (Apr 13) | **Pending e2e test** | Pass 1 → 100 emails/8w; Pass 2 → Function B targeted by confirmed entities with corporate-domain vs generic-sender rule; `relatedUserThing` groups discoveries under Your Topics. Follow-up: #66. |
 | 7.5: Periodic Scanning | Not started | Automated daily scans at set times |
 | 8: Calendar Integration | Not started | Progressive OAuth, CalendarService |
 | 9: Delta Processing | Not started | Re-scan for new emails, action lifecycle |
@@ -1261,6 +1262,75 @@ cap at 30. Commit d9cbba6.
 **Validation:** All changes typecheck clean, 133 unit tests pass. Gravity model
 simulation confirms 34/34 merges resolve, 71/71 emails accounted for, 6/6
 alternativeCaseIds resolve to real CUIDs.
+
+### Review Screen Speed + Entity Grouping (2026-04-13)
+
+**Problem from first live test:** Review screen took 72.8s to appear (target <30s),
+and all discovered SECONDARY entities were hidden — "ZSA U11/12 Girls" (7 soccer
+emails), "TeamSnap" (7 soccer emails), "Pia spring dance show" (1 dance email)
+produced zero visibility on the review screen despite being the most actionable
+discoveries. Only PRIMARY entities without alias matches ("Rental Properties",
+"The Control Surface") surfaced, in a separate "New Discoveries" section. Under
+each user topic the screen said "No additional items found" even when plenty was
+found.
+
+**Design decisions:**
+- Pass 1 (pre-confirm, blocks review screen) shrinks to 100 random emails bounded
+  to last 8 weeks. Purpose stays broad/exploratory — find things the user didn't
+  mention.
+- Pass 2 (domain expansion) moves from Function A (pre-review) to Function B
+  (post-confirm). Targets ONLY user-confirmed entities — the user's toggles tell
+  us which domains are worth expanding.
+- Pass 2 expansion rule: corporate domains expand by domain
+  (`from:email.teamsnap.com`), generic providers (@gmail, @yahoo, etc.) expand by
+  specific sender address (`from:ziad.allan@gmail.com`). Prevents `from:gmail.com`
+  from pulling every personal email in the inbox.
+- Validation prompt adds `relatedUserThing` on each discovered entity so Claude
+  labels which user topic the entity relates to (or null if cross-topic or
+  unrelated).
+- Review UI restructures to two sections: "Your Topics" (each user topic with
+  related discoveries underneath) and "Discoveries" (flat list of everything
+  else — the Amy DiCarlos, Timothy Bishops, Rental Properties).
+
+**Changes shipped (15 commits, 80d9bf1 → 9b725de on feature/ux-overhaul):**
+
+- `apps/web/src/lib/config/onboarding-tunables.ts` — NEW central config for sample
+  sizes, lookback windows, per-target caps. Replaces hardcoded constants in
+  `onboarding.ts` and `discovery.ts`.
+- `packages/types/src/schema.ts` — `HypothesisValidation.discoveredEntities[].relatedUserThing`
+- `packages/ai/src/parsers/validation-parser.ts` — Zod accepts `relatedUserThing`
+  with `.default(null)`
+- `packages/ai/src/prompts/interview-validate.ts` — 4th optional `userThings` param
+  wires the user's entered topics into the system prompt with matching rules
+- `apps/web/src/lib/services/interview.ts` — `validateHypothesis` threads
+  `userThings`; `GENERIC_SENDER_DOMAINS` now exported
+- `apps/web/src/lib/gmail/client.ts` — `sampleScan(maxResults, newerThan?)`
+- `apps/web/src/lib/services/expansion-targets.ts` — NEW `extractExpansionTargets`
+  (corporate domain vs generic-provider sender rule) + 6 unit tests
+- `apps/web/src/lib/inngest/onboarding.ts` — Function A Pass 1 uses
+  `sampleScan(100, "56d")`; Pass 2 loop removed from Function A; new
+  `expand-confirmed-domains` step added to Function B with idempotent upsert
+- `apps/web/src/lib/services/discovery.ts` — reads lookback + cap from config
+- `apps/web/src/components/onboarding/review-entities.tsx` + `phase-review.tsx` —
+  "Your Things" → "Your Topics"; unified "Discoveries" section; SECONDARY
+  entities grouped under topics via `relatedUserThing`
+- `apps/web/scripts/diagnose-hypothesis.ts` — fixed pre-existing typecheck errors
+  (`name` not `displayName`, `lastAttemptAt` not `updatedAt`, scanJob relation
+  filter); added `confirmedTags` output; clarifies empty discoveryQueries is
+  expected at AWAITING_REVIEW
+
+**Expected timing:** ~25-35s for review screen (hypothesis 10-15s + Pass 1
+validation 15s + Inngest overhead ~3s). Pass 2 now runs invisibly during the
+post-confirm scan progress UI.
+
+**Open follow-up: #66** — `relatedUserThing` lives only in `schema.validation`
+JSONB. `phase-review.tsx` Branch A (reads DB Entity rows) can't see it. Dead
+path today (no entities exist at AWAITING_REVIEW), but activates if we ever
+let users revisit the review screen. See issue for two fix options (join
+JSONB in GET route vs. add column to Entity model).
+
+**Pending:** Task 14 manual E2E verification — fresh onboarding run to confirm
+<30s target and verify ZSA/TeamSnap/Pia appear under their topics.
 
 ## What's Next (updated 2026-04-12)
 

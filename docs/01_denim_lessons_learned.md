@@ -217,6 +217,51 @@ All extracted to shared modules in the Round 2 cleanup:
 
 ---
 
+## 2026-04-13: Inngest step that writes DB rows must use upsert, not create
+
+**Context:** Building the new `expand-confirmed-domains` step in Function B
+(post-confirm Pass 2 domain expansion). The step writes new discovered Entity
+rows at the end of its work inside a `prisma.$transaction`. First draft used
+`prisma.entity.create` per discovery. Code review flagged it before merge.
+
+### Bug 6 (caught pre-merge): Non-idempotent Entity writes in a retryable Inngest step
+
+**Symptom:** Would have surfaced as a unique-constraint violation on Inngest
+retry. The `@@unique([schemaId, name, type])` index on `entities` would reject
+the second create for the same name. The outer try/catch in the step swallows
+errors, so the pipeline would continue — but we'd waste a full Pass 2 on retry
+(5 targets × up to 200 emails each through Gemini + Claude) before the
+duplicate write failed the transaction and rolled back.
+
+**Root cause:** Inngest steps re-execute from the top on retry. Any DB write
+that happens outside of an idempotency guard will run again. Using `create`
+inside a transaction means the retry either: (a) succeeds with a duplicate
+row if no unique constraint exists, or (b) fails with a constraint violation
+after wasting all the upstream I/O and AI spend.
+
+**Fix:** Replaced with `prisma.entity.upsert({ where: { schemaId_name_type:
+... }, create: {...}, update: {} })`. Empty `update` means idempotent retries
+are a no-op. The unique constraint becomes the guard, not the trap.
+
+**Rule exposed:** **Any Inngest step that writes DB rows must use `upsert` (or
+an explicit idempotency guard at the top of the step), not `create`.** The
+pattern:
+- `create` is safe only if (a) the parent function has `retries: 0` AND (b)
+  no retry mechanism exists upstream (no `waitForEvent`, no backoff).
+- `upsert` with empty `update: {}` is the default for any insert that might
+  re-run. Pair it with a composite unique constraint on the logical identity.
+- For writes that genuinely need "did we already do this" semantics (e.g.,
+  "don't charge the card twice"), add an idempotency-token column and
+  check/insert it as the first step of the work.
+
+**Meta:** This was caught by code review, not by tests. Like Bug 1 and Bug 5,
+the test suite cannot detect this class of bug — Inngest retries are a
+property of the runtime, not the code. Preventive review is the only defense.
+Add to the review checklist: for every new `step.run(..., async () => {
+...prisma.* })` block, verify all writes are idempotent.
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
