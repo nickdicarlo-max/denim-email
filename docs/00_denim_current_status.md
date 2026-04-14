@@ -1,12 +1,12 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-14 (E2E verification day — outbox confirm route, mid-scan PRIMARY discovery, 6 perf issues filed)
+Last updated: 2026-04-14 (evening — perf + quality sprint kickoff; Phase 1 + 2 code-complete on `feature/perf-quality-sprint`)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
 ## Baseline
 
-Phases 0–7 complete. `feature/ux-overhaul` carries Waves 1–3 of the UX overhaul plus the 2026-04-12 pipeline fixes and 2026-04-13 review-screen/entity-grouping work documented below. Typecheck clean; 133 unit tests passing; pending manual E2E verification before merge to `main`.
+Phases 0–7 complete. **`feature/ux-overhaul` merged to `main` on 2026-04-14 via PR #83** (merge commit `ff8aa43`). Active branch is now `feature/perf-quality-sprint`. Typecheck clean; 144 unit tests passing (up from 139 after #70 added validation-parser tests); Phase 3 pending Nick's full E2E verification against Phase 2 changes.
 
 ## Deferred debt
 
@@ -210,22 +210,61 @@ Three parallel Explore agents ground-truthed both 2026-04-13 plans (review-scree
 - **#25** Scanning UX — linked to all six speedup issues (#77–#82) as the perf umbrella
 - **#21, #35, #38, #16, #65** — commented with observed data
 
+## 2026-04-14 Evening Session — Perf + Quality Sprint Kickoff
+
+### Merge to main
+- PR #83 (`feature/ux-overhaul` → `main`) merged with merge commit `ff8aa43`.
+- Carried Waves 1–3 of UX overhaul, 2026-04-12 pipeline fixes (#58 #59 #47 #60 #61), 2026-04-13 review-screen speed + entity grouping, 2026-04-14 outbox confirm route + mid-scan PRIMARY discovery + telemetry.
+- `feature/ux-overhaul` kept around (not deleted) per Nick's request.
+
+### Sprint branch + plan
+- New branch `feature/perf-quality-sprint` off `main`.
+- **Canonical plan:** `docs/superpowers/plans/2026-04-14-perf-and-quality-sprint.md` — 6 phases, 19 issues, locked order `69, 70, 79, 80, 81, 77, 78, 82, 63, 73, 25, 35, 38, 65, 75, 57, 71, 72, 66`. Tests (#71, #72) deferred to end because surface area changes.
+- Execution method: subagent-driven-development (fresh subagent per task + two-stage review).
+
+### Phase 1 — Safety foundations ✅ CODE-COMPLETE
+- **#69** Step-level idempotency audit + retries 0→2 on both onboarding Inngest functions — commit `173f7ab`. Audit found 1 NEEDS GUARD: `create-scan-job` now has findFirst-and-reuse guard covering the window where `scanJob.create` succeeds but CAS `updateMany` fails.
+- **#70** `validation-parser.test.ts` with 5 cases (explicit value, omitted default-null, explicit null, round-trip, invalid type) — commit `9a658fd`.
+- Quick gate: typecheck clean, 139→144 tests pass. Full E2E pending.
+
+### Phase 2 — Cheap perf wins ✅ CODE-COMPLETE
+- **#79** Prompt caching on `validateHypothesis` system prefix — commit `45cb490`. Static/dynamic split with `cache_control: { type: "ephemeral" }` on the static block; `cacheReadInputTokens` / `cacheCreationInputTokens` logged. **Caveat:** current static prefix is ~500 tokens vs Sonnet 4.6's 1024-token minimum — infra is correct and production-safe, but cache won't activate until the prefix grows. Zero cost when inactive; lights up automatically later.
+- **#80** Parallel `generate-hypothesis` + `gmail.sampleScan` in Function A — commit `2ddb60c`. Real code had sampleScan nested inside `validate-hypothesis`; implementer extracted it to a new sibling step `gmail-sample-scan` so `Promise.all` can run both against shared Inngest retry/checkpoint semantics.
+- **#81** Parallel discovery query execution — commit `0884cee`. Added `p-limit@7.3.0` (new dep); concurrency=3; `.slice(0, maxEmails)` trims incidental over-fetch from racing workers.
+- Quick gate: typecheck clean, 144/144. Full E2E pending.
+
+### Expected Phase 2 wins (measurement pending)
+- Function A: ~40s → ~35s (−5s from #80; #79 dormant until prefix grows)
+- `run-scan` discovery: ~38s → ~15s (−23s from #81)
+
+### Issues touched this session
+- **Closed:** #16 (silent email dropping — two clean runs qualify)
+- **Filed:** **#84** Harden `GmailMessageMeta.date` against Inngest JSON-replay (latent-only risk today; #80 made retry-replay more likely to execute)
+
+### Next action on resume
+1. Nick runs the full E2E on both schemas; captures structured logs; invokes `/onboarding-timing`
+2. If baseline matches: dispatch Task 3.1 (#77 Gemini batch extraction — est. −2m on Run B)
+3. If regression: bisect across `45cb490 → 2ddb60c → 0884cee`
+
+### Skills hygiene
+- `supabase-db` and `onboarding-timing` skills now installed at user scope (`~/.claude/skills/<name>/SKILL.md`) so they register as slash commands. Source-of-truth copies remain committed at `.claude/skills/*.md`. CLAUDE.md updated to document the install.
+
 ## What's Next
 
 ### Immediate
-- Merge `feature/ux-overhaul` to `main` — two clean E2E runs, 6/6 eval PASS each, nothing blocking
-- Sprint-plan #77–#82 (speedup) + UX Phase 4 items
+- Full E2E on `feature/perf-quality-sprint` after Phase 2 (Nick's gate)
+- Then: Phase 3 (#77 batch extraction → #78 synthesis fan-out → #82 live case count)
 
 ### Open pipeline issues (prioritized)
-- **#73** Review screen timing — partially addressed by Plan 1; timing variance remains (~48–107s)
+- **#73** Review screen timing — partially addressed by Plan 1; timing variance remains (~48–107s); will be re-measured at Phase 4.2
 - **#59** PM threshold — default fixed for new schemas; existing at 45 may need data migration
-- **#57** Raw email cache — second topic re-fetches every email already pulled
-- **#38** Eval Session 2 — relevance filtering too conservative, review screen too passive (paired with #75 orphan mining)
-- **#35** Extraction relevance gate excludes valid emails (paired with #76 fix)
-- **#16** Silent email dropping — clean on 80 + 200 runs; needs larger-scan verification
+- **#57** Raw email cache — Phase 5.5
+- **#38** Eval Session 2 — Phase 5.2
+- **#35** Extraction relevance gate — Phase 5.1
 - **#19** Clustering non-determinism — extraction (Gemini) variance remains
+- **#84** GmailMessageMeta Date JSON-replay hardening — latent only; defer
 
-### After Merge: Schema Additions
+### After Sprint: Schema Additions
 - `UserNote` model -- for the "+ Note" button in bottom nav
 - `NotificationPreference` model -- daily digest opt-in
 - `User.stripeCustomerId / subscriptionStatus / trialEndDate` -- billing fields

@@ -16,8 +16,10 @@ https://github.com/nickdicarlo-max/denim-email
 ## Supabase Database
 
 This project is NOT connected to the MCP Supabase plugin (it returns permission errors).
-For ALL DB operations — queries, schema changes, row counts, wipes, debugging — use the
-**`supabase-db` skill** at `.claude/skills/supabase-db.md`. Never use `prisma db push`
+For ALL DB operations — queries, schema changes, row counts, wipes, debugging — invoke
+the **`supabase-db` skill** (user-scope install). Source of truth is committed at
+`.claude/skills/supabase-db.md`; one-time install into Claude Code by copying to
+`~/.claude/skills/supabase-db/SKILL.md` and restarting. Never use `prisma db push`
 (it hangs on this setup).
 
 ## Stack
@@ -218,5 +220,10 @@ pnpm typecheck                         # Type check everything
 npx inngest-cli@latest dev            # Inngest dev server
 ```
 
-For DB operations, use the `supabase-db` skill (`.claude/skills/supabase-db.md`).
-Do NOT use `prisma db push` — it hangs on this setup.
+For DB operations, invoke the `supabase-db` skill. Do NOT use `prisma db push` — it
+hangs on this setup. Source at `.claude/skills/supabase-db.md`; install to user scope
+at `~/.claude/skills/supabase-db/SKILL.md` if not already registered.
+
+For analyzing onboarding wall-clock timings after a manual E2E run, invoke the
+`onboarding-timing` skill. Source at `.claude/skills/onboarding-timing.md`; install
+to `~/.claude/skills/onboarding-timing/SKILL.md` if not already registered.

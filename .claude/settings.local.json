@@ -132,7 +132,12 @@
       "Bash(git show:*)",
       "Bash(git grep:*)",
       "Bash(wait)",
-      "Bash(awk '$1 > 500 {print $1, $2}')"
+      "Bash(awk '$1 > 500 {print $1, $2}')",
+      "Skill(claude-api)",
+      "Bash(mkdir -p ~/.claude/skills/onboarding-timing)",
+      "Bash(cp .claude/skills/onboarding-timing.md ~/.claude/skills/onboarding-timing/SKILL.md)",
+      "Bash(mkdir -p ~/.claude/skills/supabase-db)",
+      "Bash(cp .claude/skills/supabase-db.md ~/.claude/skills/supabase-db/SKILL.md)"
     ]
   }
 }

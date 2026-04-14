@@ -14,6 +14,32 @@
 
 ---
 
+## Execution Progress
+
+**Branch:** `feature/perf-quality-sprint` (off `main`, after `feature/ux-overhaul` merged as PR #83 on 2026-04-14).
+
+**Session 1 — 2026-04-14 (sprint kickoff):**
+
+| Phase / Task | Issue | Commit | Status | Notes |
+|---|---|---|---|---|
+| 1.1 Idempotency audit + retries 0→2 | #69 | `173f7ab` | ✅ DONE | Found 1 NEEDS GUARD: `create-scan-job` now has findFirst-and-reuse guard. Audit table in commit body. |
+| 1.2 validation-parser tests | #70 | `9a658fd` | ✅ DONE | +5 tests in `packages/ai/src/__tests__/validation-parser.test.ts`. Suite 139→144. |
+| Phase 1 quick gate | — | — | ✅ PASS | typecheck clean, 144/144 tests. Full E2E pending Nick's run. |
+| 2.1 Prompt caching validateHypothesis | #79 | `45cb490` | ✅ DONE (infra) | Static/dynamic split, cache_control wired. **Caveat:** ~500 tokens < Sonnet 4.6's 1024-token minimum — cache won't activate until prefix grows. Zero cost when inactive; lights up automatically later. |
+| 2.2 Parallel generate-hypothesis + sampleScan | #80 | `2ddb60c` | ✅ DONE | sampleScan extracted to sibling `gmail-sample-scan` step; both wrapped in `Promise.all`. |
+| 2.3 Parallel discovery queries | #81 | `0884cee` | ✅ DONE | `p-limit@7.3.0` added; concurrency=3 with `.slice(0, cap)` trim. |
+| Phase 2 quick gate | — | — | ✅ PASS | typecheck clean, 144/144 tests. Full E2E pending. |
+
+**Follow-ups filed this session:**
+- **#84** Harden `GmailMessageMeta.date` against Inngest JSON-replay (Date field loses type on retry). Non-blocking; latent-only risk today.
+
+**Next action on resume:**
+- Nick runs full E2E on both schemas (school_parent 80 emails + property 200 emails), captures structured logs, invokes `/onboarding-timing` to compare against baseline (Function A ~40s / Function B ~9m). Measurement gates Phase 3 kickoff.
+- If E2E clean → dispatch Task 3.1 (#77 Gemini batch extraction).
+- If regression → bisect across `45cb490 → 2ddb60c → 0884cee`.
+
+---
+
 ## Verification Protocol (runs between every phase)
 
 This is the gate. Do not advance to the next phase until all of the following pass.
