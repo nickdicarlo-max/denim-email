@@ -16,6 +16,7 @@
 import type { BodySample, SenderPattern, SocialCluster } from "@denim/ai";
 import { buildDiscoveryIntelligencePrompt, parseDiscoveryIntelligenceResponse } from "@denim/ai";
 import type { EntityGroupInput } from "@denim/types";
+import pLimit from "p-limit";
 import { callClaude } from "@/lib/ai/client";
 import { logAICost } from "@/lib/ai/cost-tracker";
 import type { GmailClient } from "@/lib/gmail/client";
@@ -67,27 +68,36 @@ export async function runDiscoveryQueries(
   let queriesRun = 0;
   let queriesSkipped = 0;
 
-  for (const { query } of queries) {
-    if (allMessageIds.size >= maxEmails) {
-      queriesSkipped++;
-      continue;
-    }
+  // Run queries in parallel with bounded concurrency. Gmail API calls are
+  // independent per query; the `remaining` check is non-atomic but cheap over-fetch
+  // is trimmed by the final Set size + cap. Dedup preserved via the shared Set.
+  const limit = pLimit(3);
+  await Promise.all(
+    queries.map(({ query }) =>
+      limit(async () => {
+        if (allMessageIds.size >= maxEmails) {
+          queriesSkipped++;
+          return;
+        }
 
-    // Remaining capacity for this query
-    const remaining = maxEmails - allMessageIds.size;
+        // Remaining capacity at the time this query starts (best-effort under concurrency).
+        const remaining = maxEmails - allMessageIds.size;
 
-    // Append time window to every query
-    const scopedQuery = `${query} newer_than:${lookback}`;
+        // Append time window to every query
+        const scopedQuery = `${query} newer_than:${lookback}`;
 
-    const messages = await gmailClient.searchEmails(scopedQuery, remaining);
-    for (const msg of messages) {
-      allMessageIds.add(msg.id);
-      if (allMessageIds.size >= maxEmails) break;
-    }
-    queriesRun++;
-  }
+        const messages = await gmailClient.searchEmails(scopedQuery, remaining);
+        for (const msg of messages) {
+          if (allMessageIds.size >= maxEmails) break;
+          allMessageIds.add(msg.id);
+        }
+        queriesRun++;
+      }),
+    ),
+  );
 
-  const emailIds = Array.from(allMessageIds);
+  // Trim any incidental over-fetch from concurrent queries.
+  const emailIds = Array.from(allMessageIds).slice(0, maxEmails);
 
   logger.info({
     service: "discovery",
