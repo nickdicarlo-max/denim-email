@@ -1,8 +1,25 @@
 import type { SchemaHypothesis } from "@denim/types";
 
 export interface ValidationPromptResult {
-  system: string;
+  /**
+   * Static prefix of the system prompt — rules, schema, grounding, alias
+   * detection, noise classification. Does not vary between calls, so it's
+   * a stable cache prefix for Anthropic prompt caching (#79).
+   */
+  systemStatic: string;
+  /**
+   * Dynamic tail of the system prompt — the user's entered topics list. Varies
+   * per user/call, so must follow the static prefix (not be interpolated
+   * inside it) to keep the prefix cacheable.
+   */
+  systemDynamic: string;
+  /** User message (email samples + hypothesis context). Varies every call. */
   user: string;
+  /**
+   * Concatenation of systemStatic + "\n" + systemDynamic, preserved for
+   * callers that don't yet use the cacheable two-part form.
+   */
+  system: string;
 }
 
 interface EmailSample {
@@ -28,7 +45,11 @@ export function buildValidationPrompt(
     ? userThings.map((t) => `"${t}"`).join(", ")
     : "(none provided)";
 
-  const system = `You are an email analysis assistant. You are given a schema hypothesis (an AI-generated plan for organizing a user's email) and a sample of their actual recent emails. Your job is to validate the hypothesis against the real email data.
+  // STATIC: rules, schema, grounding, alias detection, noise classification.
+  // Identical across every validateHypothesis call — safe to cache as the
+  // prompt prefix (Anthropic prompt caching, #79). Do NOT interpolate any
+  // per-user / per-call value into this string.
+  const systemStatic = `You are an email analysis assistant. You are given a schema hypothesis (an AI-generated plan for organizing a user's email) and a sample of their actual recent emails. Your job is to validate the hypothesis against the real email data.
 
 Analyze the email samples and return a JSON object with these fields:
 - confirmedEntities: string[] — entity names from the hypothesis that appear in the email samples
@@ -63,8 +84,8 @@ If it IS an alias, set likelyAliasOf to the PRIMARY entity name it should be gro
 If it is NOT an alias, set likelyAliasOf, aliasConfidence, and aliasReason to null.
 
 RELATED USER TOPIC:
-The user entered these topics they want to track: ${userThingsList}.
-For EACH discovered entity, set relatedUserThing to the SINGLE user topic it most clearly relates to, matched CASE-INSENSITIVELY against the list above. Use this rule:
+The user entered a list of topics they want to track. The list is provided below (see "User's Entered Topics").
+For EACH discovered entity, set relatedUserThing to the SINGLE user topic it most clearly relates to, matched CASE-INSENSITIVELY against that list. Use this rule:
 - If the entity is clearly about one specific topic (e.g., "ZSA U11/12 Girls" is about "soccer"), set relatedUserThing to that exact topic name.
 - If the entity spans multiple topics (e.g., a parent who emails about soccer AND dance), set relatedUserThing to null.
 - If the entity is unrelated to any user topic (e.g., a rental-property manager when the user's topics are all kids activities), set relatedUserThing to null.
@@ -82,6 +103,12 @@ The test: would the user want to track and organize emails from this source into
 - confidenceScore: number 0-1 — how well the hypothesis matches the actual email data
 
 Return ONLY valid JSON, no markdown fences, no explanation.`;
+
+  // DYNAMIC: per-call values the static rules reference. Appended AFTER the
+  // cacheable static prefix so every call can still reuse the cached bytes.
+  const systemDynamic = `User's Entered Topics: ${userThingsList}`;
+
+  const system = `${systemStatic}\n${systemDynamic}`;
 
   // Build entity group context section (only if groups provided)
   let groupSection = "";
@@ -147,5 +174,5 @@ ${sampleList}
 
 Analyze these emails against the hypothesis. Which entities and tags are confirmed? What new patterns do you see? What sender domains are noise?${entityGroups && entityGroups.length > 0 ? " For discovered entities, check whether they might be aliases or sub-groups of known entities using the entity group context above." : ""} For every discovered entity, set relatedUserThing to the user's topic it most clearly relates to (or null).`;
 
-  return { system, user };
+  return { systemStatic, systemDynamic, system, user };
 }

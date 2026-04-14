@@ -120,8 +120,15 @@ export async function validateHypothesis(
 
       const result = await callClaude({
         model: DEFAULT_MODEL,
+        // system is kept as the concatenated form for logs / fallback; the
+        // API call uses cacheableSystemPrompt below (#79) to cache the
+        // large static rules prefix across calls (Pass 1 + Pass 2).
         system: prompt.system,
         user: prompt.user,
+        cacheableSystemPrompt: {
+          static: prompt.systemStatic,
+          dynamic: prompt.systemDynamic,
+        },
         userId: options?.userId,
         operation,
       });

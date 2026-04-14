@@ -23,6 +23,12 @@ export interface AICallOptions {
   schemaId?: string;
   userId?: string;
   operation: string;
+  /**
+   * Claude-only. When set, emits the system prompt as a two-part array so
+   * the static prefix can be cached via Anthropic prompt caching (#79).
+   * Ignored by Gemini. If set, `system` is ignored in favor of these two.
+   */
+  cacheableSystemPrompt?: { static: string; dynamic: string };
 }
 
 export interface AICallResult {
@@ -30,6 +36,10 @@ export interface AICallResult {
   inputTokens: number;
   outputTokens: number;
   latencyMs: number;
+  /** Tokens served from Anthropic prompt cache. Zero for Gemini or cache misses. */
+  cacheReadInputTokens: number;
+  /** Tokens written to Anthropic prompt cache. Zero for Gemini or when no breakpoint set. */
+  cacheCreationInputTokens: number;
 }
 
 async function callAI(
@@ -50,20 +60,42 @@ async function callAI(
   try {
     const result = await callWithRetry(async (): Promise<Omit<AICallResult, "latencyMs">> => {
       if (provider === "claude") {
+        const system = options.cacheableSystemPrompt
+          ? [
+              {
+                type: "text" as const,
+                text: options.cacheableSystemPrompt.static,
+                cache_control: { type: "ephemeral" as const },
+              },
+              {
+                type: "text" as const,
+                text: options.cacheableSystemPrompt.dynamic,
+              },
+            ]
+          : options.system;
+
         const response = await anthropic.messages.create({
           model: options.model,
           max_tokens: options.maxTokens ?? 4096,
-          system: options.system,
+          system,
           messages: [{ role: "user", content: options.user }],
         });
 
         const textBlock = response.content.find((block) => block.type === "text");
         const content = textBlock && "text" in textBlock ? textBlock.text : "";
 
+        // cache_*_input_tokens are optional in the SDK types; default to 0.
+        const usage = response.usage as typeof response.usage & {
+          cache_read_input_tokens?: number | null;
+          cache_creation_input_tokens?: number | null;
+        };
+
         return {
           content,
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
+          cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
+          cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
         };
       }
 
@@ -87,6 +119,8 @@ async function callAI(
         content,
         inputTokens: usage?.promptTokenCount ?? 0,
         outputTokens: usage?.candidatesTokenCount ?? 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
       };
     });
 
@@ -101,6 +135,8 @@ async function callAI(
       durationMs: latencyMs,
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
+      cacheReadInputTokens: result.cacheReadInputTokens,
+      cacheCreationInputTokens: result.cacheCreationInputTokens,
     });
 
     return { ...result, latencyMs };
