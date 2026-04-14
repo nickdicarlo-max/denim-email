@@ -129,7 +129,10 @@
       "Bash(rm src/test-import.ts)",
       "mcp__plugin_playwright_playwright__browser_fill_form",
       "Bash(DATABASE_URL=$\\(node -e \"require\\('dotenv'\\).config\\({ path: '.env.local' }\\); process.stdout.write\\(process.env.DATABASE_URL\\)\"\\) npx prisma generate)",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "Bash(git grep:*)",
+      "Bash(wait)",
+      "Bash(awk '$1 > 500 {print $1, $2}')"
     ]
   }
 }
