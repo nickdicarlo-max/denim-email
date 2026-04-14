@@ -44,6 +44,7 @@ interface RawEntity {
   likelyAliasOf: string | null;
   aliasConfidence: number | null;
   aliasReason: string | null;
+  relatedUserThing: string | null;
 }
 
 export function PhaseReview({ response }: { response: OnboardingPollingResponse }) {
@@ -94,6 +95,7 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
               likelyAliasOf: e.likelyAliasOf ?? null,
               aliasConfidence: e.aliasConfidence ?? null,
               aliasReason: e.aliasReason ?? null,
+              relatedUserThing: e.relatedUserThing ?? null,
             })),
           );
         } else if (json.data.hypothesis) {
@@ -116,6 +118,7 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
               likelyAliasOf: null,
               aliasConfidence: null,
               aliasReason: null,
+              relatedUserThing: null,
             });
           }
 
@@ -135,6 +138,7 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
                 likelyAliasOf: e.likelyAliasOf ?? null,
                 aliasConfidence: e.aliasConfidence ?? null,
                 aliasReason: e.aliasReason ?? null,
+                relatedUserThing: e.relatedUserThing ?? null,
               });
             }
           }

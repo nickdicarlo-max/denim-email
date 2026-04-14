@@ -12,6 +12,7 @@ export interface EntityData {
   likelyAliasOf: string | null;
   aliasConfidence: number | null;
   aliasReason: string | null;
+  relatedUserThing: string | null;
 }
 
 interface ReviewEntitiesProps {
