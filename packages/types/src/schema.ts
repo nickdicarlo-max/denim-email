@@ -364,6 +364,12 @@ export interface HypothesisValidation {
     likelyAliasOf?: string | null;
     aliasConfidence?: number | null;
     aliasReason?: string | null;
+    /**
+     * Name of the user-entered WHAT this entity most relates to (e.g.,
+     * "soccer"), or null if no single clear association. Used by the
+     * review screen to group discoveries under the right topic.
+     */
+    relatedUserThing?: string | null;
   }[];
   confirmedTags: string[];
   suggestedTags: {
