@@ -89,7 +89,11 @@ interface EmailSampleForValidation {
 export async function validateHypothesis(
   hypothesis: SchemaHypothesis,
   emailSamples: EmailSampleForValidation[],
-  options?: { userId?: string; entityGroups?: EntityGroupContext[] },
+  options?: {
+    userId?: string;
+    entityGroups?: EntityGroupContext[];
+    userThings?: string[];
+  },
 ): Promise<HypothesisValidation> {
   const operation = "validateHypothesis";
   const start = Date.now();
@@ -103,10 +107,16 @@ export async function validateHypothesis(
         userId: options?.userId,
         sampleCount: emailSamples.length,
         entityGroupCount: options?.entityGroups?.length ?? 0,
+        userThingCount: options?.userThings?.length ?? 0,
       },
     },
     async () => {
-      const prompt = buildValidationPrompt(hypothesis, emailSamples, options?.entityGroups);
+      const prompt = buildValidationPrompt(
+        hypothesis,
+        emailSamples,
+        options?.entityGroups,
+        options?.userThings,
+      );
 
       const result = await callClaude({
         model: DEFAULT_MODEL,
@@ -185,7 +195,7 @@ export async function validateHypothesis(
  * implicitly avoided expansion because it only ran once. Re-centralized
  * here now that runOnboarding performs the domain-expansion second pass.
  */
-const GENERIC_SENDER_DOMAINS = new Set([
+export const GENERIC_SENDER_DOMAINS = new Set([
   "gmail.com",
   "googlemail.com",
   "yahoo.com",
