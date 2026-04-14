@@ -22,43 +22,69 @@ interface ReviewEntitiesProps {
 }
 
 /**
- * Two-section entity review for the onboarding review page.
+ * Two-section entity review for onboarding.
  *
- * Section 1: User-entered things with discovered aliases.
- * Section 2: New discoveries (auto-detected primary entities not in userThings).
+ * Section 1 "Your Topics": each user-entered WHAT as a header, with
+ *   discoveries that relate to that topic listed below. A discovery
+ *   relates to a topic if it is a PRIMARY whose aliases contain the
+ *   topic name (existing alias-based match), OR if it is any entity
+ *   whose `relatedUserThing` matches the topic name (new, from
+ *   validation).
+ *
+ * Section 2 "Discoveries": everything else — entities that didn't get
+ *   placed under any topic. Includes PRIMARY entities that look like
+ *   their own topics (Rental Properties, The Control Surface) and
+ *   SECONDARY entities that span topics (like a parent who emails about
+ *   both soccer and dance).
  */
 export function ReviewEntities({ userThings, entities, onToggleEntity }: ReviewEntitiesProps) {
-  // Section 1: Match user-entered things to primary entities
   const userThingsLower = userThings.map((t) => t.toLowerCase());
 
-  // Find primary entities matching each user thing
+  // For each user thing, find the entities that should display under it.
   const thingSections = userThings.map((thingName) => {
     const thingLower = thingName.toLowerCase();
-    // The "parent" entity that matches the user-entered name
+    // Parent-match: PRIMARY entity whose name equals the user thing.
+    // We do NOT display this as a row — the header already shows the
+    // user thing; the row would be a duplicate. Kept for future use.
     const parentEntity = entities.find(
       (e) => e.type === "PRIMARY" && e.name.toLowerCase() === thingLower,
     );
-    // Auto-detected aliases: primary entities whose name differs from the user thing
-    // but are associated (discovered as aliases during scan)
-    const aliasEntities = entities.filter(
-      (e) =>
+
+    // Related entities under this user thing. Two ways to qualify:
+    //   1. PRIMARY with an alias matching the user thing (old behavior)
+    //   2. Any type with relatedUserThing === thingName (new)
+    const relatedEntities = entities.filter((e) => {
+      // Skip the parent entity itself (it IS the user thing).
+      if (parentEntity && e.id === parentEntity.id) return false;
+      const aliasMatch =
         e.type === "PRIMARY" &&
         e.autoDetected &&
-        e.name.toLowerCase() !== thingLower &&
-        e.aliases.some((a) => a.toLowerCase() === thingLower),
-    );
-    return { thingName, parentEntity, aliasEntities };
+        e.aliases.some((a) => a.toLowerCase() === thingLower);
+      const relatedMatch =
+        e.relatedUserThing != null && e.relatedUserThing.toLowerCase() === thingLower;
+      return aliasMatch || relatedMatch;
+    });
+
+    return { thingName, parentEntity, relatedEntities };
   });
 
-  // Section 2: New discoveries -- auto-detected primary entities not matching any user thing
-  // Sorted by confidence DESC (highest first)
+  // Build a set of entity ids already shown under a user thing, so we
+  // don't duplicate them in Discoveries.
+  const shownIds = new Set<string>();
+  for (const { parentEntity, relatedEntities } of thingSections) {
+    if (parentEntity) shownIds.add(parentEntity.id);
+    for (const e of relatedEntities) shownIds.add(e.id);
+  }
+
+  // Discoveries: everything else (PRIMARY or SECONDARY, auto-detected,
+  // not already shown under a topic, and not matching a user thing name
+  // via aliases).
   const discoveries = entities
     .filter((e) => {
-      if (e.type !== "PRIMARY" || !e.autoDetected) return false;
+      if (shownIds.has(e.id)) return false;
+      if (!e.autoDetected) return false;
       const nameLower = e.name.toLowerCase();
-      // Skip if entity name matches a user thing
       if (userThingsLower.includes(nameLower)) return false;
-      // Skip if entity is an alias of a user thing
       const isAliasOfUserThing = userThings.some((t) =>
         e.aliases.some((a) => a.toLowerCase() === t.toLowerCase()),
       );
@@ -69,20 +95,20 @@ export function ReviewEntities({ userThings, entities, onToggleEntity }: ReviewE
 
   return (
     <div className="space-y-6">
-      {/* Section 1: User-entered things */}
+      {/* Section 1: Your Topics */}
       <div className="rounded-lg bg-white p-5">
         <h2 className="text-xs font-semibold uppercase tracking-widest text-secondary mb-4">
-          Your Things
+          Your Topics
         </h2>
 
         <div className="space-y-5">
-          {thingSections.map(({ thingName, aliasEntities }) => (
+          {thingSections.map(({ thingName, relatedEntities }) => (
             <div key={thingName}>
               <p className="font-semibold text-primary">{thingName}</p>
 
-              {aliasEntities.length > 0 ? (
+              {relatedEntities.length > 0 ? (
                 <div className="mt-2 ml-4 space-y-2">
-                  {aliasEntities.map((entity) => (
+                  {relatedEntities.map((entity) => (
                     <div key={entity.id} className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-primary">{entity.name}</span>
@@ -90,13 +116,23 @@ export function ReviewEntities({ userThings, entities, onToggleEntity }: ReviewE
                           {entity.emailCount} {entity.emailCount === 1 ? "email" : "emails"}
                         </span>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onToggleEntity(entity.id, !entity.isActive)}
-                        className="cursor-pointer text-xs text-secondary hover:text-red-600 transition-colors"
-                      >
-                        {entity.isActive ? "Not right? Separate" : "Re-merge"}
-                      </button>
+                      {entity.isActive ? (
+                        <button
+                          type="button"
+                          onClick={() => onToggleEntity(entity.id, false)}
+                          className="cursor-pointer text-xs text-muted hover:text-red-600 transition-colors"
+                        >
+                          Not now
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onToggleEntity(entity.id, true)}
+                          className="cursor-pointer text-xs font-medium text-accent hover:brightness-110 transition-colors"
+                        >
+                          Add
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -108,11 +144,11 @@ export function ReviewEntities({ userThings, entities, onToggleEntity }: ReviewE
         </div>
       </div>
 
-      {/* Section 2: New discoveries */}
+      {/* Section 2: Discoveries */}
       {discoveries.length > 0 && (
         <div className="rounded-lg bg-white p-5">
           <h2 className="text-xs font-semibold uppercase tracking-widest text-secondary mb-4">
-            New Discoveries
+            Discoveries
           </h2>
 
           <div className="space-y-3">
