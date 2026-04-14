@@ -12,6 +12,7 @@ const DiscoveredEntitySchema = z.object({
   likelyAliasOf: z.string().nullable().default(null),
   aliasConfidence: z.number().nullable().default(null),
   aliasReason: z.string().nullable().default(null),
+  relatedUserThing: z.string().nullable().default(null),
 });
 
 const SuggestedTagSchema = z.object({
