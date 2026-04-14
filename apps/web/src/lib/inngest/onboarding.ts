@@ -68,62 +68,109 @@ export const runOnboarding = inngest.createFunction(
     const functionStart = Date.now();
 
     try {
-      // ---- Step 1: PENDING → GENERATING_HYPOTHESIS ---------------------
+      // ---- Steps 1 & 1a: parallel sibling fan-out ----------------------
       //
-      // Load the raw InterviewInput the caller persisted on the stub,
-      // ask Claude for a hypothesis, and write it back to the row.
-      await step.run("generate-hypothesis", async () => {
-        const stepStart = Date.now();
-        let dbReadMs = 0;
-        let genMs = 0;
-        let dbWriteMs = 0;
-        const result = await advanceSchemaPhase({
-          schemaId,
-          from: "PENDING",
-          to: "GENERATING_HYPOTHESIS",
-          work: async () => {
-            const t1 = Date.now();
-            const schema = await prisma.caseSchema.findUniqueOrThrow({
-              where: { id: schemaId },
-              select: { inputs: true },
-            });
-            dbReadMs = Date.now() - t1;
-            const inputs = schema.inputs as unknown as InterviewInput | null;
-            if (!inputs) {
-              throw new NonRetriableError(
-                `runOnboarding: CaseSchema ${schemaId} has no inputs column — stub was created without an InterviewInput`,
-              );
-            }
-            const t2 = Date.now();
-            const hypothesis = await generateHypothesis(inputs, { userId });
-            genMs = Date.now() - t2;
-            const t3 = Date.now();
-            await prisma.caseSchema.update({
-              where: { id: schemaId },
-              data: { hypothesis: hypothesis as unknown as object },
-            });
-            dbWriteMs = Date.now() - t3;
-          },
-        });
-        logger.info({
-          service: "runOnboarding",
-          operation: "generate-hypothesis.complete",
-          schemaId,
-          stepDurationMs: Date.now() - stepStart,
-          dbReadMs,
-          generateHypothesisMs: genMs,
-          dbWriteMs,
-        });
-        return result;
-      });
+      // generate-hypothesis (Claude call, ~15s) and gmail-sample-scan
+      // (Gmail fetch, ~5s) have no data dependency on each other:
+      //   - generate-hypothesis only needs the InterviewInput already on the row
+      //   - gmail-sample-scan only needs the user's access token
+      // Run them as sibling step.run calls inside Promise.all so the Gmail
+      // fetch overlaps with the Claude call. Each step keeps its own
+      // independent retry + Inngest checkpoint. validate-hypothesis (below)
+      // consumes both results.
+      //
+      // Parallelized 2026-04-14 as Task 2.2 of the perf-quality sprint (#80).
+      const [, sampleScanResult] = await Promise.all([
+        // ---- Step 1: PENDING → GENERATING_HYPOTHESIS -------------------
+        //
+        // Load the raw InterviewInput the caller persisted on the stub,
+        // ask Claude for a hypothesis, and write it back to the row.
+        step.run("generate-hypothesis", async () => {
+          const stepStart = Date.now();
+          let dbReadMs = 0;
+          let genMs = 0;
+          let dbWriteMs = 0;
+          const result = await advanceSchemaPhase({
+            schemaId,
+            from: "PENDING",
+            to: "GENERATING_HYPOTHESIS",
+            work: async () => {
+              const t1 = Date.now();
+              const schema = await prisma.caseSchema.findUniqueOrThrow({
+                where: { id: schemaId },
+                select: { inputs: true },
+              });
+              dbReadMs = Date.now() - t1;
+              const inputs = schema.inputs as unknown as InterviewInput | null;
+              if (!inputs) {
+                throw new NonRetriableError(
+                  `runOnboarding: CaseSchema ${schemaId} has no inputs column — stub was created without an InterviewInput`,
+                );
+              }
+              const t2 = Date.now();
+              const hypothesis = await generateHypothesis(inputs, { userId });
+              genMs = Date.now() - t2;
+              const t3 = Date.now();
+              await prisma.caseSchema.update({
+                where: { id: schemaId },
+                data: { hypothesis: hypothesis as unknown as object },
+              });
+              dbWriteMs = Date.now() - t3;
+            },
+          });
+          logger.info({
+            service: "runOnboarding",
+            operation: "generate-hypothesis.complete",
+            schemaId,
+            stepDurationMs: Date.now() - stepStart,
+            dbReadMs,
+            generateHypothesisMs: genMs,
+            dbWriteMs,
+          });
+          return result;
+        }),
+
+        // ---- Step 1a: Gmail sample scan -------------------------------
+        //
+        // Fetch a broad random sample from the last 8 weeks for Pass 1
+        // validation. Independent of hypothesis generation — runs in
+        // parallel. Returns the serialized messages; validate-hypothesis
+        // consumes them below. On Inngest retry, step memoization replays
+        // these without a second Gmail fetch.
+        step.run("gmail-sample-scan", async () => {
+          const stepStart = Date.now();
+          const t1 = Date.now();
+          const accessToken = await getValidGmailToken(userId);
+          const tokenMs = Date.now() - t1;
+          const gmail = new GmailClient(accessToken);
+          const t2 = Date.now();
+          const { messages } = await gmail.sampleScan(
+            ONBOARDING_TUNABLES.pass1.sampleSize,
+            ONBOARDING_TUNABLES.pass1.lookback,
+          );
+          const gmailMs = Date.now() - t2;
+          logger.info({
+            service: "runOnboarding",
+            operation: "gmail-sample-scan.complete",
+            schemaId,
+            sampleSize: ONBOARDING_TUNABLES.pass1.sampleSize,
+            lookback: ONBOARDING_TUNABLES.pass1.lookback,
+            messageCount: messages.length,
+            stepDurationMs: Date.now() - stepStart,
+            gmailTokenMs: tokenMs,
+            gmailSampleScanMs: gmailMs,
+          });
+          return { messages };
+        }),
+      ]);
 
       // ---- Step 1b: Pass 1 validation (broad random sample) -------------
       //
-      // Pre-confirm validation. Reads a small random sample from the last
-      // 8 weeks and asks Claude to identify confirmed entities, new
-      // discoveries, and noise. Pass 2 (targeted domain expansion) is
-      // deferred until after the user confirms — see
-      // expand-confirmed-domains in runOnboardingPipeline.
+      // Pre-confirm validation. Takes the sample from gmail-sample-scan
+      // and asks Claude to identify confirmed entities, new discoveries,
+      // and noise. Pass 2 (targeted domain expansion) is deferred until
+      // after the user confirms — see expand-confirmed-domains in
+      // runOnboardingPipeline.
       //
       // Runs OUTSIDE an advanceSchemaPhase CAS — stays within the
       // GENERATING_HYPOTHESIS phase for polling purposes. The phase advance
@@ -132,8 +179,6 @@ export const runOnboarding = inngest.createFunction(
       await step.run("validate-hypothesis", async () => {
         const stepStart = Date.now();
         let dbReadMs = 0;
-        let tokenMs = 0;
-        let gmailMs = 0;
         let validateMs = 0;
         let dbWriteMs = 0;
 
@@ -164,16 +209,9 @@ export const runOnboarding = inngest.createFunction(
           );
         }
 
-        const t1 = Date.now();
-        const accessToken = await getValidGmailToken(userId);
-        tokenMs = Date.now() - t1;
-        const gmail = new GmailClient(accessToken);
-        const t2 = Date.now();
-        const { messages } = await gmail.sampleScan(
-          ONBOARDING_TUNABLES.pass1.sampleSize,
-          ONBOARDING_TUNABLES.pass1.lookback,
-        );
-        gmailMs = Date.now() - t2;
+        // Messages come from the sibling gmail-sample-scan step above
+        // (memoized by Inngest, so retries of this step don't re-fetch).
+        const { messages } = sampleScanResult;
 
         // Enrich hypothesis WHO aliases with resolved sender email
         // addresses (mutates the hypothesis object in place). Pass 2
@@ -235,8 +273,8 @@ export const runOnboarding = inngest.createFunction(
           confidenceScore: pass1.confidenceScore,
           stepDurationMs: Date.now() - stepStart,
           dbReadMs,
-          gmailTokenMs: tokenMs,
-          gmailSampleScanMs: gmailMs,
+          // gmailTokenMs + gmailSampleScanMs now logged by the sibling
+          // gmail-sample-scan step (Task 2.2, #80).
           validateHypothesisMs: validateMs,
           dbWriteMs,
         });
