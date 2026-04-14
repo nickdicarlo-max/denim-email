@@ -22,7 +22,12 @@ export function buildValidationPrompt(
   hypothesis: SchemaHypothesis,
   emailSamples: EmailSample[],
   entityGroups?: EntityGroupContext[],
+  userThings?: string[],
 ): ValidationPromptResult {
+  const userThingsList = userThings && userThings.length > 0
+    ? userThings.map((t) => `"${t}"`).join(", ")
+    : "(none provided)";
+
   const system = `You are an email analysis assistant. You are given a schema hypothesis (an AI-generated plan for organizing a user's email) and a sample of their actual recent emails. Your job is to validate the hypothesis against the real email data.
 
 Analyze the email samples and return a JSON object with these fields:
@@ -37,7 +42,8 @@ Analyze the email samples and return a JSON object with these fields:
     emailIndices: number[],
     likelyAliasOf: string | null,
     aliasConfidence: number | null (0-1, only set if likelyAliasOf is not null),
-    aliasReason: string | null (1-sentence explanation, only set if likelyAliasOf is not null)
+    aliasReason: string | null (1-sentence explanation, only set if likelyAliasOf is not null),
+    relatedUserThing: string | null
   }
 
 GROUNDING RULES FOR DISCOVERED ENTITIES:
@@ -55,6 +61,14 @@ For each discovered entity, determine whether it is likely an alias, alternate n
 - The discovered entity operates in the same domain/activity as a known entity group
 If it IS an alias, set likelyAliasOf to the PRIMARY entity name it should be grouped with. Set aliasConfidence (0.5 = probably, 0.8+ = almost certain). Explain reasoning in aliasReason.
 If it is NOT an alias, set likelyAliasOf, aliasConfidence, and aliasReason to null.
+
+RELATED USER TOPIC:
+The user entered these topics they want to track: ${userThingsList}.
+For EACH discovered entity, set relatedUserThing to the SINGLE user topic it most clearly relates to, matched CASE-INSENSITIVELY against the list above. Use this rule:
+- If the entity is clearly about one specific topic (e.g., "ZSA U11/12 Girls" is about "soccer"), set relatedUserThing to that exact topic name.
+- If the entity spans multiple topics (e.g., a parent who emails about soccer AND dance), set relatedUserThing to null.
+- If the entity is unrelated to any user topic (e.g., a rental-property manager when the user's topics are all kids activities), set relatedUserThing to null.
+- The value MUST be one of the listed topics verbatim (same spelling, lowercase acceptable) OR null. Never invent a new topic name.
 
 NOISE vs ENTITY CLASSIFICATION:
 Newsletter senders, mass email lists, marketing emails, automated notification services, and subscription content are NOISE, not entities. Put them in noisePatterns, not discoveredEntities.
@@ -98,7 +112,9 @@ Return ONLY valid JSON, no markdown fences, no explanation.`;
     })
     .join("\n");
 
-  const tagList = hypothesis.tags.map((t: { name: string; description: string }) => `- ${t.name}: ${t.description}`).join("\n");
+  const tagList = hypothesis.tags
+    .map((t: { name: string; description: string }) => `- ${t.name}: ${t.description}`)
+    .join("\n");
 
   const sampleList = emailSamples
     .slice(0, 100)
@@ -108,13 +124,17 @@ Return ONLY valid JSON, no markdown fences, no explanation.`;
     )
     .join("\n");
 
-  const entitiesHeader = entityGroups && entityGroups.length > 0 ? "### All Known Entities" : "### Known Entities";
+  const entitiesHeader =
+    entityGroups && entityGroups.length > 0 ? "### All Known Entities" : "### Known Entities";
 
   const user = `## Schema Hypothesis
 
 **Domain:** ${hypothesis.domain}
 **Schema Name:** ${hypothesis.schemaName}
 **Primary Entity Type:** ${hypothesis.primaryEntity.name} — ${hypothesis.primaryEntity.description}
+
+### User's Entered Topics
+${userThingsList}
 
 ${groupSection}${entitiesHeader}
 ${entityList}
@@ -125,7 +145,7 @@ ${tagList}
 ## Email Samples (${emailSamples.length} emails)
 ${sampleList}
 
-Analyze these emails against the hypothesis. Which entities and tags are confirmed? What new patterns do you see? What sender domains are noise?${entityGroups && entityGroups.length > 0 ? " For discovered entities, check whether they might be aliases or sub-groups of known entities using the entity group context above." : ""}`;
+Analyze these emails against the hypothesis. Which entities and tags are confirmed? What new patterns do you see? What sender domains are noise?${entityGroups && entityGroups.length > 0 ? " For discovered entities, check whether they might be aliases or sub-groups of known entities using the entity group context above." : ""} For every discovered entity, set relatedUserThing to the user's topic it most clearly relates to (or null).`;
 
   return { system, user };
 }
