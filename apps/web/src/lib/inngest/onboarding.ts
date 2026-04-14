@@ -61,6 +61,10 @@ export const runOnboarding = inngest.createFunction(
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
+    // Function-level wall-clock. Logged alongside each step and at the
+    // terminal awaitingReview marker so one grep line tells you where
+    // time went across the whole pre-review pipeline.
+    const functionStart = Date.now();
 
     try {
       // ---- Step 1: PENDING → GENERATING_HYPOTHESIS ---------------------
@@ -68,28 +72,48 @@ export const runOnboarding = inngest.createFunction(
       // Load the raw InterviewInput the caller persisted on the stub,
       // ask Claude for a hypothesis, and write it back to the row.
       await step.run("generate-hypothesis", async () => {
-        return advanceSchemaPhase({
+        const stepStart = Date.now();
+        let dbReadMs = 0;
+        let genMs = 0;
+        let dbWriteMs = 0;
+        const result = await advanceSchemaPhase({
           schemaId,
           from: "PENDING",
           to: "GENERATING_HYPOTHESIS",
           work: async () => {
+            const t1 = Date.now();
             const schema = await prisma.caseSchema.findUniqueOrThrow({
               where: { id: schemaId },
               select: { inputs: true },
             });
+            dbReadMs = Date.now() - t1;
             const inputs = schema.inputs as unknown as InterviewInput | null;
             if (!inputs) {
               throw new NonRetriableError(
                 `runOnboarding: CaseSchema ${schemaId} has no inputs column — stub was created without an InterviewInput`,
               );
             }
+            const t2 = Date.now();
             const hypothesis = await generateHypothesis(inputs, { userId });
+            genMs = Date.now() - t2;
+            const t3 = Date.now();
             await prisma.caseSchema.update({
               where: { id: schemaId },
               data: { hypothesis: hypothesis as unknown as object },
             });
+            dbWriteMs = Date.now() - t3;
           },
         });
+        logger.info({
+          service: "runOnboarding",
+          operation: "generate-hypothesis.complete",
+          schemaId,
+          stepDurationMs: Date.now() - stepStart,
+          dbReadMs,
+          generateHypothesisMs: genMs,
+          dbWriteMs,
+        });
+        return result;
       });
 
       // ---- Step 1b: Pass 1 validation (broad random sample) -------------
@@ -105,10 +129,19 @@ export const runOnboarding = inngest.createFunction(
       // happens in the next step (advance-to-awaiting-review) after
       // validation has written its result back.
       await step.run("validate-hypothesis", async () => {
+        const stepStart = Date.now();
+        let dbReadMs = 0;
+        let tokenMs = 0;
+        let gmailMs = 0;
+        let validateMs = 0;
+        let dbWriteMs = 0;
+
+        const t0 = Date.now();
         const schema = await prisma.caseSchema.findUniqueOrThrow({
           where: { id: schemaId },
           select: { hypothesis: true, validation: true, inputs: true },
         });
+        dbReadMs = Date.now() - t0;
 
         // Idempotency guard: on Inngest retry, if validation already ran,
         // skip it rather than spending another Claude call.
@@ -118,6 +151,7 @@ export const runOnboarding = inngest.createFunction(
             operation: "validate-hypothesis.skip",
             schemaId,
             reason: "already-validated",
+            stepDurationMs: Date.now() - stepStart,
           });
           return;
         }
@@ -129,12 +163,16 @@ export const runOnboarding = inngest.createFunction(
           );
         }
 
+        const t1 = Date.now();
         const accessToken = await getValidGmailToken(userId);
+        tokenMs = Date.now() - t1;
         const gmail = new GmailClient(accessToken);
+        const t2 = Date.now();
         const { messages } = await gmail.sampleScan(
           ONBOARDING_TUNABLES.pass1.sampleSize,
           ONBOARDING_TUNABLES.pass1.lookback,
         );
+        gmailMs = Date.now() - t2;
 
         // Enrich hypothesis WHO aliases with resolved sender email
         // addresses (mutates the hypothesis object in place). Pass 2
@@ -165,12 +203,15 @@ export const runOnboarding = inngest.createFunction(
         // to flattening the groups.
         const userThings = inputs?.whats ?? inputs?.groups?.flatMap((g) => g.whats) ?? [];
 
+        const t3 = Date.now();
         const pass1 = await validateHypothesis(hypothesis, pass1Samples, {
           userId,
           entityGroups,
           userThings,
         });
+        validateMs = Date.now() - t3;
 
+        const t4 = Date.now();
         await prisma.caseSchema.update({
           where: { id: schemaId },
           data: {
@@ -181,6 +222,7 @@ export const runOnboarding = inngest.createFunction(
             validation: pass1 as unknown as Prisma.InputJsonValue,
           },
         });
+        dbWriteMs = Date.now() - t4;
 
         logger.info({
           service: "runOnboarding",
@@ -190,6 +232,12 @@ export const runOnboarding = inngest.createFunction(
           lookback: ONBOARDING_TUNABLES.pass1.lookback,
           discovered: pass1.discoveredEntities.length,
           confidenceScore: pass1.confidenceScore,
+          stepDurationMs: Date.now() - stepStart,
+          dbReadMs,
+          gmailTokenMs: tokenMs,
+          gmailSampleScanMs: gmailMs,
+          validateHypothesisMs: validateMs,
+          dbWriteMs,
         });
       });
 
@@ -200,7 +248,8 @@ export const runOnboarding = inngest.createFunction(
       // persistSchemaRelations is NOT called here — the confirm route
       // (POST /api/onboarding/:schemaId) calls it after the user confirms.
       await step.run("advance-to-awaiting-review", async () => {
-        return advanceSchemaPhase({
+        const stepStart = Date.now();
+        const result = await advanceSchemaPhase({
           schemaId,
           from: "GENERATING_HYPOTHESIS",
           to: "AWAITING_REVIEW",
@@ -209,12 +258,23 @@ export const runOnboarding = inngest.createFunction(
             // written to the schema row. The CAS just flips the phase.
           },
         });
+        logger.info({
+          service: "runOnboarding",
+          operation: "advance-to-awaiting-review.complete",
+          schemaId,
+          stepDurationMs: Date.now() - stepStart,
+        });
+        return result;
       });
 
       logger.info({
         service: "runOnboarding",
         operation: "runOnboarding.awaitingReview",
         schemaId,
+        // Total wall clock from event receipt to phase=AWAITING_REVIEW.
+        // This is the "time the user waits on Card 3" metric — subtract
+        // polling overhead on the client to get the true server cost.
+        totalDurationMs: Date.now() - functionStart,
       });
     } catch (error) {
       if (error instanceof NonRetriableError) {
