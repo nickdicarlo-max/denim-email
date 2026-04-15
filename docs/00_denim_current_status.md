@@ -428,6 +428,92 @@ Extracted 20+ pipeline parameters from inline literals and prompt-file hardcodes
 2. If clean: dispatch Phase 4.1 (#63 batch `persistSchemaRelations`)
 3. If regressions: bisect across `74e2138 → b2c03fc → a2ae6f2 → fe08121`
 
+## 2026-04-15 Late-Afternoon Session — Routing Gaps Diagnosed + Fixed
+
+### Testing gaps from Property run forensics
+
+Nick surfaced two symptoms from eval of the 200-email Property run (schema `01KP8MRJQJXF302KP19NB5RAVR`). DB forensics against the live `routingDecision` JSONB revealed:
+
+**Gap 1 — 3 emails wrongly excluded as `relevance:low`** (all with `relevanceScore=0`):
+- 2× "Re: 3910 Bucknell - MR" from Maurice Gallardo (subject literally names a user PRIMARY; 11-email thread with 9 from Timothy Bishop + Vivek Gupta SECONDARY entities)
+- 1× "Re: FW: Commercial property proposal" from Shane Bowen (reply to Vivek Gupta thread)
+
+Root cause: relevance-gate bypass was `senderIsKnownEntity`-only. Subject-contains-PRIMARY and thread-has-known-entity were both ignored.
+
+**Gap 2 — 5+ emails misrouted into 851 Peavy case despite subjects naming a different PRIMARY.** Forensic pull of `routingDecision.routeMethod`/`detail` for each misrouted email showed:
+- Subject "Re: 3910 Bucknell Drive-Foundation" from Timothy Bishop had `method=relevance, relevanceEntity="851 Peavy"` (wrong)
+- The SAME subject from other senders correctly routed to 3910 Bucknell
+- Subject "North 40 Projects" routed to 851 Peavy with `relevanceEntity="851 Peavy"` — subject doesn't mention Peavy at all
+
+Root cause: Gemini hallucinated `relevanceEntity` under batch extraction (CHUNK_SIZE=5). When 3-4 of the 5 emails in a batch were about 851 Peavy (highest-volume entity, 36 emails), that context bled into the others' outputs. Architectural flaw compounded it: Stage 1 (Gemini `relevanceEntity`) ran BEFORE Stage 2 (deterministic subject content match), so the hallucination trumped the authoritative subject signal.
+
+### Fixes landed — commit `bb23fe7`
+
+**Relevance-gate bypass expanded** to fire if ANY of three deterministic signals match:
+1. Sender is a known entity (existing)
+2. **Subject contains any known entity name or alias** (new)
+3. **Thread has ≥1 prior email with `senderEntityId !== null`** (new — one `prisma.email.findFirst` per low-relevance reply)
+
+Bypass reason now logged (`bypassReason: "sender" | "subject" | "thread"`) for eval visibility. No Gemini output is trusted in the bypass path — every signal is deterministic.
+
+**Routing stage order swapped** to make subject authoritative:
+1. **Stage 1 (NEW):** subject-only PRIMARY name/alias match — immune to batch-context bleed
+2. Stage 2: Gemini `relevanceEntity` (demoted from Stage 1)
+3. Stage 3: summary content match (renamed/split from old Stage 2)
+4. Stage 4: `detectedEntities`
+5. Stage 4b: mid-scan PRIMARY creation (#76)
+6. Stage 5: sender fallback
+
+New `routeMethod="subject"` value makes eval queries straightforward.
+
+### Issues filed / state
+
+- **#87 closed** earlier today (synthesis maxTokens 4096 → 6144 via tunable)
+- **#88 open** — extractBatch concurrency 3→8 measurement (next run verifies)
+- **#91 open** — bypass expansion + subject-first routing (next run verifies)
+- **#38 partially addressed** by #91 — relevance filtering was "too conservative"; the bypass triple should improve it measurably
+
+### Phase 3 + 4 status per sprint plan
+
+Sprint plan reference: `docs/superpowers/plans/2026-04-14-perf-and-quality-sprint.md`
+
+**Phase 3 verification gate — still OPEN:**
+- [x] Task 3.1 code-complete (#77, `7c0d1d0`)
+- [x] Task 3.2 code-complete (#78, `2c6b373` — synthesis fan-out only; case-splitting deferred to #86)
+- [x] Task 3.3 code-complete (#82, `f3b54ff`)
+- [x] Extraction bottleneck diagnosed + fixed (#88, `74e2138` — concurrency 3→8)
+- [ ] **Full verification protocol — pending Nick's next E2E**
+- [ ] Function B target: originally ~3m 40s; revised forecast ~5m 35s due to case-splitting (#86) still serial
+- [ ] Eval tag coverage still 100%, orphan rate unchanged
+- [ ] Live counter visible during synthesis
+
+**Phase 4 — not started:**
+- [ ] 4.1 — #63 batch `persistSchemaRelations` DB round-trips (ready to dispatch after Phase 3 verification)
+- [ ] 4.2 — #73 review-screen render time investigation (needs timing data from next run)
+- [ ] 4.3 — #25 scanning UX umbrella close (verify child issues shipped, then close)
+
+### Commits landed this session (8 total on `feature/perf-quality-sprint`)
+
+- `e804b70` fix(synthesis): stamp synthesizedAt on failure so scan finalizes
+- `74e2138` perf(extraction): extractBatch concurrency 3→8 + centralize fan-out tunables
+- `b2c03fc` refactor(tunables): centralize pipeline + clustering knobs, bump synthesis maxTokens
+- `a2ae6f2` refactor(tunables): move per-domain clustering numerics out of the prompt file
+- `fe08121` refactor(tunables): promote discovery broadScanLimit + bodySampleCount, fix gmail pacing duplicate
+- `847f0a8` docs: 2026-04-15 late session block (tunables consolidation)
+- `bb23fe7` fix(extraction): expand relevance-gate bypass + prioritize subject over Gemini relevanceEntity
+
+### Next action on resume
+
+1. **Nick runs full Property E2E** — fresh schema to exercise the new routing
+2. **Pull verification data via `/supabase-db`:**
+   - Route-method histogram: `SELECT "routingDecision"->>'routeMethod' AS method, COUNT(*) FROM emails WHERE "schemaId" = '<new>' GROUP BY 1 ORDER BY 2 DESC`
+   - Bypass reason counts in logs for the new schema
+   - Email counts in Peavy vs 3910 Bucknell vs North 40 cases (expect shift away from Peavy)
+   - Any remaining `relevance:low` exclusions where subject names a known entity
+3. **If #91 clean + #88 clean (extraction ~50s):** dispatch **Phase 4.1 (#63)** — batch `persistSchemaRelations`
+4. **If regressions:** bisect across today's 8 commits — relevance-gate expansion and routing swap are the risk surface
+5. **If timing on Function A is still slow:** Phase 4.2 (#73) review-screen investigation using `/onboarding-timing`
+
 ## What's Next
 
 ### Immediate
