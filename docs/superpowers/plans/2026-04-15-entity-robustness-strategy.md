@@ -38,27 +38,45 @@ Right now the hypothesis prompt relies on Claude's general instincts to produce 
 
 ### Phase 1 — Strategy session (documentation, no code)
 
-Work through the 5 supported domains with Nick:
-- `school_parent`
-- `property`
-- `construction`
-- `legal`
-- `agency`
-- `general`
+**Scope:** start with 3 domains where Nick has strong intuition + live data. The other 3 can be filled in later (`construction`, `legal`, `general`).
 
-For each domain, enumerate:
+- **school_parent** — Nick has kids' activities live data
+- **property** (user-facing: "investment property") — Nick has live run data already
+- **agency** — Nick knows this domain well
 
-| Dimension | Questions to answer |
+For each domain, fill in a structured table per role (PRIMARY "WHAT" and SECONDARY "WHO"). The table is designed to let blanks remain — the AI is good at pattern inference and we shouldn't try to enumerate every case manually. The *known patterns* and *known anti-patterns* anchor the domain; everything else is guidance for the AI to figure out.
+
+**Table template** (one per domain, per role):
+
+```
+Domain: <domain>
+Role: PRIMARY (WHAT) | SECONDARY (WHO)
+Entity kind(s): <e.g., property address, activity name, organization, person>
+
+| Field | Value |
 |---|---|
-| **WHAT input shapes** | What do users actually type? Full addresses? Abbreviations? Informal names? How many words? Punctuation? Numbers? |
-| **WHAT canonical form** | What's the reference form the system should use? |
-| **WHAT alias rules** | Which variations should we generate automatically? Which should we NEVER generate? |
-| **WHAT anti-patterns** | What single words or fragments must NOT be aliased (e.g., "Bucknell" alone, "3910" alone, "St" alone)? |
-| **WHO input shapes** | First name? Full name? Email? Role? |
-| **WHO canonical + alias rules** | Same structure as WHAT |
-| **Invent-new rules** | In the user's inbox, what do NEW instances of this WHAT-shape look like? Can we teach Gemini to flag them? |
+| Typical input shape(s) | e.g., "3910 Bucknell", "851 Peavy Rd", "1501 Sylvan Drive" |
+| Canonical form rule | e.g., prefer "<number> <street-name>" — do NOT require street-type |
+| Alias patterns to GENERATE | e.g., "<number> <street-name> Dr", "<number> <street-name> Drive", "<number> <street-name> Road" |
+| Alias patterns to NEVER GENERATE | e.g., single tokens: "Bucknell", "3910", "Peavy" |
+| Ambiguous cases (AI decides) | e.g., "St Agnes" vs "Saint Agnes" vs "St. Agnes" — let AI normalize |
+| Domain shape regex/signal (for mid-scan invention) | e.g., `\d+\s+[A-Z][a-z]+(\s+(Dr|Drive|Rd|Road|St|Street|Ln|Lane|Ave|Avenue))?` |
+| Anti-signals for invention | e.g., subject contains "University" + street-name → likely NOT a property |
+| How PRIMARY differs from SECONDARY in this domain | e.g., PRIMARY is the thing; SECONDARY is the person or org that touches the thing |
+```
 
-Output: a markdown table per domain, committed under `docs/domain-input-shapes/<domain>.md`, referenced by the prompt code.
+**Guideline — blanks are OK.** A field marked "AI decides with this hint: ..." is valid. We're not trying to write a parser; we're trying to give Claude/Gemini enough domain intuition to do the right thing. The fields in BOLD (known patterns, known anti-patterns, domain-shape signal) are the ones that must be filled — those translate directly to prompt rules.
+
+**Context-sensitivity.** Anti-patterns depend on whether the entity is PRIMARY or SECONDARY AND what else is in the schema. A single token "Bucknell" is a bad PRIMARY alias but might be a fine alias for a SECONDARY person "Sam Bucknell." The table should note: *"this anti-pattern applies when the entity is PRIMARY in a property domain"* — not a blanket rule.
+
+**Output locations:**
+- `docs/domain-input-shapes/school_parent.md`
+- `docs/domain-input-shapes/property.md`
+- `docs/domain-input-shapes/agency.md`
+
+Each file is the filled table plus short preamble about the domain's email inbox. These files are the **source of truth** — the hypothesis prompt reads structured data that mirrors these tables (see Phase 2 note on prompt bloat).
+
+**Prompt-bloat guardrail for Phase 2.** The interview-hypothesis prompt is already substantial. The per-domain rules should be injected only for the detected domain, not all 3 at once. Budget: ≤300 added tokens per domain block.
 
 ### Phase 2 — Revised hypothesis prompt (alias generation)
 
