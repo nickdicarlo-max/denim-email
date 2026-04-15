@@ -30,6 +30,9 @@ export interface OnboardingProgress {
   emailsExcluded?: number;
   emailsFailed?: number;
   casesTotal?: number;
+  // Synthesis live counter (#82). Both present together during SYNTHESIZING.
+  synthesizedCases?: number;
+  totalCasesToSynthesize?: number;
 }
 
 export interface OnboardingError {
@@ -183,6 +186,10 @@ export async function derivePollingResponse(
         emailsExcluded: metrics.excludedEmails,
         emailsFailed: metrics.failedEmails,
         casesTotal: metrics.casesCreated,
+        // Surface live synthesis counters (#82). Observer renders "N of M"
+        // when phase === SYNTHESIZING and totalCasesToSynthesize > 0.
+        synthesizedCases: onboardingScan.synthesizedCases,
+        totalCasesToSynthesize: onboardingScan.totalCasesToSynthesize,
       },
     };
   }

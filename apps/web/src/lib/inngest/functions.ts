@@ -875,6 +875,16 @@ export const runSynthesis = inngest.createFunction(
 
       const ids = cases.map((c) => c.id);
 
+      // Set synthesis denominator for observer "N of M" live counter (#82).
+      // runSynthesis is the sole writer of totalCasesToSynthesize; synthesizedCases
+      // is owned by synthesizeCaseWorker (single-writer per column).
+      if (scanJobId) {
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: { totalCasesToSynthesize: ids.length },
+        });
+      }
+
       logger.info({
         service: "inngest",
         operation: "runSynthesis.loadCases",
@@ -976,6 +986,13 @@ export const synthesizeCaseWorker = inngest.createFunction(
     const result = await step.run("synthesize", async () => {
       try {
         await synthesizeCase(caseId, schemaId, scanJobId);
+        // Increment synthesized-case counter for observer "N of M" (#82).
+        // Only on success — UI shows completed cases, not attempted. This
+        // worker is the sole writer of synthesizedCases (single-writer).
+        await prisma.scanJob.update({
+          where: { id: scanJobId },
+          data: { synthesizedCases: { increment: 1 } },
+        });
         return { status: "ok" as const };
       } catch (error) {
         logger.error({

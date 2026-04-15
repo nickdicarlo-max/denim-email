@@ -974,6 +974,13 @@ model ScanJob {
   // All other counters (processed/excluded/failed/cases*/cost/tokens) are computed
   // on demand by computeScanMetrics — never stored.
 
+  // Synthesis progress — drives observer "N of M" live counter (#82)
+  // Single-writer ownership:
+  //   - totalCasesToSynthesize: set once by runSynthesis at CLUSTERING→SYNTHESIZING
+  //   - synthesizedCases: incremented by synthesizeCaseWorker after each successful case
+  synthesizedCases        Int @default(0)
+  totalCasesToSynthesize  Int @default(0)
+
   // Discovery output: the Gmail message IDs this scan intends to process
   discoveredEmailIds Json?
 

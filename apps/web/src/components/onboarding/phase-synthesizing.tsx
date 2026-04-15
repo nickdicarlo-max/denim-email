@@ -9,6 +9,12 @@ import type { OnboardingPollingResponse } from "@/lib/services/onboarding-pollin
  */
 export function PhaseSynthesizing({ response }: { response: OnboardingPollingResponse }) {
   const casesTotal = response.progress.casesTotal ?? 0;
+  const synthesizedCases = response.progress.synthesizedCases;
+  const totalCasesToSynthesize = response.progress.totalCasesToSynthesize ?? 0;
+  // Live "N of M" counter (#82): prefer the ticking counter when present,
+  // fall back to a static "Summarizing N cases" string for older scans.
+  const showLiveCounter =
+    synthesizedCases !== undefined && totalCasesToSynthesize > 0;
 
   return (
     <div className="flex flex-col items-center gap-4 text-center">
@@ -17,9 +23,11 @@ export function PhaseSynthesizing({ response }: { response: OnboardingPollingRes
       </span>
       <h1 className="font-serif text-2xl text-primary">Writing your cases</h1>
       <p className="text-sm text-muted max-w-xs">
-        {casesTotal > 0
-          ? `Summarizing ${casesTotal} ${casesTotal === 1 ? "case" : "cases"}.`
-          : "Summarizing each case for your review."}
+        {showLiveCounter
+          ? `Generating case summaries — ${synthesizedCases} of ${totalCasesToSynthesize}`
+          : casesTotal > 0
+            ? `Summarizing ${casesTotal} ${casesTotal === 1 ? "case" : "cases"}.`
+            : "Summarizing each case for your review."}
       </p>
     </div>
   );
