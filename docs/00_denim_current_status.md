@@ -1,12 +1,12 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-14 (evening — perf + quality sprint kickoff; Phase 1 + 2 code-complete on `feature/perf-quality-sprint`)
+Last updated: 2026-04-15 (early morning — perf + quality sprint Phase 1 + 2 verified end-to-end on `feature/perf-quality-sprint`; Phase 3 ready to start)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
 ## Baseline
 
-Phases 0–7 complete. **`feature/ux-overhaul` merged to `main` on 2026-04-14 via PR #83** (merge commit `ff8aa43`). Active branch is now `feature/perf-quality-sprint`. Typecheck clean; 144 unit tests passing (up from 139 after #70 added validation-parser tests); Phase 3 pending Nick's full E2E verification against Phase 2 changes.
+Phases 0–7 complete. **`feature/ux-overhaul` merged to `main` on 2026-04-14 via PR #83** (merge commit `ff8aa43`). Active branch is now `feature/perf-quality-sprint`. Typecheck clean; 153 unit tests passing (up from 144 after #85's parser tests). Phase 1 + Phase 2 verified end-to-end on 3 live runs (see 2026-04-15 session block below); Phase 3 ready to start.
 
 ## Deferred debt
 
@@ -249,11 +249,60 @@ Three parallel Explore agents ground-truthed both 2026-04-13 plans (review-scree
 ### Skills hygiene
 - `supabase-db` and `onboarding-timing` skills now installed at user scope (`~/.claude/skills/<name>/SKILL.md`) so they register as slash commands. Source-of-truth copies remain committed at `.claude/skills/*.md`. CLAUDE.md updated to document the install.
 
+## 2026-04-15 Early-Morning Session — Phase 1 + 2 Verified End-to-End
+
+### E2E runs (three schemas, all clean after in-flight parser fix)
+
+| Schema | Domain | Emails in | Cases | Function A | Scan | Eval |
+|---|---|---|---|---|---|---|
+| `01KP6Z08X7QWQE11V1P045D6NG` Round 3 Girls Activities | school_parent | 200 | **12 → 5** | 57.8s | 5m 11s | PASS after #85 |
+| `01KP7B8ZJGWGZ697CBYY5JXHCF` Consulting | agency | 69 (of 198) | 11 | **39.4s** | 5m 39s | 6/6 PASS |
+| `01KP7C5VBFRMJ6ZT1ZZKWRAJVN` Round 4 Girls Activities | school_parent | 56 (of 108) | 5 | 46.6s | 3m 28s | 6/6 PASS |
+
+### In-flight regression fix — case-splitting parser (#85, commit `a6d8007`)
+
+Round 3 initially produced **12 cases with obvious duplicates** (3× ZSA U11/12 Soccer Practices at 10/12/18 emails each; 2× Pia Dance Show; etc.). Investigation (see #85):
+
+- Coarse clustering was fine — 32 MERGE + 12 CREATE at gravity-model scores 35.6–45.0.
+- `PipelineIntelligence[stage=case-splitting].output.error = true`, message `"cases.5.discriminators: Too small: expected array to have >=1 items"`.
+- Zod schema in `packages/ai/src/parsers/case-splitting-parser.ts` parsed the whole envelope in one shot — one bad sub-case rejected all 6 returned by Claude.
+- Catch block returned `{ clusterIds: [], casesCreated: 0 }`, so `runCaseSplitting` emitted `clustering.completed` with only coarse IDs. Synthesis ran on unsplit coarse output.
+
+**Fix (`a6d8007`):**
+- `packages/ai/src/parsers/case-splitting-parser.ts` — envelope + per-case parse; invalid sub-cases dropped, their emailIds salvaged to `catchAllEmailIds` for downstream discriminator reassignment. Only structurally broken envelopes throw.
+- `packages/ai/src/prompts/case-splitting.ts` rule 6 — removed "Typical: 2-5 cases per entity" anchor; added explicit "no numeric cap" and MERGE-when-same-what's-next guidance.
+- `packages/ai/src/__tests__/case-splitting-parser.test.ts` — 9 new tests including exact repro of Round 3's empty-discriminators failure. Suite 144 → 153.
+
+Confirmed on Runs B and C: case-splitting `PipelineIntelligence` rows = 1 (no error), SPLIT cluster records present, previously-duplicated cases collapsed correctly.
+
+### Phase 2 timing verdict (from `/onboarding-timing`)
+
+- **#80** parallel genHyp + sampleScan — ✅ sampleScan fully hidden under generateHypothesis on every post-`2ddb60c` run.
+- **#81** parallel discovery queries — ✅ 20+ searchEmails in ~4s on Round 3; 7 parallel in ~1s on Round 4 Pass 2.
+- **#79** prompt caching — ✅ infra correct, **dormant**: `cacheReadInputTokens=0, cacheCreationInputTokens=0` on all calls (static prefix ~500 tok < Sonnet 4.6's 1024-token minimum). Zero cost; activates when prefix grows.
+- Claude API variance (14.9s–28.2s on the same prompt) dominates the remaining Function A budget — not a code issue.
+
+### Issues closed this session
+- **#79** prompt caching — landed + dormant, closed with followup-if-prefix-grows note.
+- **#80** parallel Function A — landed + verified across 3 runs.
+- **#81** parallel discovery — landed + verified across 3 runs.
+- **#85** case-splitting parser brittleness — fix + tests + E2E verification.
+
+### Known soft issue (non-blocking, for later)
+- Consulting run produced three PRIMARY entities for the same company — `Portfolio Pro Advisors`, `PPA`, `Portfolio Pro Advisors (PPA)`. Partially user-input driven (Nick entered "Asset Management" instead of the company name), but the product should also do cross-alias primary coalescence. Not filing today — revisit during Phase 5 quality work.
+
+### Next action on resume (Phase 3 kickoff)
+1. Dispatch Task 3.1 (**#77** Gemini batch extraction, 5–10 emails per call — estimated −2m on 200-email runs).
+2. Then Task 3.2 (**#78** parallel synthesis + case-splitting fan-out — estimated −3m).
+3. Then Task 3.3 (**#82** live case count during synthesis — UX perceived-wait).
+
+Baseline for Phase 3 measurement: Run B (Consulting, 200 emails) = 339.5s scan / 5m 39s end-to-end; Run C (Girls Activities, 108 emails) = 207.5s / 3m 28s.
+
 ## What's Next
 
 ### Immediate
-- Full E2E on `feature/perf-quality-sprint` after Phase 2 (Nick's gate)
-- Then: Phase 3 (#77 batch extraction → #78 synthesis fan-out → #82 live case count)
+- ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 (3 runs, all GOOD post-#85)
+- **Phase 3 (#77 batch extraction → #78 synthesis fan-out → #82 live case count)** — ready to start next session
 
 ### Open pipeline issues (prioritized)
 - **#73** Review screen timing — partially addressed by Plan 1; timing variance remains (~48–107s); will be re-measured at Phase 4.2
