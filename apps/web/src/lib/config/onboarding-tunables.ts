@@ -41,9 +41,21 @@ export const ONBOARDING_TUNABLES = {
    */
   discovery: {
     lookback: "56d",
+    /** Cap on total unique message IDs collected across all targeted queries (Phase E). */
     maxTotalEmails: 200,
     /** Parallel Gmail search queries during discovery (#81). Was `pLimit(3)`. */
     queryConcurrency: 3,
+    /**
+     * Phase A — broad inbox metadata scan used to identify sender
+     * patterns and social clusters BEFORE targeted queries. Distinct
+     * from `maxTotalEmails` (Phase E). Was `BROAD_SCAN_LIMIT = 200`.
+     */
+    broadScanLimit: 200,
+    /**
+     * Phase C — how many emails per unclassified domain to fetch body
+     * previews from for AI pattern detection. Was `BODY_SAMPLE_COUNT = 3`.
+     */
+    bodySampleCount: 3,
   },
 
   /**

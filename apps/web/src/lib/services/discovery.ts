@@ -32,8 +32,8 @@ function stripCodeFences(raw: string): string {
     .trim();
 }
 
-const BROAD_SCAN_LIMIT = 200;
-const BODY_SAMPLE_COUNT = 3;
+const BROAD_SCAN_LIMIT = ONBOARDING_TUNABLES.discovery.broadScanLimit;
+const BODY_SAMPLE_COUNT = ONBOARDING_TUNABLES.discovery.bodySampleCount;
 
 interface DiscoveryQuery {
   query: string;
@@ -256,7 +256,10 @@ export async function sampleBodies(
 
       for (const msg of messages.slice(0, sampleSize)) {
         try {
-          const full = await gmailClient.getEmailFullWithPacing(msg.id, 100);
+          const full = await gmailClient.getEmailFullWithPacing(
+            msg.id,
+            ONBOARDING_TUNABLES.extraction.gmailPacingMs,
+          );
           // Create a brief summary (first 200 chars of body)
           const bodyPreview = full.body.slice(0, 300).replace(/\n+/g, " ").trim();
           samples.push({
