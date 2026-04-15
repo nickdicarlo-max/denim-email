@@ -514,6 +514,54 @@ export async function persistSchemaRelations(
     return true;
   });
 
+  // Dedupe extractedFields by name. ExtractedFieldDef has
+  // @@unique([schemaId, name]) — a duplicate would P2002 the transaction and
+  // roll back the whole persistSchemaRelations write (same failure mode as
+  // finalEntities / finalTags, see commits d02a4bc / d1ccab2). Today the
+  // source is hypothesis.extractedFields alone, but guard against a future
+  // edit that merges extracted fields from multiple sources.
+  const seenFieldNames = new Set<string>();
+  const finalExtractedFields = hypothesis.extractedFields.filter((f) => {
+    if (seenFieldNames.has(f.name)) {
+      logger.info({
+        service: "interview",
+        operation: "persistSchemaRelations.dedupeExtractedField",
+        schemaId,
+        name: f.name,
+      });
+      return false;
+    }
+    seenFieldNames.add(f.name);
+    return true;
+  });
+
+  // Dedupe noisePatterns by composite (ruleType, pattern). ExclusionRule has
+  // @@unique([schemaId, ruleType, pattern]); same P2002 rollback risk as
+  // above. ruleType is derived from whether the pattern contains "@" so in
+  // practice (ruleType, pattern) collapses to pattern, but we key on the
+  // composite to match the DB constraint exactly.
+  const seenRuleKeys = new Set<string>();
+  const finalNoiseRules = (effectiveValidation.noisePatterns ?? [])
+    .map((pattern) => ({
+      pattern,
+      ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
+    }))
+    .filter(({ pattern, ruleType }) => {
+      const key = `${ruleType}:${pattern}`;
+      if (seenRuleKeys.has(key)) {
+        logger.info({
+          service: "interview",
+          operation: "persistSchemaRelations.dedupeExclusionRule",
+          schemaId,
+          ruleType,
+          pattern,
+        });
+        return false;
+      }
+      seenRuleKeys.add(key);
+      return true;
+    });
+
   // Cap mergeThreshold at the mathematically achievable ceiling. See
   // `clustering-tunables.ts` for the scoring math and the rationale
   // behind the ceiling/clamp values (#59).
@@ -771,10 +819,10 @@ export async function persistSchemaRelations(
       }
 
       // Create extracted field definitions
-      if (hypothesis.extractedFields.length > 0) {
+      if (finalExtractedFields.length > 0) {
         parallelWrites.push(
           tx.extractedFieldDef.createMany({
-            data: hypothesis.extractedFields.map((f) => ({
+            data: finalExtractedFields.map((f) => ({
               schemaId,
               name: f.name,
               type: f.type,
@@ -789,10 +837,10 @@ export async function persistSchemaRelations(
       }
 
       // Persist noise patterns as exclusion rules
-      if (effectiveValidation.noisePatterns?.length > 0) {
-        const noiseRules = effectiveValidation.noisePatterns.map((pattern) => ({
+      if (finalNoiseRules.length > 0) {
+        const noiseRules = finalNoiseRules.map(({ pattern, ruleType }) => ({
           schemaId,
-          ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
+          ruleType,
           pattern,
           source: "interview",
           isActive: true,
@@ -826,10 +874,10 @@ export async function persistSchemaRelations(
         );
       }
 
-      if (hypothesis.extractedFields.length > 0) {
+      if (finalExtractedFields.length > 0) {
         sideWrites.push(
           tx.extractedFieldDef.createMany({
-            data: hypothesis.extractedFields.map((f) => ({
+            data: finalExtractedFields.map((f) => ({
               schemaId,
               name: f.name,
               type: f.type,
@@ -843,10 +891,10 @@ export async function persistSchemaRelations(
         );
       }
 
-      if (effectiveValidation.noisePatterns?.length > 0) {
-        const noiseRules = effectiveValidation.noisePatterns.map((pattern) => ({
+      if (finalNoiseRules.length > 0) {
+        const noiseRules = finalNoiseRules.map(({ pattern, ruleType }) => ({
           schemaId,
-          ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
+          ruleType,
           pattern,
           source: "interview",
           isActive: true,

@@ -25,6 +25,7 @@ import type { Prisma } from "@prisma/client";
 import { NonRetriableError } from "inngest";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { GmailClient } from "@/lib/gmail/client";
+import { serializeMessageForStep } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
@@ -160,7 +161,7 @@ export const runOnboarding = inngest.createFunction(
             gmailTokenMs: tokenMs,
             gmailSampleScanMs: gmailMs,
           });
-          return { messages };
+          return { messages: messages.map(serializeMessageForStep) };
         }),
       ]);
 
