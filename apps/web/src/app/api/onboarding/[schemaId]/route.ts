@@ -49,6 +49,26 @@ function isUniqueConstraintViolation(err: unknown): boolean {
   );
 }
 
+/**
+ * True only if the P2002 violation is specifically on the outbox's
+ * composite PK (schemaId, eventName) — i.e., a genuine concurrent-confirm
+ * race where another request already committed the outbox row.
+ *
+ * Prisma's P2002 exposes `meta.target` listing the conflicting columns.
+ * Narrowing prevents the "race lost" label from masking completely
+ * unrelated unique violations inside persistSchemaRelations (entity
+ * duplicates, tag duplicates, etc), which would silently skip writing
+ * the outbox row and leave Function B unfired.
+ */
+function isOutboxRaceViolation(err: unknown): boolean {
+  if (!isUniqueConstraintViolation(err)) return false;
+  const meta = (err as { meta?: { target?: unknown } }).meta;
+  const target = meta?.target;
+  if (!Array.isArray(target)) return false;
+  const cols = target.map((t) => String(t));
+  return cols.includes("schemaId") && cols.includes("eventName");
+}
+
 // GET — polling endpoint -----------------------------------------------------
 export const GET = withAuth(async ({ userId, request }) => {
   try {
@@ -208,10 +228,10 @@ export const POST = withAuth(async ({ userId, request }) => {
         { timeout: 20000 },
       );
     } catch (writeError) {
-      if (isUniqueConstraintViolation(writeError)) {
-        // Concurrent confirm committed between our idempotency check and
-        // the transaction. Treat as idempotent success — the other
-        // request's outbox row will emit the event.
+      if (isOutboxRaceViolation(writeError)) {
+        // Concurrent confirm committed the outbox row between our
+        // idempotency check and this transaction. Treat as success —
+        // the other request's outbox row will emit the event.
         logger.info({
           service: "onboarding",
           operation: "confirm.idempotent.raceLost",
@@ -222,6 +242,9 @@ export const POST = withAuth(async ({ userId, request }) => {
           data: { schemaId, status: "already-confirmed" },
         });
       }
+      // Any other P2002 (e.g., duplicate Entity in persistSchemaRelations)
+      // is a real write failure — propagate so the client can retry once
+      // the underlying data is fixed.
       throw writeError;
     }
 

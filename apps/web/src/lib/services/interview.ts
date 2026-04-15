@@ -407,11 +407,23 @@ export async function persistSchemaRelations(
     removedTags: [],
   };
 
-  // Build final entity list: hypothesis entities (minus removed) + discovered (if confirmed) + user-added
+  // Build final entity list: hypothesis entities (minus removed) + discovered (if confirmed) + user-added.
+  //
+  // Dedupe on (name, type). The same entity CAN appear in both
+  // `hypothesis.entities` (Claude's initial read of the interview) AND
+  // `validation.discoveredEntities` (Claude re-detecting it during Pass 1).
+  // Without dedup, `tx.entity.createMany` hits P2002 on
+  // @@unique([schemaId, name, type]), the whole tx rolls back, and the
+  // outbox row for `onboarding.review.confirmed` never gets written —
+  // Function B never fires, and the user sees a perpetual "Starting your
+  // scan…" screen.
+  //
+  // First occurrence wins (hypothesis > discovered > user-added), since
+  // the hypothesis version carries richer data (aliases, confidence).
   const removedSet = new Set(effectiveConfirmations.removedEntities);
   const confirmedDiscoveredSet = new Set(effectiveConfirmations.confirmedEntities);
 
-  const finalEntities = [
+  const rawFinalEntities = [
     ...hypothesis.entities
       .filter((e) => !removedSet.has(e.name))
       .map((e) => ({
@@ -446,6 +458,23 @@ export async function persistSchemaRelations(
       autoDetected: false,
     })),
   ];
+
+  const seenEntityKeys = new Set<string>();
+  const finalEntities = rawFinalEntities.filter((e) => {
+    const key = `${e.name}:${e.type}`;
+    if (seenEntityKeys.has(key)) {
+      logger.info({
+        service: "interview",
+        operation: "persistSchemaRelations.dedupeEntity",
+        schemaId,
+        name: e.name,
+        type: e.type,
+      });
+      return false;
+    }
+    seenEntityKeys.add(key);
+    return true;
+  });
 
   // Build final tag list: hypothesis tags (minus removed) + suggested (if confirmed) + user-added
   const removedTagSet = new Set(effectiveConfirmations.removedTags);
