@@ -231,21 +231,62 @@ async function persistExtractedEmail(
   );
   const senderIsKnownEntity = senderEntityMatch !== null;
 
-  // 3b. Log when a known-entity email bypasses the relevance gate
-  if (senderIsKnownEntity && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
+  // 3a.i — Subject contains a known entity name or alias.
+  //   Deterministic check. Catches cases like "Re: 3910 Bucknell - MR" from
+  //   a non-entity sender: the subject literally names a user PRIMARY, so
+  //   the email obviously belongs even if Gemini scored it low.
+  const subjectLC = gmailMessage.subject.toLowerCase();
+  const subjectNamesKnownEntity = entities.some(
+    (e) =>
+      subjectLC.includes(e.name.toLowerCase()) ||
+      e.aliases.some((a) => subjectLC.includes(a.toLowerCase())),
+  );
+
+  // 3a.ii — Thread already has a prior email with senderEntityId set.
+  //   Deterministic check: if this email is a reply and an earlier email in
+  //   the same thread was sent by a known entity, treat the whole thread as
+  //   in-scope. One DB lookup per low-relevance reply.
+  let threadHasKnownEntity = false;
+  if (gmailMessage.isReply) {
+    const priorKnown = await prisma.email.findFirst({
+      where: {
+        schemaId,
+        threadId: gmailMessage.threadId,
+        gmailMessageId: { not: gmailMessage.id },
+        senderEntityId: { not: null },
+      },
+      select: { id: true },
+    });
+    threadHasKnownEntity = priorKnown !== null;
+  }
+
+  const relevanceBypass =
+    senderIsKnownEntity || subjectNamesKnownEntity || threadHasKnownEntity;
+
+  // 3b. Log bypasses when they happen on low-relevance emails
+  if (relevanceBypass && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
+    const bypassReason = senderIsKnownEntity
+      ? "sender"
+      : subjectNamesKnownEntity
+        ? "subject"
+        : "thread";
     logger.info({
       service: "extraction",
       operation: "relevanceGateBypass",
       schemaId,
-      senderName: senderEntityMatch?.entityName,
+      bypassReason,
+      senderName: senderEntityMatch?.entityName ?? null,
       relevanceScore: parsed.relevanceScore,
       subject: gmailMessage.subject.slice(0, 60),
     });
   }
 
-  // 3c. Relevance gate: reject emails that don't connect to user-input entities
-  // Known entities bypass — their emails are always relevant by definition.
-  if (!senderIsKnownEntity && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
+  // 3c. Relevance gate: reject emails that don't connect to user-input entities.
+  //   Bypass if ANY of (sender | subject | thread) matches a known entity.
+  //   All three bypasses are deterministic — no Gemini output is trusted here,
+  //   since batch-context contamination has been observed to produce a wrong
+  //   relevanceEntity for emails whose subject unambiguously names a PRIMARY.
+  if (!relevanceBypass && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
     const email = await prisma.email.upsert({
       where: {
         schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
@@ -308,10 +349,16 @@ async function persistExtractedEmail(
   }
 
   // 4. Content-first entity routing
-  // Order: relevanceEntity → content match → detectedEntities → sender (last resort)
+  // Order: subject-contains-PRIMARY → Gemini relevanceEntity → summary content match
+  //        → detectedEntities → mid-scan PRIMARY creation → sender (last resort)
   // WHOs are discovery channels, not routing destinations. The WHAT in the email
-  // content determines routing. Sender-based routing is only used when no WHAT is
-  // found in content, and only when the sender has exactly 1 associated primary.
+  // content determines routing.
+  //
+  // Subject is the FIRST authoritative signal: it's deterministic, user-visible,
+  // and not affected by Gemini batch-context contamination. When Gemini's
+  // relevanceEntity disagrees with an unambiguous subject match (e.g., subject
+  // says "Re: 3910 Bucknell Drive-Foundation" but Gemini returns "851 Peavy"
+  // because the batch contained Peavy emails), subject wins.
 
   let senderEntityId: string | null = null;
   let senderEntityType: "PRIMARY" | "SECONDARY" | null = null;
@@ -343,8 +390,40 @@ async function persistExtractedEmail(
     }
   }
 
-  // Stage 1: Gemini's relevanceEntity — AI reads the email and names the WHAT
-  if (parsed.relevanceEntity) {
+  // Stage 1 (NEW, authoritative): Subject-only PRIMARY match.
+  //   The subject is user-visible and not affected by Gemini's batch-context
+  //   contamination. If the subject unambiguously names a PRIMARY (or one of
+  //   its aliases), that wins over anything Gemini says about relevanceEntity.
+  //   (Subject-mentions-SECONDARY is ignored here — SECONDARY senders still
+  //   route via their associatedPrimaryIds in Stage 4b.)
+  {
+    const primaryEntities = entities.filter((e) => e.type === "PRIMARY");
+    for (const primary of primaryEntities) {
+      const nameLC = primary.name.toLowerCase();
+      const aliasHit = primary.aliases.find((a) => subjectLC.includes(a.toLowerCase()));
+      const nameHit = subjectLC.includes(nameLC);
+      if (!nameHit && !aliasHit) continue;
+
+      const matchedEntity = await prisma.entity.findFirst({
+        where: { schemaId, name: primary.name, type: "PRIMARY", isActive: true },
+        select: { id: true },
+      });
+      if (matchedEntity) {
+        entityId = matchedEntity.id;
+        routeMethod = "subject";
+        routeDetail = nameHit
+          ? `subject contains PRIMARY name "${primary.name}"`
+          : `subject contains alias "${aliasHit}" of PRIMARY "${primary.name}"`;
+        break;
+      }
+    }
+  }
+
+  // Stage 2: Gemini's relevanceEntity — AI reads the email and names the WHAT.
+  //   Runs only if the subject didn't give us an authoritative PRIMARY match.
+  //   Known to occasionally hallucinate under batch extraction (CHUNK_SIZE=5)
+  //   — that's why Stage 1 (subject) runs first.
+  if (!entityId && parsed.relevanceEntity) {
     const relevanceMatch = resolveEntity(parsed.relevanceEntity, "", entities, 0.8);
     if (relevanceMatch) {
       const matchedEntity = await prisma.entity.findFirst({
@@ -364,18 +443,20 @@ async function persistExtractedEmail(
           routeMethod = "relevance";
           routeDetail = `Gemini relevanceEntity "${parsed.relevanceEntity}" matched SECONDARY "${relevanceMatch.entityName}" → single primary`;
         }
-        // If multiple associated primaries, don't pick one — fall through to content match
+        // If multiple associated primaries, don't pick one — fall through to summary match
       }
     }
   }
 
-  // Stage 2: Content-based primary match — scan subject + summary for known PRIMARY names
+  // Stage 3: Summary-based PRIMARY match — scan Gemini's summary for known
+  //   PRIMARY names. Weaker than subject (summary is also Gemini output) but
+  //   still useful when neither subject nor relevanceEntity pinned down an entity.
   if (!entityId) {
-    const contentText = `${gmailMessage.subject} ${parsed.summary}`.toLowerCase();
+    const summaryLC = (parsed.summary ?? "").toLowerCase();
     const primaryEntities = entities.filter((e) => e.type === "PRIMARY");
     for (const primary of primaryEntities) {
       const nameLC = primary.name.toLowerCase();
-      if (contentText.includes(nameLC)) {
+      if (summaryLC.includes(nameLC)) {
         const matchedEntity = await prisma.entity.findFirst({
           where: { schemaId, name: primary.name, type: "PRIMARY", isActive: true },
           select: { id: true },
@@ -383,13 +464,13 @@ async function persistExtractedEmail(
         if (matchedEntity) {
           entityId = matchedEntity.id;
           routeMethod = "content";
-          routeDetail = `subject/summary contains PRIMARY name "${primary.name}"`;
+          routeDetail = `summary contains PRIMARY name "${primary.name}"`;
           break;
         }
       }
       // Also check aliases
       for (const alias of primary.aliases) {
-        if (contentText.includes(alias.toLowerCase())) {
+        if (summaryLC.includes(alias.toLowerCase())) {
           const matchedEntity = await prisma.entity.findFirst({
             where: { schemaId, name: primary.name, type: "PRIMARY", isActive: true },
             select: { id: true },
@@ -397,7 +478,7 @@ async function persistExtractedEmail(
           if (matchedEntity) {
             entityId = matchedEntity.id;
             routeMethod = "content";
-            routeDetail = `subject/summary contains alias "${alias}" of PRIMARY "${primary.name}"`;
+            routeDetail = `summary contains alias "${alias}" of PRIMARY "${primary.name}"`;
             break;
           }
         }
@@ -406,7 +487,7 @@ async function persistExtractedEmail(
     }
   }
 
-  // Stage 3: Gemini's detectedEntities — fallback to detected entity list
+  // Stage 4: Gemini's detectedEntities — fallback to detected entity list
   if (!entityId && parsed.detectedEntities.length > 0) {
     for (const detected of parsed.detectedEntities) {
       const detectedMatch = resolveEntity(detected.name, "", entities, 0.8);
@@ -442,7 +523,7 @@ async function persistExtractedEmail(
     }
   }
 
-  // Stage 3b: Mid-scan PRIMARY creation (#76). When Gemini detects a
+  // Stage 4b: Mid-scan PRIMARY creation (#76). When Gemini detects a
   // PRIMARY-type entity that doesn't match any existing row, upsert it as
   // a new Entity so the email routes into a real case instead of falling
   // to NO_ENTITY. Guarded by a trust gate to avoid entity explosion on
@@ -525,7 +606,7 @@ async function persistExtractedEmail(
     }
   }
 
-  // Stage 4: Sender match (last resort) — only when no WHAT found in content
+  // Stage 5: Sender match (last resort) — only when no WHAT found in content
   if (!entityId && senderEntityMatch && senderEntityId) {
     if (senderEntityType === "PRIMARY") {
       entityId = senderEntityId;
