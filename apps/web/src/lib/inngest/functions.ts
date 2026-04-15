@@ -1,5 +1,6 @@
 import { AuthError } from "@denim/types";
 import { NonRetriableError } from "inngest";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -169,7 +170,10 @@ export const extractBatch = inngest.createFunction(
     id: "extract-batch",
     triggers: [{ event: "extraction.batch.process" }],
     concurrency: {
-      limit: 3,
+      // Tunable in `onboarding-tunables.ts`. 2026-04-15 measurement showed
+      // concurrency=3 was the extraction-stage bottleneck (40 batches × 6s
+      // avg ÷ 3 ≈ 80s Gemini floor). Raised to 8 for ~3× speedup.
+      limit: ONBOARDING_TUNABLES.extraction.batchConcurrency,
       key: "event.data.schemaId",
     },
     retries: 3,
@@ -975,7 +979,9 @@ export const synthesizeCaseWorker = inngest.createFunction(
     id: "synthesize-case-worker",
     triggers: [{ event: "synthesis.case.requested" }],
     concurrency: {
-      limit: 4,
+      // Tunable in `onboarding-tunables.ts`. Synthesis is Claude-bound;
+      // bump here after confirming Anthropic rate headroom.
+      limit: ONBOARDING_TUNABLES.synthesis.caseConcurrency,
       key: "event.data.schemaId",
     },
     retries: 2,

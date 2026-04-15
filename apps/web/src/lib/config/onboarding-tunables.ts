@@ -43,4 +43,36 @@ export const ONBOARDING_TUNABLES = {
     lookback: "56d",
     maxTotalEmails: 200,
   },
+
+  /**
+   * Pipeline fan-out knobs. Bottleneck tuning lives here so we can
+   * raise/lower one number and re-measure without hunting through
+   * Inngest function definitions.
+   *
+   * Measured 2026-04-15 on Property run (200 emails, schema
+   * 01KP8MRJQJXF302KP19NB5RAVR): extraction wall was 169.5s. Per-batch
+   * Gemini latency ~6s (median), 40 batches, concurrency=3 ⇒ ~80s
+   * Gemini floor. Bumping to 8 drops the floor to ~30s. Gemini Flash
+   * 2.5 has 2000+ RPM and DB write pressure is well within pooler
+   * headroom at this level.
+   */
+  extraction: {
+    /** Emails per Gemini batch call. Higher = fewer calls but longer per-call latency. */
+    chunkSize: 5,
+    /**
+     * Per-schema parallel `extractBatch` Inngest functions. Dominates
+     * extraction wall clock — each worker runs one Gemini call at a
+     * time, so total wall ≈ (batches / concurrency) × perBatchLatency.
+     */
+    batchConcurrency: 8,
+  },
+
+  synthesis: {
+    /**
+     * Per-schema parallel `synthesize-case-worker` Inngest functions.
+     * Claude synthesis is 5-15s per case; concurrency caps Claude rate
+     * and total wall ≈ (cases / concurrency) × perCaseLatency.
+     */
+    caseConcurrency: 4,
+  },
 } as const;

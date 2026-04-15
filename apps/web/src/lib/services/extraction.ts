@@ -17,6 +17,7 @@ import { resolveEntity } from "@denim/engine";
 import type { ExtractionInput, ExtractionResult, ExtractionSchemaContext } from "@denim/types";
 import { callGemini } from "@/lib/ai/client";
 import { logAICost } from "@/lib/ai/cost-tracker";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { GmailClient } from "@/lib/gmail/client";
 import type { GmailMessageFull } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
@@ -675,11 +676,11 @@ async function persistExtractedEmail(
 }
 
 /**
- * Gemini batch extraction chunk size. Packs N emails per Gemini call to
- * amortize per-request latency (closes #77). Conservative default of 5;
- * bump to 10 once quality is measured and holds.
+ * Gemini batch extraction chunk size. Packs N emails per Gemini call.
+ * Source of truth lives in `onboarding-tunables.ts` so all pipeline
+ * fan-out knobs are co-located (#77 follow-up, 2026-04-15).
  */
-const CHUNK_SIZE = 5;
+const CHUNK_SIZE = ONBOARDING_TUNABLES.extraction.chunkSize;
 
 function chunksOf<T>(arr: T[], size: number): T[][] {
   if (size <= 0) throw new Error(`chunksOf size must be > 0, got ${size}`);
