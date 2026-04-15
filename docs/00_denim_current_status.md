@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-15 (early morning — perf + quality sprint Phase 1 + 2 verified end-to-end on `feature/perf-quality-sprint`; Phase 3 ready to start)
+Last updated: 2026-04-15 (afternoon — Phase 3 CODE-COMPLETE on `feature/perf-quality-sprint`; E2E measurement pending)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -298,11 +298,142 @@ Confirmed on Runs B and C: case-splitting `PipelineIntelligence` rows = 1 (no er
 
 Baseline for Phase 3 measurement: Run B (Consulting, 200 emails) = 339.5s scan / 5m 39s end-to-end; Run C (Girls Activities, 108 emails) = 207.5s / 3m 28s.
 
+## 2026-04-15 Afternoon Session — Phase 3 Code-Complete
+
+### Commits landed on `feature/perf-quality-sprint`
+
+| Task | Issue | Commit | Summary |
+|---|---|---|---|
+| 3.1 Gemini batch extraction | **#77** | `7c0d1d0` | `CHUNK_SIZE=5` batched Gemini calls with `BatchExtractionSchema` in `@denim/ai`. Parser validates array length, sorts by index, strips index. On parse failure: quarantine fallback to per-email path. Exclusion-matched emails still short-circuit (cheap DB-only upsert). Tests: packages/ai 46 → 52. |
+| 3.2 Synthesis fan-out | **#78** | `2c6b373` | `runSynthesis` refactored to fan out `synthesis.case.requested` events. New `synthesizeCaseWorker` (concurrency=4 per schemaId, retries=2) + `checkSynthesisComplete` (waits for all cases before emitting `scan.completed`). Mirrors existing `fanOutExtraction → extractBatch → checkExtractionComplete` pattern. Preserves `scan.completed` payload so downstream `runOnboarding` + polling unchanged. **Case-splitting fan-out deferred → #86** (single cross-entity Claude call + atomic delete/create write doesn't decompose cleanly). |
+| 3.3 Live case count | **#82** | `f3b54ff` | Raw-SQL migration via supabase-db path: `scan_jobs.synthesizedCases`, `scan_jobs.totalCasesToSynthesize`. Denominator set in `runSynthesis` load-cases step using actual `findMany` count; per-case increment in `synthesizeCaseWorker` success path (not on failed path — counts completions, not attempts). Surfaced in polling response as optional fields; rendered in `phase-synthesizing.tsx` (plan said `phase-processing-scan.tsx` — that's the dispatcher, not the renderer). |
+
+All three passes: typecheck clean vs baseline, `pnpm -r test` green (53/52 ai + 92 engine + 13 web + 2 types = 160 tests), `pnpm biome check` identical to baseline (pre-existing CRLF issues only).
+
+### Architectural discovery — day-2 vs onboarding
+
+During 3.2 implementation, two things surfaced that are bigger than the individual task:
+
+1. **Case-splitting architecture doesn't fit per-case fan-out.** `splitCoarseClusters` is a SINGLE Claude call across ALL coarse clusters (cases can merge or split relative to each other) with an atomic delete-coarse / create-split transaction in `cluster.ts`. No natural per-cluster completion marker. Per-case fan-out would require refactoring both the Claude call shape AND the write-owner transaction.
+
+2. **Onboarding and day-2 share the same code path today.** `cronDailyScans` (`cron.ts:81`) fires a generic `scan.requested` event handled by `runScan` (`scan.ts:34`) — the doc comment explicitly says it is "the parent workflow for every scan trigger (onboarding, cron, manual, feedback)". Day-2 re-runs the full AI pipeline (including Gemini per-email extraction + Claude case-splitting + Claude synthesis) for 2-20 new emails. No short-circuit to deterministic routing despite the onboarding-learned vocabulary (`learnedVocabulary` in `case-splitting.ts:31`) being explicitly designed for this.
+
+These led to filing **#86 — Day-2 case-splitting: deterministic routing, no-op investigation, deferred fan-out**, which consolidates three threads into a single strategic issue with a phased proposal (A measure → B short-circuit → C day-2 routing → D fan-out only if still needed). Important nuance preserved in the issue: entity discovery (inter-entity) MUST stay dynamic (new "567 Maple St" still needs a new coarse cluster); only case-splitting (intra-entity) can become deterministic per known entity.
+
+### Issues closed this session
+- **#77** Gemini batch extraction — closed via commit trailer.
+- **#78** Synthesis fan-out — closed via commit trailer, with splitting portion punted to #86.
+- **#82** Live case count — closed via commit trailer.
+
+### Issues filed this session
+- **#86** Day-2 case-splitting consolidated strategic issue (see above).
+
+### Expected Phase 3 wins (measurement pending)
+- run-extraction (200 emails): ~3m10s → ~60s (3-5x, from Gemini batching)
+- run-synthesis (16 cases): ~2m33s → ~40s (from concurrency=4)
+- run-case-splitting: ~1m32s → **unchanged** (deferred to #86 strategic refactor)
+- Total Function B (Run B Consulting 200 emails): ~9m → ~4m 50s (not the plan's ~3m 40s — splitting still serial)
+- Observer UX: spinner → live "N of M" counter during synthesis
+
+### Next action on resume
+1. Nick runs full E2E on Run B (Consulting, 200 emails), measures Phase 3 actual gains via `/onboarding-timing`.
+2. If baseline + no regressions: dispatch Phase 4 Task 4.1 (**#63** batch `persistSchemaRelations` round-trips).
+3. If regression: bisect across `7c0d1d0 → 2c6b373 → f3b54ff`.
+
+## 2026-04-15 Late Session — Phase 3 Measured + Tunables Consolidation
+
+### Live E2E — Property Management, 200 emails
+
+Schema `01KP8MRJQJXF302KP19NB5RAVR`, scanJob `cmo02y6x60022jgqeov2lboxj`.
+
+**Result:** 6/6 PASS, 35 cases (34 synthesized + 1 failed → unstuck manually).
+
+Key numbers from `/onboarding-timing`:
+
+| Phase | Wall | Notes |
+|---|---|---|
+| Function A (hypothesis + validate + advance) | 35.4s | #80 parallel genHyp+sampleScan verified |
+| Pass 2 domain expansion | 56.1s | 2 Claude calls dominated |
+| Discovery + extraction fan-out | 39.0s | #81 parallel queries verified |
+| Extraction (200 emails) | **169.5s** | vs projected ~60s — measurement revealed concurrency bottleneck |
+| Clustering + case-splitting | 108.9s | unchanged, deferred to #86 |
+| Synthesis (34 cases, concurrency=4) | 81.2s | verified; per-case 5–18s |
+
+Function B real work (confirm → last synthesis): ~7m 35s vs ~9m baseline (~16% faster). Short of ~4m 50s projection because extraction and case-splitting both underperformed.
+
+### Synthesis hang bug — fix `e804b70`
+
+Case 34 of 35 failed Zod parse (Claude output truncated at `maxTokens: 4096` mid-`summary.middle`). Worker emitted `synthesis.case.completed status:"failed"` but `checkSynthesisComplete` counted pending via `synthesizedAt IS NULL`, so the failed case stayed "pending" forever and the scan never finalized.
+
+**Fix:** Worker now stamps `case.synthesizedAt = NOW()` on failure as a terminal marker. `checkSynthesisComplete` now reads `synthesizedCount` / `failedCount` from `ScanJob.synthesizedCases` / `ScanJob.totalCasesToSynthesize` (populated by #82) instead of `synthesizedAt` state.
+
+Unstuck the live run by manually stamping case 34 + firing one `synthesis.case.completed` event at the Inngest dev server. Finalizer ran, scan completed with the correct counters.
+
+### Extraction bottleneck — diagnosis + fix `74e2138`
+
+Phase 3's `#77` batching was engaged (40 Gemini batches of 5, 0 fallbacks) but wall was 169.5s, not ~60s. Root cause: **`extractBatch` Inngest concurrency limit = 3**.
+
+Math: 40 batches × 6.0s avg ÷ 3 = 80s Gemini floor. Batching saves Inngest overhead, **not** Gemini output time — a 5-email batch returns ~5× the JSON payload, so per-call latency scales near-linearly.
+
+**Fix:** Raised `extractBatch.concurrency` from 3 → 8. Projected: 40 ÷ 8 = 5 rounds × 6s = 30s Gemini floor + Gmail ≈ **~50s extraction wall (~3.4× faster)**. Gemini Flash 2.5 has 2000+ RPM headroom; DB pooler handles 8×5=40 parallel upserts. Tracked in **#88**.
+
+### Tunables consolidation — `74e2138` → `b2c03fc` → `a2ae6f2` → `fe08121`
+
+Extracted 20+ pipeline parameters from inline literals and prompt-file hardcodes into two tunables files:
+
+**`apps/web/src/lib/config/onboarding-tunables.ts`** (extended):
+- `extraction.chunkSize`, `batchConcurrency` (3 → **8**), `fanOutBatchSize`, `gmailPacingMs`, `relevanceThreshold`
+- `discovery.queryConcurrency`, `broadScanLimit`, `bodySampleCount`
+- `synthesis.caseConcurrency`, `synthesis.maxTokens` (**4096 → 6144**, closes #87)
+- `pipeline.scanWaitTimeout`
+- `ui.pollIntervalMs`
+
+**`apps/web/src/lib/config/clustering-tunables.ts`** (NEW):
+- `validator.unreachableCeiling` / `clampReachableValue` — the #59 math rails (docs scoring math inline)
+- `weights.tagMatchScore` / `threadMatchScore`
+- `reminder.subjectSimilarity` / `maxAgeDays`
+- `domainDefaults.<domain>` for all 6 domains
+
+**Lowered unreachable domain thresholds** (preserving differentiation inside the reachable ~35 range without sender-entity match):
+- construction 45 → 35 (was silently clamped to 30)
+- legal 55 → 38 (preserves "tightest domain" intent)
+- agency 45 → 33 (was silently clamped to 30)
+- general 45 → 32 (was silently clamped to 30)
+- school_parent (35), property (30) unchanged
+
+**Architectural change:** `buildHypothesisPrompt(input, tunables)` now takes numerics as a parameter. Package boundary respected — `packages/ai` stays pure; `apps/web` injects config. Types `ClusteringTunables` + `DomainNumerics` exported from `@denim/ai`. Content (tags/fields/labels) stays with the prompt file as copy, not tuning surface.
+
+**Verification:** two forensic-agent passes (one per tunables file) caught 3 stragglers — all fixed in `fe08121`. Every declared tunable now has at least one non-declaration reference, and no duplicate hardcoded values remain in the pipeline paths. Library-layer defaults (e.g., `getEmailFullWithPacing(delayMs = 100)`) intentionally kept as literals for non-pipeline callers.
+
+### Issues this session
+- **Closed:** #87 (synthesis maxTokens bump resolved by tunable)
+- **Filed:** #88 (extractBatch concurrency measurement), #90 (remaining un-migrated hardcoded values: cluster.ts maxTokens, prompt slice caps, model IDs)
+- **Commented:** #89 (tunables centralization — partial done, rest tracked in #90)
+
+### Commits landed
+- `e804b70` fix(synthesis): stamp synthesizedAt on failure so scan finalizes
+- `74e2138` perf(extraction): extractBatch concurrency 3→8 + centralize fan-out tunables
+- `b2c03fc` refactor(tunables): centralize pipeline + clustering knobs, bump synthesis maxTokens
+- `a2ae6f2` refactor(tunables): move per-domain clustering numerics out of the prompt file
+- `fe08121` refactor(tunables): promote discovery broadScanLimit + bodySampleCount, fix gmail pacing duplicate
+
+### Updated forecast for next Property run (200 emails)
+- Extraction: 169.5s → ~50s (−119.5s from concurrency 3→8)
+- Other phases unchanged
+- **Function B work: ~7m 35s → ~5m 35s (−26%)** vs ~9m baseline
+- Case-splitting (108.9s) still the biggest serial chunk; recovered only if/when #86 deterministic day-2 routing lands
+
+### Next action on resume
+1. Nick runs Property E2E to verify extraction ~50s wall + lowered mergeThreshold effect on merge count/scores
+2. If clean: dispatch Phase 4.1 (#63 batch `persistSchemaRelations`)
+3. If regressions: bisect across `74e2138 → b2c03fc → a2ae6f2 → fe08121`
+
 ## What's Next
 
 ### Immediate
-- ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 (3 runs, all GOOD post-#85)
-- **Phase 3 (#77 batch extraction → #78 synthesis fan-out → #82 live case count)** — ready to start next session
+- ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 early AM (3 runs, all GOOD post-#85)
+- **Phase 3 code-complete** ✅ 2026-04-15 PM (commits `7c0d1d0`, `2c6b373`, `f3b54ff`) — E2E measurement pending
+- **Phase 4 (#63 batch round-trips → #73 review screen render → #25 umbrella close)** — ready to start after Phase 3 measurement
 
 ### Open pipeline issues (prioritized)
 - **#73** Review screen timing — partially addressed by Plan 1; timing variance remains (~48–107s); will be re-measured at Phase 4.2
@@ -312,6 +443,7 @@ Baseline for Phase 3 measurement: Run B (Consulting, 200 emails) = 339.5s scan /
 - **#35** Extraction relevance gate — Phase 5.1
 - **#19** Clustering non-determinism — extraction (Gemini) variance remains
 - **#84** GmailMessageMeta Date JSON-replay hardening — latent only; defer
+- **#86** Day-2 case-splitting (deterministic routing + deferred fan-out + no-op investigation) — strategic refactor; scope beyond this sprint
 
 ### After Sprint: Schema Additions
 - `UserNote` model -- for the "+ Note" button in bottom nav
