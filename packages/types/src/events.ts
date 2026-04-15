@@ -123,10 +123,35 @@ export type DenimEvents = {
       clusterIds: string[];
     };
   };
-  "synthesis.case.completed": {
+  "synthesis.case.requested": {
+    /**
+     * Fan-out event: one per case emitted by runSynthesis. Consumed by the
+     * synthesizeCaseWorker (concurrency-capped at 4/schema) which runs the
+     * actual Claude synthesis for a single case.
+     */
     data: {
       schemaId: string;
       caseId: string;
+      scanJobId: string;
+    };
+  };
+  "synthesis.case.completed": {
+    /**
+     * Emitted by synthesizeCaseWorker after each case finishes (ok or failed).
+     * Also consumed by:
+     *   - checkSynthesisComplete: counts pending cases, advances scan phase
+     *     and emits scan.completed when pending=0.
+     *   - runClusteringCalibration: debounced per-schema calibration run.
+     *
+     * The optional scanJobId/status/error fields are set on the fan-out path;
+     * legacy emitters of this event may omit them (calibration still works).
+     */
+    data: {
+      schemaId: string;
+      caseId: string;
+      scanJobId?: string;
+      status?: "ok" | "failed";
+      error?: string;
     };
   };
   "feedback.case.modified": {

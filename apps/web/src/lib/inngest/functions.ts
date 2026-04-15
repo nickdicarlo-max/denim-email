@@ -790,9 +790,17 @@ export const dailyQualitySnapshot = inngest.createFunction(
 );
 
 /**
- * Run synthesis after clustering is complete.
- * Calls Claude for each case to generate titles, summaries, tags, and actions.
- * Sequential per case to respect API rate limits.
+ * Fan-out synthesis: for each OPEN unsynthesized case, emit one
+ * synthesis.case.requested event. The synthesizeCaseWorker picks them
+ * up with concurrency=4 per schema. Scan-level completion (phase advance
+ * + scan.completed emit + lastScannedAt stamp) is owned by
+ * checkSynthesisComplete, which fires on every per-case completion and
+ * only acts once the pending count hits zero.
+ *
+ * #78: replaces the previous serial in-function loop. Same responsibilities
+ * for CAS-advancing CLUSTERING → SYNTHESIZING and the empty-cases short-
+ * circuit remain here so the pipeline still terminates cleanly when
+ * clustering produced zero cases.
  */
 export const runSynthesis = inngest.createFunction(
   {
@@ -856,12 +864,12 @@ export const runSynthesis = inngest.createFunction(
       });
     }
 
-    // 3. Load case IDs — query all OPEN unsynthesized cases for this schema.
-    // Two-pass clustering may delete coarse cases and create split replacements,
-    // so cluster.resultCaseId from pass 1 can point to deleted cases.
+    // 3. Load OPEN unsynthesized case IDs for this schema. The `synthesizedAt`
+    //    guard makes this safe on Inngest replay — a worker that already
+    //    finished won't be re-enqueued.
     const caseIds = await step.run("load-cases", async () => {
       const cases = await prisma.case.findMany({
-        where: { schemaId, status: "OPEN" },
+        where: { schemaId, status: "OPEN", synthesizedAt: null },
         select: { id: true },
       });
 
@@ -878,60 +886,13 @@ export const runSynthesis = inngest.createFunction(
       return ids;
     });
 
-    // 4. Synthesize each case sequentially
-    // NOTE: counters must be derived from step.run return values, not outer variables.
-    // Inngest re-initializes function scope between steps, so outer `let` variables reset to 0.
-    const results: Array<{ caseId: string; status: "ok" | "failed" }> = [];
+    // 4a. Empty-cases short-circuit: clustering produced nothing to synthesize.
+    //     Skip fan-out and finalize the scan here so the pipeline doesn't
+    //     hang waiting for a completion-check that will never fire.
+    if (caseIds.length === 0) {
+      if (!scanJobId) return;
 
-    for (const caseId of caseIds) {
-      const result = await step.run(`synthesize-${caseId}`, async () => {
-        try {
-          await synthesizeCase(caseId, schemaId, scanJobId ?? undefined);
-          return { caseId, status: "ok" as const };
-        } catch (error) {
-          logger.error({
-            service: "inngest",
-            operation: "runSynthesis.caseFailed",
-            schemaId,
-            caseId,
-            error,
-          });
-          // Continue with other cases — don't let one failure stop the pipeline
-          return { caseId, status: "failed" as const };
-        }
-      });
-      results.push(result);
-    }
-
-    const synthesizedCount = results.filter((r) => r.status === "ok").length;
-    const failedCount = results.filter((r) => r.status === "failed").length;
-
-    // 5. CAS-advance SYNTHESIZING → COMPLETED with the accounting invariant
-    //    check. Now that ScanFailure writes are wired up (this task, Phase 5),
-    //    the accounting log should show gap=0 in the happy path.
-    if (scanJobId) {
-      await step.run("advance-to-completed", async () => {
-        const finalMetrics = await computeScanMetrics(scanJobId);
-        const accounted =
-          finalMetrics.processedEmails + finalMetrics.excludedEmails + finalMetrics.failedEmails;
-        if (accounted !== finalMetrics.totalEmails) {
-          // Accounting invariant (#16): every discovered email must be
-          // accounted for. A gap here means a pipeline stage silently
-          // dropped emails — log loudly so the next eval surfaces it.
-          logger.error({
-            service: "inngest",
-            operation: "runSynthesis.accountingMismatch",
-            schemaId,
-            scanJobId,
-            totalEmails: finalMetrics.totalEmails,
-            processed: finalMetrics.processedEmails,
-            excluded: finalMetrics.excludedEmails,
-            failed: finalMetrics.failedEmails,
-            accounted,
-            gap: finalMetrics.totalEmails - accounted,
-          });
-        }
-
+      await step.run("advance-to-completed-empty", async () => {
         await advanceScanPhase({
           scanJobId,
           from: "SYNTHESIZING",
@@ -942,61 +903,234 @@ export const runSynthesis = inngest.createFunction(
               data: {
                 status: "COMPLETED",
                 completedAt: new Date(),
-                statusMessage: `Pipeline complete: ${synthesizedCount} cases synthesized${failedCount > 0 ? `, ${failedCount} failed` : ""}`,
+                statusMessage: "Pipeline complete: 0 cases synthesized",
               },
             });
           },
         });
       });
 
-      // 5b. Stamp the schema's `lastScannedAt` watermark. This is the
-      //     signal the `cronDailyScans` function (Task 17) filters on
-      //     to decide which schemas are stale enough to re-scan. Before
-      //     this step landed, `lastScannedAt` was a dead column that
-      //     nothing ever wrote, making any cron filter a no-op.
-      //
-      //     Runs as a separate `step.run` from the CAS advance so a
-      //     race loss on the phase transition doesn't partially commit
-      //     the watermark. On Inngest replay the update is idempotent —
-      //     writing the same timestamp twice is a no-op.
-      await step.run("stamp-last-scanned-at", async () => {
+      await step.run("stamp-last-scanned-at-empty", async () => {
         await prisma.caseSchema.update({
           where: { id: schemaId },
           data: { lastScannedAt: new Date() },
         });
       });
-    }
 
-    // 6. Emit scan.completed so the runOnboarding orchestrator (Task 9)
-    //    can flip CaseSchema.phase to AWAITING_REVIEW / COMPLETED. Until
-    //    that orchestrator lands, we ALSO keep the direct status→ACTIVE
-    //    update as a dual-write so existing polling clients still work.
-    if (scanJobId) {
-      await step.run("emit-scan-completed", async () => {
+      await step.run("emit-scan-completed-empty", async () => {
         await inngest.send({
           name: "scan.completed",
-          data: { schemaId, scanJobId, synthesizedCount, failedCount },
+          data: { schemaId, scanJobId, synthesizedCount: 0, failedCount: 0 },
         });
       });
+
+      return;
     }
 
-    // 7. Emit synthesis.case.completed events
-    await step.run("emit-events", async () => {
+    // 4b. Fan out one synthesis.case.requested per case. synthesizeCaseWorker
+    //     picks these up with concurrency=4/schemaId. scanJobId is non-null
+    //     here because the empty-cases branch above already returned.
+    await step.run("fan-out-synthesis", async () => {
+      const resolvedScanJobId = scanJobId as string;
       const events = caseIds.map((caseId) => ({
-        name: "synthesis.case.completed" as const,
-        data: { schemaId, caseId },
+        name: "synthesis.case.requested" as const,
+        data: { schemaId, caseId, scanJobId: resolvedScanJobId },
       }));
+      await inngest.send(events);
 
-      if (events.length > 0) {
-        await inngest.send(events);
+      logger.info({
+        service: "inngest",
+        operation: "runSynthesis.fanOut",
+        schemaId,
+        scanJobId,
+        caseCount: caseIds.length,
+      });
+    });
+  },
+);
+
+/**
+ * Per-case synthesis worker (#78). Consumes synthesis.case.requested
+ * events fanned out by runSynthesis. Concurrency capped at 4 per schema
+ * to respect Claude rate limits while still parallelizing within a scan.
+ *
+ * Failure contract: synthesizeCase already persists failure markers
+ * internally (see #65). We emit synthesis.case.completed with status
+ * "failed" and DO NOT rethrow — rethrowing would make Inngest retry the
+ * whole event (3×), wasting tokens on a case that already recorded its
+ * failure. The completion-check still advances the pipeline.
+ */
+export const synthesizeCaseWorker = inngest.createFunction(
+  {
+    id: "synthesize-case-worker",
+    triggers: [{ event: "synthesis.case.requested" }],
+    concurrency: {
+      limit: 4,
+      key: "event.data.schemaId",
+    },
+    retries: 2,
+  },
+  async ({ event, step }) => {
+    const { schemaId, caseId, scanJobId } = event.data;
+
+    const result = await step.run("synthesize", async () => {
+      try {
+        await synthesizeCase(caseId, schemaId, scanJobId);
+        return { status: "ok" as const };
+      } catch (error) {
+        logger.error({
+          service: "inngest",
+          operation: "synthesizeCaseWorker.caseFailed",
+          schemaId,
+          scanJobId,
+          caseId,
+          error,
+        });
+        return {
+          status: "failed" as const,
+          error: error instanceof Error ? error.message : String(error),
+        };
       }
+    });
+
+    await step.sendEvent("emit-completed", {
+      name: "synthesis.case.completed",
+      data:
+        result.status === "ok"
+          ? { schemaId, caseId, scanJobId, status: "ok" }
+          : { schemaId, caseId, scanJobId, status: "failed", error: result.error },
+    });
+  },
+);
+
+/**
+ * Completion-check for synthesis fan-out (#78). Fires on every
+ * synthesis.case.completed event — counts pending OPEN cases without a
+ * synthesizedAt stamp. Only the last in-flight case finds pending=0 and
+ * performs scan-level finalization (CAS-advance SYNTHESIZING → COMPLETED,
+ * stamp CaseSchema.lastScannedAt, emit scan.completed).
+ *
+ * Idempotency: advanceScanPhase returns "skipped" on CAS loss, so
+ * concurrent completion events race safely. scan.completed is idempotent
+ * on the consumer side (runOnboarding / scan observer) so double-emits
+ * from a race on pending=0 are harmless.
+ *
+ * Legacy emitters of synthesis.case.completed (scanJobId omitted) are
+ * ignored — without a scanJobId we can't finalize the scan, and those
+ * code paths (none currently, but defensively) don't need to.
+ */
+export const checkSynthesisComplete = inngest.createFunction(
+  {
+    id: "check-synthesis-complete",
+    triggers: [{ event: "synthesis.case.completed" }],
+    concurrency: {
+      limit: 1,
+      key: "event.data.schemaId",
+    },
+    retries: 2,
+  },
+  async ({ event, step }) => {
+    const { schemaId, scanJobId } = event.data;
+    if (!scanJobId) return;
+
+    const pending = await step.run("count-pending", async () => {
+      return prisma.case.count({
+        where: { schemaId, status: "OPEN", synthesizedAt: null },
+      });
+    });
+
+    if (pending > 0) {
+      return { pending };
+    }
+
+    // All cases done. Finalize the scan (accounting check, phase advance,
+    // lastScannedAt watermark, scan.completed emit). All steps are
+    // idempotent so concurrent "I'm last" races don't double-finalize.
+    const finalized = await step.run("advance-to-completed", async () => {
+      const finalMetrics = await computeScanMetrics(scanJobId);
+      const accounted =
+        finalMetrics.processedEmails + finalMetrics.excludedEmails + finalMetrics.failedEmails;
+      if (accounted !== finalMetrics.totalEmails) {
+        // Accounting invariant (#16).
+        logger.error({
+          service: "inngest",
+          operation: "checkSynthesisComplete.accountingMismatch",
+          schemaId,
+          scanJobId,
+          totalEmails: finalMetrics.totalEmails,
+          processed: finalMetrics.processedEmails,
+          excluded: finalMetrics.excludedEmails,
+          failed: finalMetrics.failedEmails,
+          accounted,
+          gap: finalMetrics.totalEmails - accounted,
+        });
+      }
+
+      // Counters for the terminal status message. Derived from Case rows
+      // rather than the old in-function accumulator.
+      const totalCases = await prisma.case.count({
+        where: { schemaId, status: "OPEN" },
+      });
+      const synthesizedCount = await prisma.case.count({
+        where: { schemaId, status: "OPEN", synthesizedAt: { not: null } },
+      });
+      const failedCount = totalCases - synthesizedCount;
+
+      const res = await advanceScanPhase({
+        scanJobId,
+        from: "SYNTHESIZING",
+        to: "COMPLETED",
+        work: async () => {
+          await prisma.scanJob.update({
+            where: { id: scanJobId },
+            data: {
+              status: "COMPLETED",
+              completedAt: new Date(),
+              statusMessage: `Pipeline complete: ${synthesizedCount} cases synthesized${failedCount > 0 ? `, ${failedCount} failed` : ""}`,
+            },
+          });
+        },
+      });
+
+      return {
+        advanced: res !== "skipped",
+        synthesizedCount,
+        failedCount,
+      };
+    });
+
+    // "skipped" means another completion-check invocation already
+    // finalized this scan — we're a late-arriving duplicate. Stop here
+    // so we don't re-emit scan.completed or re-stamp lastScannedAt.
+    if (!finalized.advanced) {
+      return { alreadyFinalized: true };
+    }
+
+    await step.run("stamp-last-scanned-at", async () => {
+      await prisma.caseSchema.update({
+        where: { id: schemaId },
+        data: { lastScannedAt: new Date() },
+      });
+    });
+
+    await step.run("emit-scan-completed", async () => {
+      await inngest.send({
+        name: "scan.completed",
+        data: {
+          schemaId,
+          scanJobId,
+          synthesizedCount: finalized.synthesizedCount,
+          failedCount: finalized.failedCount,
+        },
+      });
 
       logger.info({
         service: "inngest",
         operation: "synthesisComplete",
         schemaId,
-        synthesizedCount,
-        failedCount,
+        scanJobId,
+        synthesizedCount: finalized.synthesizedCount,
+        failedCount: finalized.failedCount,
       });
     });
   },
@@ -1012,6 +1146,8 @@ export const functions = [
   runCoarseClustering,
   runCaseSplitting,
   runSynthesis,
+  synthesizeCaseWorker, // #78 — per-case synthesis worker (fan-out)
+  checkSynthesisComplete, // #78 — scan-level finalizer after all cases synthesized
   runClusteringCalibration,
   resynthesizeOnFeedback,
   dailyQualitySnapshot,
