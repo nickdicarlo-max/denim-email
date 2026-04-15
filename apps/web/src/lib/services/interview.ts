@@ -476,10 +476,14 @@ export async function persistSchemaRelations(
     return true;
   });
 
-  // Build final tag list: hypothesis tags (minus removed) + suggested (if confirmed) + user-added
+  // Build final tag list: hypothesis tags (minus removed) + suggested (if confirmed) + user-added.
+  // Same dedup rationale as finalEntities above — SchemaTag @@unique([schemaId, name])
+  // would P2002 if the same tag name appears in both hypothesis.tags and
+  // validation.suggestedTags. First occurrence wins (hypothesis description
+  // is typically richer than the re-suggestion).
   const removedTagSet = new Set(effectiveConfirmations.removedTags);
 
-  const finalTags = [
+  const rawFinalTags = [
     ...hypothesis.tags.filter((t) => !removedTagSet.has(t.name)),
     ...effectiveValidation.suggestedTags
       .filter((t) => effectiveConfirmations.confirmedTags.includes(t.name))
@@ -494,6 +498,21 @@ export async function persistSchemaRelations(
       isActionable: false,
     })),
   ];
+
+  const seenTagNames = new Set<string>();
+  const finalTags = rawFinalTags.filter((t) => {
+    if (seenTagNames.has(t.name)) {
+      logger.info({
+        service: "interview",
+        operation: "persistSchemaRelations.dedupeTag",
+        schemaId,
+        name: t.name,
+      });
+      return false;
+    }
+    seenTagNames.add(t.name);
+    return true;
+  });
 
   // Cap mergeThreshold at the mathematically achievable ceiling. See
   // `clustering-tunables.ts` for the scoring math and the rationale
