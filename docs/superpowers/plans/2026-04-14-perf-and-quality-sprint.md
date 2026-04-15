@@ -61,9 +61,23 @@ Phase 1 and Phase 2 verified end-to-end on 4 live runs. One regression surfaced 
 
 **Issues closed this session:** #79, #80, #81, #85 (GitHub auto-close from commit trailers + manual `gh issue close` for #85).
 
+**Session 3 — 2026-04-15 (Phase 3 code-complete):**
+
+| Phase / Task | Issue | Commit | Status | Notes |
+|---|---|---|---|---|
+| 3.1 Gemini batch extraction (CHUNK_SIZE=5) | #77 | `7c0d1d0` | ✅ DONE | `BatchExtractionSchema` + `parseBatchExtraction` in `@denim/ai`; per-email quarantine fallback on parse failure; exclusion-matched emails still short-circuit the cheap path. Tests 46→52 in packages/ai. |
+| 3.2 Synthesis fan-out | #78 | `2c6b373` | ✅ DONE (synthesis only) | `synthesizeCaseWorker` + `checkSynthesisComplete` with concurrency=4 per schemaId. Mirrors existing `fanOutExtraction` pattern. Preserves `scan.completed` contract. **Case-splitting fan-out deferred → #86** (architecture mismatch: single cross-entity Claude call + atomic write). |
+| 3.3 Live case count during synthesis | #82 | `f3b54ff` | ✅ DONE | Added `ScanJob.synthesizedCases` + `totalCasesToSynthesize` columns via raw SQL (supabase-db path). Denominator set in `runSynthesis` load-cases step; increment in `synthesizeCaseWorker` success path. UI rendered in `phase-synthesizing.tsx` (plan said `phase-processing-scan.tsx` — that's a dispatcher, actual component is per-phase). |
+
+**Follow-up filed this session:**
+- **#86** Day-2 case-splitting: deterministic routing, no-op investigation, deferred fan-out. Consolidates three threads surfaced during 3.2 implementation: (a) deferred fan-out from #78, (b) investigate no-op rate of case-splitting, (c) strategic refactor for day-2 deterministic routing via `learnedVocabulary` with AI fallback only for new entities. Captures the onboarding-vs-day-2 architectural distinction that emerged during design discussion.
+
 **Next action on resume:**
-- Phase 3 kickoff: dispatch Task 3.1 (#77 Gemini batch extraction — 5–10 emails per call, estimated −2m on 200-email runs).
-- Baseline for Phase 3 measurement: Run B = 339.5s scan / 5.6 min end-to-end; Run C = 207.5s scan.
+- Nick runs full E2E on Run B (Consulting, 200 emails) to measure Phase 3 actual gains. Target Function B: ~9m → ~3m 40s.
+- If regression: bisect across `7c0d1d0 → 2c6b373 → f3b54ff`.
+- Phase 4 kickoff: Task 4.1 (#63 batch persistSchemaRelations round-trips).
+
+Baseline for Phase 3 measurement: Run B = 339.5s scan / 5.6 min end-to-end; Run C = 207.5s scan.
 
 ---
 
@@ -820,20 +834,27 @@ git commit -m "feat(observer): live case count during synthesis (closes #82)"
 
 ### Phase 3 verification gate
 
-- [ ] Run the full verification protocol
+- [x] Task 3.1 code-complete (`7c0d1d0`) — typecheck/tests/biome clean vs baseline
+- [x] Task 3.2 code-complete (`2c6b373`, synthesis fan-out only; case-splitting deferred to #86)
+- [x] Task 3.3 code-complete (`f3b54ff`)
+- [ ] Run the full verification protocol (pending Nick's E2E)
 - [ ] Function B target: ~3m 40s on Run B (was ~9m)
 - [ ] Eval tag coverage still 100%, orphan rate unchanged
 - [ ] Live counter visible during Run B synthesis
 
-Phase 3 log:
+Phase 3 log (measurement pending):
 
 | Metric | Pre-Phase-3 | After #77 | After #78 | After #82 |
 |---|---|---|---|---|
-| run-extraction (200 emails) | ~3m10s | | — | — |
-| run-synthesis (16 cases) | ~2m33s | — | | — |
-| run-case-splitting | ~1m32s | — | | — |
+| run-extraction (200 emails) | ~3m10s | _pending_ | — | — |
+| run-synthesis (16 cases) | ~2m33s | — | _pending_ | — |
+| run-case-splitting | ~1m32s | — | _unchanged (deferred → #86)_ | — |
 | Total Function B | ~9m | | | |
-| Observer UX | spinner | spinner | spinner | live count |
+| Observer UX | spinner | spinner | spinner | live count (code) |
+
+**Known deviations from the plan:**
+- Task 3.2 shipped synthesis fan-out only. Case-splitting fan-out was deferred to #86 after discovering `splitCoarseClusters` is a single cross-entity Claude call with an atomic write — not naturally per-case. This materially changes the "After #78" column: ~1m32s of case-splitting wall-clock is NOT attacked by this sprint. Discussion in #86 proposes revisiting via deterministic day-2 routing instead of parallelization.
+- Task 3.3 UI component path: plan referenced `phase-processing-scan.tsx`; actual render lives in `phase-synthesizing.tsx` (the former dispatches to per-phase sub-components).
 
 ---
 

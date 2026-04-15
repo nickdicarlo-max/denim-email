@@ -527,6 +527,8 @@ export async function persistSchemaRelations(
 
   const runWork = async (tx: Prisma.TransactionClient) => {
     // Overwrite the stub's placeholder values with the real configs.
+    // Issue #63: merged the previous second `caseSchema.update` (validationConfidenceScore)
+    // into this single call — cuts one round-trip with no behavioral change.
     await tx.caseSchema.update({
       where: { id: schemaId },
       data: {
@@ -548,17 +550,12 @@ export async function persistSchemaRelations(
         discoveryQueries: hypothesis.discoveryQueries as unknown as Prisma.InputJsonValue,
         summaryLabels: hypothesis.summaryLabels as unknown as Prisma.InputJsonValue,
         clusteringConfig: hypothesis.clusteringConfig as unknown as Prisma.InputJsonValue,
+        ...(effectiveValidation.confidenceScore != null
+          ? { validationConfidenceScore: effectiveValidation.confidenceScore }
+          : {}),
         // extractionPrompt / synthesisPrompt still filled in by later pipeline stages.
       },
     });
-
-    // Store validation confidence score
-    if (effectiveValidation.confidenceScore != null) {
-      await tx.caseSchema.update({
-        where: { id: schemaId },
-        data: { validationConfidenceScore: effectiveValidation.confidenceScore },
-      });
-    }
 
     // Create entities
     if (finalEntities.length > 0) {
@@ -596,46 +593,64 @@ export async function persistSchemaRelations(
       });
       const entityByName = new Map(createdEntities.map((e) => [e.name, e]));
 
-      // Create EntityGroup rows and link entities via groupId + associatedPrimaryIds
+      // Create EntityGroup rows and link entities via groupId + associatedPrimaryIds.
+      // Issue #63 batching strategy:
+      //   - Groups are created in parallel via Promise.all(create) rather than
+      //     createMany, because we need the returned IDs to link members. On
+      //     Postgres `createMany` does not return IDs; a follow-up findMany
+      //     (matched by (schemaId,index)) would add a round-trip, so parallel
+      //     create wins (same round-trip count but simpler).
+      //   - associatedPrimaryIds updates for secondaries are collapsed by
+      //     unique primaryIds fingerprint, so all secondaries sharing the same
+      //     primary-id set get written in one updateMany.
       const groups = effectiveConfirmations.groups ?? [];
+      const groupMemberAssignments: Array<{ groupId: string; memberIds: string[] }> = [];
+      const associatedPrimaryByFingerprint = new Map<
+        string,
+        { primaryIds: string[]; secondaryIds: string[] }
+      >();
+
       if (groups.length > 0) {
-        for (let i = 0; i < groups.length; i++) {
-          const group = groups[i];
-          const allNames = [...group.whats, ...group.whos];
-          const memberIds = allNames
-            .map((name) => entityByName.get(name)?.id)
-            .filter((id): id is string => !!id);
+        // Pre-compute group member mappings in memory, then batch-create groups.
+        const groupSpecs = groups
+          .map((group, i) => {
+            const memberIds = [...group.whats, ...group.whos]
+              .map((name) => entityByName.get(name)?.id)
+              .filter((id): id is string => !!id);
+            const primaryIdsInGroup = group.whats
+              .map((name) => entityByName.get(name)?.id)
+              .filter((id): id is string => !!id);
+            const secondaryIdsInGroup = group.whos
+              .map((name) => entityByName.get(name)?.id)
+              .filter((id): id is string => !!id);
+            return { index: i, memberIds, primaryIdsInGroup, secondaryIdsInGroup };
+          })
+          .filter((g) => g.memberIds.length > 0);
 
-          if (memberIds.length === 0) continue;
+        const createdGroups = await Promise.all(
+          groupSpecs.map((g) =>
+            tx.entityGroup.create({
+              data: { schemaId, index: g.index },
+              select: { id: true },
+            }),
+          ),
+        );
 
-          const entityGroup = await tx.entityGroup.create({
-            data: {
-              schemaId,
-              index: i,
-            },
-          });
+        for (let i = 0; i < groupSpecs.length; i++) {
+          const spec = groupSpecs[i];
+          const entityGroupId = createdGroups[i].id;
+          groupMemberAssignments.push({ groupId: entityGroupId, memberIds: spec.memberIds });
 
-          // Link all group members
-          await tx.entity.updateMany({
-            where: { id: { in: memberIds } },
-            data: { groupId: entityGroup.id },
-          });
-
-          // Set associatedPrimaryIds for secondaries in this group
-          const primaryIdsInGroup = group.whats
-            .map((name) => entityByName.get(name)?.id)
-            .filter((id): id is string => !!id);
-          const secondaryIdsInGroup = group.whos
-            .map((name) => entityByName.get(name)?.id)
-            .filter((id): id is string => !!id);
-
-          if (primaryIdsInGroup.length > 0 && secondaryIdsInGroup.length > 0) {
-            for (const secId of secondaryIdsInGroup) {
-              await tx.entity.update({
-                where: { id: secId },
-                data: { associatedPrimaryIds: primaryIdsInGroup },
-              });
-            }
+          if (spec.primaryIdsInGroup.length > 0 && spec.secondaryIdsInGroup.length > 0) {
+            // Fingerprint by sorted primary IDs so secondaries with identical
+            // associatedPrimaryIds coalesce into one updateMany.
+            const fp = [...spec.primaryIdsInGroup].sort().join(",");
+            const bucket = associatedPrimaryByFingerprint.get(fp) ?? {
+              primaryIds: spec.primaryIdsInGroup,
+              secondaryIds: [],
+            };
+            bucket.secondaryIds.push(...spec.secondaryIdsInGroup);
+            associatedPrimaryByFingerprint.set(fp, bucket);
           }
         }
       } else {
@@ -644,18 +659,21 @@ export async function persistSchemaRelations(
         const secondaryIds = createdEntities.filter((e) => e.type === "SECONDARY").map((e) => e.id);
 
         if (primaryIds.length > 0 && secondaryIds.length > 0) {
-          for (const secId of secondaryIds) {
-            await tx.entity.update({
-              where: { id: secId },
-              data: { associatedPrimaryIds: primaryIds },
-            });
-          }
+          associatedPrimaryByFingerprint.set([...primaryIds].sort().join(","), {
+            primaryIds,
+            secondaryIds,
+          });
         }
       }
 
       // Auto-promote ungrouped PRIMARY entities to their own groups.
       // Discovered primaries (from validation scan) and user-added primaries that weren't
       // placed in any group should each become their own EntityGroup so they generate cases.
+      // Issue #63: dropped the per-primary `findUnique({groupId})` existence check —
+      // `createdEntities` was just loaded inside this transaction after a fresh
+      // `entity.createMany` that doesn't set groupId, so no row here can already
+      // have a groupId. Any group links happen only in the grouped-branch above,
+      // which we skip (ungroupedPrimaries excludes names present in groups).
       const groupedEntityNames = new Set<string>();
       for (const group of groups) {
         for (const name of [...group.whats, ...group.whos]) {
@@ -665,93 +683,187 @@ export async function persistSchemaRelations(
       const ungroupedPrimaries = createdEntities.filter(
         (e) => e.type === "PRIMARY" && !groupedEntityNames.has(e.name),
       );
-      let autoGroupIndex = groups.length;
-      for (const primary of ungroupedPrimaries) {
-        // Check if already linked to a group (e.g., from drag-drop assignment handled above)
-        const existing = await tx.entity.findUnique({
-          where: { id: primary.id },
-          select: { groupId: true },
-        });
-        if (existing?.groupId) continue;
 
-        const entityGroup = await tx.entityGroup.create({
-          data: { schemaId, index: autoGroupIndex++ },
-        });
-        await tx.entity.update({
-          where: { id: primary.id },
-          data: { groupId: entityGroup.id },
-        });
-      }
+      const autoGroupBase = groups.length;
+      const createdAutoGroups = await Promise.all(
+        ungroupedPrimaries.map((_, i) =>
+          tx.entityGroup.create({
+            data: { schemaId, index: autoGroupBase + i },
+            select: { id: true },
+          }),
+        ),
+      );
 
-      // Process shared WHOs — SECONDARY entities with no group, empty associatedPrimaryIds.
-      // These are discovery senders: their "from:" queries find emails, but content determines routing.
+      // Shared WHOs — SECONDARY entities with no group, empty associatedPrimaryIds.
+      // These are discovery senders: their "from:" queries find emails, but content
+      // determines routing. Preserves existing dedup (skip if whoName already in
+      // finalEntities / entityByName).
       const sharedWhos = effectiveConfirmations.sharedWhos ?? [];
-      for (const whoName of sharedWhos) {
-        // Skip if already created as part of a group
-        if (entityByName.has(whoName)) continue;
+      const sharedWhoData = sharedWhos
+        .filter((whoName) => !entityByName.has(whoName))
+        .map((whoName) => ({
+          schemaId,
+          name: whoName,
+          type: "SECONDARY" as const,
+          secondaryTypeName: null,
+          aliases: [] as string[],
+          confidence: 1.0,
+          autoDetected: false,
+          associatedPrimaryIds: [] as string[],
+          // No groupId — intentionally ungrouped
+        }));
 
-        await tx.entity.create({
-          data: {
-            schemaId,
-            name: whoName,
-            type: "SECONDARY",
-            secondaryTypeName: null,
-            aliases: [],
-            confidence: 1.0,
-            autoDetected: false,
-            associatedPrimaryIds: [],
-            // No groupId — intentionally ungrouped
-          },
+      // Fire all group-member links, associatedPrimaryIds links, ungrouped-primary
+      // group links, sharedWhos creation, tags, fields, and exclusion rules in
+      // parallel. They all target disjoint rows (different entity IDs, different
+      // tables), so there is no write-write conflict within the transaction.
+      const parallelWrites: Array<Promise<unknown>> = [];
+
+      for (const { groupId, memberIds } of groupMemberAssignments) {
+        parallelWrites.push(
+          tx.entity.updateMany({
+            where: { id: { in: memberIds } },
+            data: { groupId },
+          }),
+        );
+      }
+
+      for (const { primaryIds, secondaryIds } of associatedPrimaryByFingerprint.values()) {
+        parallelWrites.push(
+          tx.entity.updateMany({
+            where: { id: { in: secondaryIds } },
+            data: { associatedPrimaryIds: primaryIds },
+          }),
+        );
+      }
+
+      // Each ungrouped primary gets a distinct groupId, so we need one
+      // updateMany per primary (updateMany can't set different values per row).
+      // Issued in parallel alongside the other writes.
+      for (let i = 0; i < ungroupedPrimaries.length; i++) {
+        const primary = ungroupedPrimaries[i];
+        const groupId = createdAutoGroups[i].id;
+        parallelWrites.push(
+          tx.entity.updateMany({
+            where: { id: primary.id },
+            data: { groupId },
+          }),
+        );
+      }
+
+      if (sharedWhoData.length > 0) {
+        parallelWrites.push(tx.entity.createMany({ data: sharedWhoData }));
+      }
+
+      // Create tags
+      if (finalTags.length > 0) {
+        parallelWrites.push(
+          tx.schemaTag.createMany({
+            data: finalTags.map((t) => ({
+              schemaId,
+              name: t.name,
+              description: t.description,
+              aiGenerated: true,
+              isActive: true,
+            })),
+          }),
+        );
+      }
+
+      // Create extracted field definitions
+      if (hypothesis.extractedFields.length > 0) {
+        parallelWrites.push(
+          tx.extractedFieldDef.createMany({
+            data: hypothesis.extractedFields.map((f) => ({
+              schemaId,
+              name: f.name,
+              type: f.type,
+              description: f.description,
+              source: f.source,
+              format: f.format,
+              showOnCard: f.showOnCard,
+              aggregation: f.aggregation,
+            })),
+          }),
+        );
+      }
+
+      // Persist noise patterns as exclusion rules
+      if (effectiveValidation.noisePatterns?.length > 0) {
+        const noiseRules = effectiveValidation.noisePatterns.map((pattern) => ({
+          schemaId,
+          ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
+          pattern,
+          source: "interview",
+          isActive: true,
+          matchCount: 0,
+        }));
+        parallelWrites.push(tx.exclusionRule.createMany({ data: noiseRules }));
+        logger.info({
+          service: "interview",
+          operation: "persistSchemaRelations.exclusionRules",
+          schemaId,
+          rulesCreated: noiseRules.length,
         });
       }
-    }
 
-    // Create tags
-    if (finalTags.length > 0) {
-      await tx.schemaTag.createMany({
-        data: finalTags.map((t) => ({
+      await Promise.all(parallelWrites);
+    } else {
+      // No entities created — still need to persist tags, fields, exclusion rules.
+      const sideWrites: Array<Promise<unknown>> = [];
+
+      if (finalTags.length > 0) {
+        sideWrites.push(
+          tx.schemaTag.createMany({
+            data: finalTags.map((t) => ({
+              schemaId,
+              name: t.name,
+              description: t.description,
+              aiGenerated: true,
+              isActive: true,
+            })),
+          }),
+        );
+      }
+
+      if (hypothesis.extractedFields.length > 0) {
+        sideWrites.push(
+          tx.extractedFieldDef.createMany({
+            data: hypothesis.extractedFields.map((f) => ({
+              schemaId,
+              name: f.name,
+              type: f.type,
+              description: f.description,
+              source: f.source,
+              format: f.format,
+              showOnCard: f.showOnCard,
+              aggregation: f.aggregation,
+            })),
+          }),
+        );
+      }
+
+      if (effectiveValidation.noisePatterns?.length > 0) {
+        const noiseRules = effectiveValidation.noisePatterns.map((pattern) => ({
           schemaId,
-          name: t.name,
-          description: t.description,
-          aiGenerated: true,
+          ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
+          pattern,
+          source: "interview",
           isActive: true,
-        })),
-      });
-    }
-
-    // Create extracted field definitions
-    if (hypothesis.extractedFields.length > 0) {
-      await tx.extractedFieldDef.createMany({
-        data: hypothesis.extractedFields.map((f) => ({
+          matchCount: 0,
+        }));
+        sideWrites.push(tx.exclusionRule.createMany({ data: noiseRules }));
+        logger.info({
+          service: "interview",
+          operation: "persistSchemaRelations.exclusionRules",
           schemaId,
-          name: f.name,
-          type: f.type,
-          description: f.description,
-          source: f.source,
-          format: f.format,
-          showOnCard: f.showOnCard,
-          aggregation: f.aggregation,
-        })),
-      });
-    }
+          rulesCreated: noiseRules.length,
+        });
+      }
 
-    // Persist noise patterns as exclusion rules
-    if (effectiveValidation.noisePatterns?.length > 0) {
-      const noiseRules = effectiveValidation.noisePatterns.map((pattern) => ({
-        schemaId,
-        ruleType: pattern.includes("@") ? ("SENDER" as const) : ("DOMAIN" as const),
-        pattern,
-        source: "interview",
-        isActive: true,
-        matchCount: 0,
-      }));
-      await tx.exclusionRule.createMany({ data: noiseRules });
-      logger.info({
-        service: "interview",
-        operation: "persistSchemaRelations.exclusionRules",
-        schemaId,
-        rulesCreated: noiseRules.length,
-      });
+      if (sideWrites.length > 0) {
+        await Promise.all(sideWrites);
+      }
     }
   };
 
@@ -761,7 +873,9 @@ export async function persistSchemaRelations(
     // write in the same transaction (see POST confirm route, #67).
     await runWork(opts.tx);
   } else {
-    await prisma.$transaction(runWork, { timeout: 15000 });
+    // Issue #63: removed { timeout: 15000 } workaround — batched writes
+    // bring the worst-case well under the default 5s timeout.
+    await prisma.$transaction(runWork);
   }
 
   logger.info({

@@ -262,6 +262,52 @@ Add to the review checklist: for every new `step.run(..., async () => {
 
 ---
 
+## 2026-04-15: Fan-out pattern is not one-size-fits-all
+
+**Context:** Sprint Phase 3 aimed to parallelize BOTH Claude synthesis AND Claude case-splitting via Inngest fan-out (issue #78). Synthesis fan-out landed cleanly in `2c6b373`. Case-splitting fan-out was deferred to a follow-up issue (#86) after discovering the two phases have structurally different AI call shapes.
+
+### Discovery 7: Not every per-item-serial Claude phase is a fan-out candidate
+
+**Symptom:** Plan called for "mirror the three-function shape" used for synthesis (`synthesizeCaseWorker` + `checkSynthesisComplete`) on case-splitting. Agent investigating the refactor found that the mirror did not exist: case-splitting is not per-case at the AI layer.
+
+**Root cause:** Two phases that look similar from the outside have different AI call shapes:
+
+- **Synthesis** — one Claude call per Case. Inputs for each call are independent. Natural completion marker on the row (`Case.synthesizedAt`). Writes are idempotent per-case. **Fans out cleanly.**
+- **Case-splitting** — one Claude call per *scan*, taking ALL coarse clusters at once. Claude decides splits across the entire set — clusters can merge or split *relative to each other*. The write path is a single atomic delete-coarse / create-split transaction in `cluster.ts`. No per-cluster completion marker. **Does not fan out without refactoring both the Claude call shape AND the write-owner transaction.**
+
+**Rule exposed:** **Before dispatching a fan-out refactor, verify the AI call is actually per-item.** A phase taking N seconds per N items does not imply N independent Claude calls. The three questions to answer before agreeing to fan out:
+1. Is the AI call per-item, or cross-item? (Read the prompt-builder input shape.)
+2. Does a per-item completion marker exist on the row, or is completion scan-level? (Read the schema.)
+3. Is the write path per-item or atomic-all? (Read the service write phase.)
+
+If any answer is "cross-item" or "atomic-all," fan-out requires an upstream refactor first. Either reshape the Claude call (one-per-item), or route the work through a different optimization (deterministic short-circuit, cheaper model, caching).
+
+**Meta-lesson:** The deferred work was not a regression or a bug — it was a correct stop. The agent could have forced the refactor to fit the plan's shape, but the resulting code would have been wrong (either race conditions between per-cluster writes, or silent correctness loss from splitting a decision that needs global context). **Surfacing "this does not fit" is a first-class outcome.** The follow-up issue (#86) captured the architectural discussion and proposed an alternative (deterministic day-2 routing via learned vocabulary) that is both more impactful and more natural for the code's actual shape.
+
+---
+
+## 2026-04-15: Onboarding and day-2 share the same code path
+
+**Context:** Discussion during Phase 3 of the sprint surfaced an architectural distinction that is not currently reflected in the code: the system has two operating modes with very different cost/latency tolerances, but only one pipeline implementation.
+
+### Discovery 8: The cron path and the onboarding path are the same workflow
+
+**Symptom:** No runtime bug — this is latent architectural debt, surfaced during design discussion.
+
+**Root cause:** `cronDailyScans` (`apps/web/src/lib/inngest/cron.ts:81`) fires a generic `scan.requested` event for each stale ACTIVE schema. This event is handled by `runScan` (`apps/web/src/lib/inngest/scan.ts:34`) — whose doc comment explicitly says it is "the parent workflow for every scan trigger (onboarding, cron, manual, feedback)". The chain (discovery → extraction → coarse clustering → case splitting → synthesis) runs unchanged for both a 200-email onboarding scan and a 5-email daily cron scan.
+
+Implications that surface only at volume:
+- Daily cron for an active schema re-runs full Gemini extraction, full Claude case-splitting, and full Claude synthesis for each batch of 2-20 new emails. At 100 users × daily × 10 emails average, that is substantial Claude/Gemini spend for what should be mostly deterministic routing.
+- The `learnedVocabulary` input field in `packages/ai/src/prompts/case-splitting.ts:31` is designed to let Claude build on prior calibration — but there is no path today that uses it *deterministically* (matching against vocabulary without the Claude call) when the entity is known.
+
+**Rule exposed:** **When a system has distinct operating modes (e.g., first-time vs. steady-state), the code should branch early, not run the same pipeline for both.** Sharing a code path between "generous cost/latency budget, must discover what matters" and "tight cost/latency budget, must match against what we already discovered" is a debt position. The branch point should be as early as the control flow allows (here: `runScan` reading `ScanJob.triggeredBy`).
+
+**Important caveat preserved in #86:** Even with day-2 deterministic routing, entity discovery (inter-entity) must stay dynamic. If "567 Maple St" appears in a new email, it must surface as a new primary entity with its own coarse cluster. Only case-splitting (intra-entity, within a known entity with learned vocabulary) is a candidate for determinism. Collapsing these two concerns is how you miss genuinely new things.
+
+**Meta:** This is the same class of latent debt as Bug 4 (duplicated auth error classification across files) — one implementation serving two semantically-different purposes. The difference is scale: Bug 4 duplicated across ~10 lines per file; this one duplicates the full pipeline's cost structure across two operating regimes. Deferred to #86 as a strategic refactor rather than a hot fix.
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
