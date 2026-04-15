@@ -995,6 +995,26 @@ export const synthesizeCaseWorker = inngest.createFunction(
         });
         return { status: "ok" as const };
       } catch (error) {
+        // Stamp synthesizedAt so checkSynthesisComplete's pending count
+        // treats this case as terminal. Without this, a failed case keeps
+        // pending>0 forever and the scan never finalizes. Success count
+        // lives on ScanJob.synthesizedCases (not incremented here), so
+        // stamping synthesizedAt here doesn't inflate "N of M".
+        await prisma.case
+          .update({
+            where: { id: caseId },
+            data: { synthesizedAt: new Date() },
+          })
+          .catch((stampError) => {
+            logger.error({
+              service: "inngest",
+              operation: "synthesizeCaseWorker.stampTerminalFailed",
+              schemaId,
+              scanJobId,
+              caseId,
+              error: stampError,
+            });
+          });
         logger.error({
           service: "inngest",
           operation: "synthesizeCaseWorker.caseFailed",
@@ -1083,15 +1103,17 @@ export const checkSynthesisComplete = inngest.createFunction(
         });
       }
 
-      // Counters for the terminal status message. Derived from Case rows
-      // rather than the old in-function accumulator.
-      const totalCases = await prisma.case.count({
-        where: { schemaId, status: "OPEN" },
+      // Counters from ScanJob (single-writer: worker increments
+      // synthesizedCases on success only). synthesizedAt on Case marks
+      // terminal (success OR failure), so we can't use it to count
+      // successes here.
+      const scanJobRow = await prisma.scanJob.findUnique({
+        where: { id: scanJobId },
+        select: { synthesizedCases: true, totalCasesToSynthesize: true },
       });
-      const synthesizedCount = await prisma.case.count({
-        where: { schemaId, status: "OPEN", synthesizedAt: { not: null } },
-      });
-      const failedCount = totalCases - synthesizedCount;
+      const synthesizedCount = scanJobRow?.synthesizedCases ?? 0;
+      const expectedTotal = scanJobRow?.totalCasesToSynthesize ?? synthesizedCount;
+      const failedCount = Math.max(0, expectedTotal - synthesizedCount);
 
       const res = await advanceScanPhase({
         scanJobId,
