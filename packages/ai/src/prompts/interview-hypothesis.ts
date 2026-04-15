@@ -9,12 +9,37 @@ export interface HypothesisPromptResult {
   user: string;
 }
 
-interface DomainConfig {
+/**
+ * Numeric clustering knobs. Per-domain values live in the caller
+ * (apps/web/src/lib/config/clustering-tunables.ts); the prompt builder
+ * just renders them into the prompt Claude sees.
+ */
+export interface DomainNumerics {
   mergeThreshold: number;
   timeDecayFresh: number;
   reminderCollapseEnabled: boolean;
   subjectMatchScore: number;
   actorAffinityScore: number;
+}
+
+export interface ClusteringTunables {
+  weights: {
+    tagMatchScore: number;
+    threadMatchScore: number;
+  };
+  reminder: {
+    subjectSimilarity: number;
+    maxAgeDays: number;
+  };
+  domainDefaults: Record<string, DomainNumerics>;
+}
+
+/**
+ * Per-domain content: tags, fields, summary labels, entity types,
+ * exclusion hints. These are prompt copy, not tuning knobs — they
+ * live here with the prompt that references them.
+ */
+interface DomainContent {
   tags: {
     name: string;
     description: string;
@@ -32,13 +57,10 @@ interface DomainConfig {
   exclusionHints: string[];
 }
 
-const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
+type ResolvedDomainConfig = DomainContent & DomainNumerics;
+
+const DOMAIN_CONTENT: Record<string, DomainContent> = {
   school_parent: {
-    mergeThreshold: 35,
-    timeDecayFresh: 60,
-    reminderCollapseEnabled: true,
-    subjectMatchScore: 20,
-    actorAffinityScore: 10,
     tags: [
       {
         name: "Action Required",
@@ -99,11 +121,6 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "promotions@"],
   },
   property: {
-    mergeThreshold: 30,
-    timeDecayFresh: 45,
-    reminderCollapseEnabled: false,
-    subjectMatchScore: 20,
-    actorAffinityScore: 10,
     tags: [
       {
         name: "Maintenance",
@@ -163,11 +180,6 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "alerts@"],
   },
   construction: {
-    mergeThreshold: 45,
-    timeDecayFresh: 45,
-    reminderCollapseEnabled: false,
-    subjectMatchScore: 20,
-    actorAffinityScore: 10,
     tags: [
       {
         name: "RFI",
@@ -234,11 +246,6 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "system@"],
   },
   legal: {
-    mergeThreshold: 55,
-    timeDecayFresh: 90,
-    reminderCollapseEnabled: false,
-    subjectMatchScore: 25,
-    actorAffinityScore: 15,
     tags: [
       {
         name: "Filing",
@@ -298,11 +305,6 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "ecf@"],
   },
   agency: {
-    mergeThreshold: 45,
-    timeDecayFresh: 45,
-    reminderCollapseEnabled: false,
-    subjectMatchScore: 20,
-    actorAffinityScore: 10,
     tags: [
       {
         name: "Deliverable",
@@ -368,11 +370,6 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
     exclusionHints: ["noreply@", "newsletter@", "marketing@", "notifications@"],
   },
   general: {
-    mergeThreshold: 45,
-    timeDecayFresh: 45,
-    reminderCollapseEnabled: false,
-    subjectMatchScore: 20,
-    actorAffinityScore: 10,
     tags: [
       {
         name: "Action Required",
@@ -433,21 +430,29 @@ const DOMAIN_CONFIGS: Record<string, DomainConfig> = {
   },
 };
 
-function getDomainConfig(domain: string): DomainConfig {
-  return DOMAIN_CONFIGS[domain] ?? DOMAIN_CONFIGS.general;
+function resolveDomainConfig(
+  domain: string,
+  tunables: ClusteringTunables,
+): ResolvedDomainConfig {
+  const content = DOMAIN_CONTENT[domain] ?? DOMAIN_CONTENT.general;
+  const numerics = tunables.domainDefaults[domain] ?? tunables.domainDefaults.general;
+  return { ...content, ...numerics };
 }
 
-function buildClusteringConfigBlock(config: DomainConfig): string {
+function buildClusteringConfigBlock(
+  config: ResolvedDomainConfig,
+  tunables: ClusteringTunables,
+): string {
   return `{
     "mergeThreshold": ${config.mergeThreshold},
-    "threadMatchScore": 100,
+    "threadMatchScore": ${tunables.weights.threadMatchScore},
     "subjectMatchScore": ${config.subjectMatchScore},
     "actorAffinityScore": ${config.actorAffinityScore},
-    "tagMatchScore": 15,
+    "tagMatchScore": ${tunables.weights.tagMatchScore},
     "timeDecayDays": { "fresh": ${config.timeDecayFresh} },
     "reminderCollapseEnabled": ${config.reminderCollapseEnabled},
-    "reminderSubjectSimilarity": 0.85,
-    "reminderMaxAge": 7
+    "reminderSubjectSimilarity": ${tunables.reminder.subjectSimilarity},
+    "reminderMaxAge": ${tunables.reminder.maxAgeDays}
   }`;
 }
 
@@ -485,13 +490,13 @@ function buildGoalAdjustments(goals: string[]): string {
   return `\nGoal-based field adjustments (override domain defaults):\n${adjustments.join("\n")}`;
 }
 
-function buildSystemPrompt(domain: string): string {
-  const config = getDomainConfig(domain);
-  const allDomainSummary = Object.entries(DOMAIN_CONFIGS)
-    .map(
-      ([key, cfg]) =>
-        `  - ${key}: mergeThreshold=${cfg.mergeThreshold}, timeDecay.fresh=${cfg.timeDecayFresh}, subjectMatchScore=${cfg.subjectMatchScore}, actorAffinityScore=${cfg.actorAffinityScore}, reminderCollapse=${cfg.reminderCollapseEnabled}`,
-    )
+function buildSystemPrompt(domain: string, tunables: ClusteringTunables): string {
+  const config = resolveDomainConfig(domain, tunables);
+  const allDomainSummary = Object.keys(DOMAIN_CONTENT)
+    .map((key) => {
+      const n = tunables.domainDefaults[key] ?? tunables.domainDefaults.general;
+      return `  - ${key}: mergeThreshold=${n.mergeThreshold}, timeDecay.fresh=${n.timeDecayFresh}, subjectMatchScore=${n.subjectMatchScore}, actorAffinityScore=${n.actorAffinityScore}, reminderCollapse=${n.reminderCollapseEnabled}`;
+    })
     .join("\n");
 
   return `You are a schema configuration expert for an email case management system. Your job is to generate a complete schema hypothesis that configures how a user's emails will be organized into cases.
@@ -544,7 +549,7 @@ Required JSON shape:
   "tags": [{ "name": string, "description": string, "expectedFrequency": "high"|"medium"|"low", "isActionable": boolean }],
   "extractedFields": [{ "name": string, "type": "NUMBER"|"STRING"|"DATE"|"BOOLEAN", "description": string, "source": "BODY"|"ATTACHMENT"|"ANY", "format": string, "showOnCard": boolean, "aggregation": "SUM"|"LATEST"|"MAX"|"MIN"|"COUNT"|"FIRST" }],
   "summaryLabels": { "beginning": string, "middle": string, "end": string },
-  "clusteringConfig": ${buildClusteringConfigBlock(config)},
+  "clusteringConfig": ${buildClusteringConfigBlock(config, tunables)},
   "discoveryQueries": [{ "query": string, "label": string, "entityName": string|null, "source": "entity_name"|"domain_default"|"email_scan" }],
   "exclusionPatterns": string[]
 }`;
@@ -572,8 +577,8 @@ People/contacts they interact with (SECONDARY entities — used for affinity sco
 ${input.whos.map((w: string) => `  - "${w}"`).join("\n")}`;
 }
 
-function buildUserPrompt(input: InterviewInput): string {
-  const config = getDomainConfig(input.domain);
+function buildUserPrompt(input: InterviewInput, tunables: ClusteringTunables): string {
+  const config = resolveDomainConfig(input.domain, tunables);
   const goalAdjustments = buildGoalAdjustments(input.goals);
   const hasGroups = input.groups && input.groups.length > 0;
 
@@ -606,9 +611,12 @@ Return ONLY the JSON object. No other text.`;
  * Builds a prompt pair for Claude to generate a schema hypothesis
  * from interview input. Pure function, no I/O.
  */
-export function buildHypothesisPrompt(input: InterviewInput): HypothesisPromptResult {
+export function buildHypothesisPrompt(
+  input: InterviewInput,
+  tunables: ClusteringTunables,
+): HypothesisPromptResult {
   return {
-    system: buildSystemPrompt(input.domain),
-    user: buildUserPrompt(input),
+    system: buildSystemPrompt(input.domain, tunables),
+    user: buildUserPrompt(input, tunables),
   };
 }

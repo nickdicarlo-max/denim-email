@@ -1,5 +1,9 @@
 export { buildHypothesisPrompt } from "./prompts/interview-hypothesis";
-export type { HypothesisPromptResult } from "./prompts/interview-hypothesis";
+export type {
+  HypothesisPromptResult,
+  ClusteringTunables,
+  DomainNumerics,
+} from "./prompts/interview-hypothesis";
 export { parseHypothesisResponse } from "./parsers/hypothesis-parser";
 export { buildValidationPrompt } from "./prompts/interview-validate";
 export type { ValidationPromptResult, EntityGroupContext } from "./prompts/interview-validate";

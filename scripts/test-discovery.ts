@@ -27,6 +27,7 @@ import Anthropic from "@anthropic-ai/sdk";
 dotenv.config({ path: path.join(process.cwd(), "apps", "web", ".env.local") });
 import { google } from "googleapis";
 import { buildHypothesisPrompt, parseHypothesisResponse } from "../packages/ai/src/index";
+import { CLUSTERING_TUNABLES } from "../apps/web/src/lib/config/clustering-tunables";
 import type { DiscoveryQuery, InterviewInput } from "../packages/types/src/schema";
 
 // Dynamic import of PrismaClient — resolved at runtime from apps/web's dependency tree
@@ -324,7 +325,7 @@ async function runMode2(accessToken: string): Promise<string> {
     console.log(`  whos: [${scenario.input.whos.join(", ")}]`);
 
     // Generate hypothesis via Claude
-    const prompt = buildHypothesisPrompt(scenario.input);
+    const prompt = buildHypothesisPrompt(scenario.input, CLUSTERING_TUNABLES);
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 4096,

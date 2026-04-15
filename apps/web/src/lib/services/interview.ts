@@ -45,8 +45,10 @@ export async function generateHypothesis(
       // Validate input
       const validated = validateInput(InterviewInputSchema, input);
 
-      // Build prompt (pure function from @denim/ai)
-      const prompt = buildHypothesisPrompt(validated);
+      // Build prompt (pure function from @denim/ai). Numeric clustering
+      // knobs are injected from our config so the prompt file stays
+      // package-pure and all tuning lives in clustering-tunables.ts.
+      const prompt = buildHypothesisPrompt(validated, CLUSTERING_TUNABLES);
 
       // Call Claude via AI client wrapper
       const result = await callClaude({

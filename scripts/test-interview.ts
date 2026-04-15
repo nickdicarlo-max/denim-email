@@ -12,6 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildHypothesisPrompt, parseHypothesisResponse } from "../packages/ai/src/index";
+import { CLUSTERING_TUNABLES } from "../apps/web/src/lib/config/clustering-tunables";
 import type { InterviewInput, SchemaHypothesis } from "../packages/types/src/schema";
 
 const MODEL = "claude-sonnet-4-6";
@@ -207,7 +208,7 @@ async function runTest(name: string, input: InterviewInput): Promise<EvalResult>
   const start = Date.now();
 
   try {
-    const prompt = buildHypothesisPrompt(input);
+    const prompt = buildHypothesisPrompt(input, CLUSTERING_TUNABLES);
 
     const response = await anthropic.messages.create({
       model: MODEL,
