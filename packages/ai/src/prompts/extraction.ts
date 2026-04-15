@@ -168,3 +168,76 @@ export function buildExtractionPrompt(
     user: buildUserPrompt(email),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Batch extraction (closes #77)
+//
+// Packs N emails into a single Gemini call. The model returns a JSON array
+// where each element carries its input index so order can be reliably
+// restored even if the model reorders or omits entries.
+// ---------------------------------------------------------------------------
+
+function buildBatchSystemPrompt(schema: ExtractionSchemaContext, today: string): string {
+  const single = buildSystemPrompt(schema, today);
+  return `${single}
+
+BATCH MODE:
+You will be given MULTIPLE emails in a single request, indexed [0], [1], [2], ....
+For each email, perform the full extraction described above.
+
+Return ONLY a JSON array (no object wrapper, no markdown, no prose) of the form:
+[
+  { "index": 0, "summary": "...", "tags": [...], "extractedData": {...}, "detectedEntities": [...], "isInternal": false, "language": "en", "relevanceScore": 1.0, "relevanceEntity": "..." },
+  { "index": 1, ... },
+  ...
+]
+
+CRITICAL BATCH RULES:
+- Output exactly one JSON object per input email. The length of the output array MUST equal the number of input emails.
+- Each object MUST include an "index" field (integer) identifying which input email it corresponds to (0-based, matching the [N] prefix).
+- Process each email INDEPENDENTLY. Do not cross-reference or merge information between emails in the batch.
+- Apply the same summary/tag/entity/relevance rules per-email as in single-email mode.`;
+}
+
+function buildBatchUserPrompt(emails: ExtractionInput[]): string {
+  const blocks = emails.map((email, i) => {
+    const attachmentSection = email.attachments && email.attachments.length > 0
+      ? `\n  ATTACHMENTS:\n${email.attachments.map((a: { filename: string; mimeType: string; sizeBytes: number; extractionSummary?: string }, j: number) => `    ${j + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}`
+      : "";
+
+    const truncatedBody = `${email.body.slice(0, 8000)}${email.body.length > 8000 ? "\n[...truncated, " + email.body.length + " chars total]" : ""}`;
+
+    return `[${i}] Subject: ${email.subject}
+    From: ${email.senderDisplayName} <${email.senderEmail}> (domain: ${email.senderDomain})
+    Date: ${email.date}
+    Is Reply: ${email.isReply}
+    --- BODY ---
+    ${truncatedBody}
+    --- END BODY ---${attachmentSection}`;
+  });
+
+  return `Extract structured data for each of the following ${emails.length} emails. Return a JSON array with one result per email, each carrying its "index":
+
+${blocks.join("\n\n")}
+
+Return ONLY the JSON array. No other text.`;
+}
+
+/**
+ * Builds a prompt pair for AI to extract structured data from an array of emails
+ * in a single call. The model is instructed to return a JSON array of results,
+ * each carrying the input index.
+ *
+ * Pure function, no I/O.
+ */
+export function buildBatchExtractionPrompt(
+  emails: ExtractionInput[],
+  schema: ExtractionSchemaContext,
+  today?: string,
+): ExtractionPromptResult {
+  const todayStr = today ?? new Date().toISOString().slice(0, 10);
+  return {
+    system: buildBatchSystemPrompt(schema, todayStr),
+    user: buildBatchUserPrompt(emails),
+  };
+}

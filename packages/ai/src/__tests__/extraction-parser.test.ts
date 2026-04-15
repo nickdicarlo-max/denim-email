@@ -1,6 +1,9 @@
 import type { ExtractionResult } from "@denim/types";
 import { describe, expect, it } from "vitest";
-import { parseExtractionResponse } from "../parsers/extraction-parser";
+import {
+  parseBatchExtraction,
+  parseExtractionResponse,
+} from "../parsers/extraction-parser";
 
 const VALID_FIXTURE: ExtractionResult = {
   summary:
@@ -133,5 +136,103 @@ describe("parseExtractionResponse", () => {
     expect(
       (result as unknown as Record<string, unknown>).anotherExtra,
     ).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch extraction (closes #77)
+// ---------------------------------------------------------------------------
+
+function makeBatchEntry(index: number, overrides: Partial<ExtractionResult> = {}) {
+  return {
+    index,
+    summary:
+      `Summary for batch entry ${index} covering the scheduled event and response needed.`,
+    tags: ["Schedule"],
+    extractedData: { eventIndex: index },
+    detectedEntities: [
+      { name: "Soccer Team", type: "PRIMARY" as const, confidence: 1.0 },
+    ],
+    isInternal: false,
+    language: "en",
+    relevanceScore: 1.0,
+    relevanceEntity: "Soccer Team",
+    ...overrides,
+  };
+}
+
+describe("parseBatchExtraction", () => {
+  it("parses a 5-email batch successfully and strips index", () => {
+    const payload = [0, 1, 2, 3, 4].map((i) => makeBatchEntry(i));
+    const raw = JSON.stringify(payload);
+
+    const results = parseBatchExtraction(raw, 5);
+
+    expect(results).toHaveLength(5);
+    // Index field stripped
+    expect((results[0] as unknown as Record<string, unknown>).index).toBeUndefined();
+    // Per-email payload preserved
+    expect(results[0].extractedData).toEqual({ eventIndex: 0 });
+    expect(results[4].extractedData).toEqual({ eventIndex: 4 });
+    expect(results[2].summary).toContain("batch entry 2");
+  });
+
+  it("throws when a malformed entry is present (consumer should fall back)", () => {
+    const payload: unknown[] = [0, 1, 2, 3, 4].map((i) => makeBatchEntry(i));
+    // Corrupt entry 2: detectedEntities has invalid enum value
+    (payload[2] as Record<string, unknown>).detectedEntities = [
+      { name: "X", type: "TERTIARY", confidence: 0.8 },
+    ];
+    const raw = JSON.stringify(payload);
+
+    expect(() => parseBatchExtraction(raw, 5)).toThrow(
+      "Invalid batch extraction response",
+    );
+  });
+
+  it("throws when the array length doesn't match expectedCount", () => {
+    const payload = [0, 1, 2].map((i) => makeBatchEntry(i));
+    const raw = JSON.stringify(payload);
+
+    expect(() => parseBatchExtraction(raw, 5)).toThrow(
+      "Expected 5 extraction results, got 3",
+    );
+  });
+
+  it("sorts unordered indices back into input order", () => {
+    const payload = [
+      makeBatchEntry(3, { extractedData: { marker: "third" } }),
+      makeBatchEntry(0, { extractedData: { marker: "zeroth" } }),
+      makeBatchEntry(4, { extractedData: { marker: "fourth" } }),
+      makeBatchEntry(1, { extractedData: { marker: "first" } }),
+      makeBatchEntry(2, { extractedData: { marker: "second" } }),
+    ];
+    const raw = JSON.stringify(payload);
+
+    const results = parseBatchExtraction(raw, 5);
+
+    expect(results.map((r) => r.extractedData.marker)).toEqual([
+      "zeroth",
+      "first",
+      "second",
+      "third",
+      "fourth",
+    ]);
+  });
+
+  it("strips markdown code fences before parsing a batch", () => {
+    const payload = [0, 1].map((i) => makeBatchEntry(i));
+    const raw = `\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``;
+
+    const results = parseBatchExtraction(raw, 2);
+
+    expect(results).toHaveLength(2);
+    expect(results[0].extractedData).toEqual({ eventIndex: 0 });
+  });
+
+  it("throws on malformed JSON", () => {
+    expect(() => parseBatchExtraction("{ not json", 3)).toThrow(
+      "Failed to parse batch extraction response as JSON",
+    );
   });
 });

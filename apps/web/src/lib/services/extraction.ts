@@ -7,7 +7,12 @@
  * (CaseSchema email/case counts are now compute-on-demand via scan-metrics.)
  */
 
-import { buildExtractionPrompt, parseExtractionResponse } from "@denim/ai";
+import {
+  buildBatchExtractionPrompt,
+  buildExtractionPrompt,
+  parseBatchExtraction,
+  parseExtractionResponse,
+} from "@denim/ai";
 import { resolveEntity } from "@denim/engine";
 import type { ExtractionInput, ExtractionResult, ExtractionSchemaContext } from "@denim/types";
 import { callGemini } from "@/lib/ai/client";
@@ -190,6 +195,33 @@ export async function extractEmail(
   // 3. Parse AI response
   const parsed: ExtractionResult = parseExtractionResponse(aiResult.content);
 
+  return persistExtractedEmail(gmailMessage, parsed, entities, options, {
+    inputTokens: aiResult.inputTokens,
+    outputTokens: aiResult.outputTokens,
+    latencyMs: aiResult.latencyMs,
+  });
+}
+
+/**
+ * Persist a parsed Gemini extraction for a single email. Shared between the
+ * single-email (`extractEmail`) path and the batch path (`processEmailBatch`
+ * chunked Gemini call). Handles:
+ *   - relevance gate
+ *   - content-first entity routing
+ *   - Email upsert + entity/tag count increments
+ *   - ExtractionCost logging
+ *
+ * Assumes the caller has already cleared the exclusion-rule short-circuit.
+ */
+async function persistExtractedEmail(
+  gmailMessage: GmailMessageFull,
+  parsed: ExtractionResult,
+  entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[] }[],
+  options: ExtractEmailOptions,
+  aiCost: { inputTokens: number; outputTokens: number; latencyMs: number },
+): Promise<ExtractEmailResult> {
+  const { schemaId, scanJobId } = options;
+
   // 3a. Check if sender is a known entity (deterministic inclusion bypass)
   const senderEntityMatch = resolveEntity(
     gmailMessage.senderDisplayName,
@@ -260,9 +292,9 @@ export async function extractEmail(
     // Still log the extraction cost
     await logAICost(
       {
-        inputTokens: aiResult.inputTokens,
-        outputTokens: aiResult.outputTokens,
-        latencyMs: aiResult.latencyMs,
+        inputTokens: aiCost.inputTokens,
+        outputTokens: aiCost.outputTokens,
+        latencyMs: aiCost.latencyMs,
       },
       {
         emailId: email.id,
@@ -627,9 +659,9 @@ export async function extractEmail(
   // 7. Write ExtractionCost row (outside transaction — non-critical)
   await logAICost(
     {
-      inputTokens: aiResult.inputTokens,
-      outputTokens: aiResult.outputTokens,
-      latencyMs: aiResult.latencyMs,
+      inputTokens: aiCost.inputTokens,
+      outputTokens: aiCost.outputTokens,
+      latencyMs: aiCost.latencyMs,
     },
     {
       emailId: email.id,
@@ -643,8 +675,76 @@ export async function extractEmail(
 }
 
 /**
+ * Gemini batch extraction chunk size. Packs N emails per Gemini call to
+ * amortize per-request latency (closes #77). Conservative default of 5;
+ * bump to 10 once quality is measured and holds.
+ */
+const CHUNK_SIZE = 5;
+
+function chunksOf<T>(arr: T[], size: number): T[][] {
+  if (size <= 0) throw new Error(`chunksOf size must be > 0, got ${size}`);
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+/**
+ * Record a per-email ScanFailure row and log the error. Shared by the
+ * single-email and batch paths in `processEmailBatch`.
+ */
+async function recordExtractionFailure(
+  messageId: string,
+  error: unknown,
+  options: ExtractEmailOptions,
+): Promise<void> {
+  if (options.scanJobId) {
+    await prisma.scanFailure.upsert({
+      where: {
+        scanJobId_gmailMessageId: {
+          scanJobId: options.scanJobId,
+          gmailMessageId: messageId,
+        },
+      },
+      create: {
+        scanJobId: options.scanJobId,
+        schemaId: options.schemaId,
+        gmailMessageId: messageId,
+        phase: "EXTRACTING",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? (error.stack ?? null) : null,
+      },
+      update: {
+        attemptCount: { increment: 1 },
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? (error.stack ?? null) : null,
+      },
+    });
+  }
+
+  logger.error({
+    service: "extraction",
+    operation: "extractEmail.error",
+    schemaId: options.schemaId,
+    scanJobId: options.scanJobId,
+    error,
+    messageId,
+  });
+}
+
+/**
  * Process a batch of emails: fetch full content from Gmail, extract via Gemini.
- * On individual failure: log and continue. Returns aggregate counts.
+ *
+ * Uses batched Gemini calls (CHUNK_SIZE emails per call) to amortize per-request
+ * latency. If a chunk-level call fails (Gemini error, malformed output, length
+ * mismatch), falls back to the per-email path (`extractEmail`) for that chunk
+ * so a single bad apple can't kill the batch.
+ *
+ * Exclusion-rule matches short-circuit before Gemini and are handled via the
+ * per-email `extractEmail` path (cheap DB-only upsert, no AI cost).
+ *
+ * On individual failure: log + ScanFailure row and continue. Returns aggregate counts.
  */
 export async function processEmailBatch(
   gmailMessageIds: string[],
@@ -659,6 +759,7 @@ export async function processEmailBatch(
   },
 ): Promise<ProcessBatchResult> {
   const gmailClient = injectedClient ?? new GmailClient(accessToken);
+  const { schemaId, userId } = options;
   let processed = 0;
   let excluded = 0;
 
@@ -672,67 +773,136 @@ export async function processEmailBatch(
   });
   const existingIds = new Set(existingEmails.map((e) => e.gmailMessageId));
 
+  // Phase 1: Gmail fetch + exclusion-rule partitioning.
+  // Anything that hits an exclusion rule (or already exists, or fails to
+  // fetch) is handled individually and does NOT enter the batch Gemini call.
+  const batchCandidates: GmailMessageFull[] = [];
+
   for (const messageId of gmailMessageIds) {
-    // Skip already-extracted emails — avoids redundant Gmail fetch, Gemini call, and count inflation
     if (existingIds.has(messageId)) {
-      processed++; // Count as processed (already done)
+      processed++;
       continue;
     }
 
+    let fullMessage: GmailMessageFull;
     try {
-      // Fetch full email with pacing (100ms delay between calls)
-      const fullMessage = await gmailClient.getEmailFullWithPacing(messageId, 100);
-
-      const result = await extractEmail(
-        fullMessage,
-        schemaContext,
-        entities,
-        exclusionRules,
-        options,
-      );
-
-      if (result.excluded) {
-        excluded++;
-      } else {
-        processed++;
-      }
+      fullMessage = await gmailClient.getEmailFullWithPacing(messageId, 100);
     } catch (error) {
-      // Record the per-email failure as a ScanFailure row so
-      // computeScanMetrics can derive failedEmails on demand. Idempotent
-      // via the (scanJobId, gmailMessageId) unique index — a retry of the
-      // same batch just bumps attemptCount and refreshes errorMessage.
-      if (options.scanJobId) {
-        await prisma.scanFailure.upsert({
-          where: {
-            scanJobId_gmailMessageId: {
-              scanJobId: options.scanJobId,
-              gmailMessageId: messageId,
-            },
-          },
-          create: {
-            scanJobId: options.scanJobId,
-            schemaId: options.schemaId,
-            gmailMessageId: messageId,
-            phase: "EXTRACTING",
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? (error.stack ?? null) : null,
-          },
-          update: {
-            attemptCount: { increment: 1 },
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? (error.stack ?? null) : null,
-          },
-        });
-      }
+      await recordExtractionFailure(messageId, error, options);
+      continue;
+    }
 
-      logger.error({
-        service: "extraction",
-        operation: "extractEmail.error",
-        schemaId: options.schemaId,
-        scanJobId: options.scanJobId,
-        error,
-        messageId,
+    // Check exclusion rule cheaply — if matched, use the per-email path
+    // (it does a DB-only upsert without calling Gemini).
+    const exclusionCheck = matchesExclusionRule(
+      {
+        senderEmail: fullMessage.senderEmail,
+        senderDomain: fullMessage.senderDomain,
+        subject: fullMessage.subject,
+        threadId: fullMessage.threadId,
+      },
+      exclusionRules,
+    );
+
+    if (exclusionCheck.matched) {
+      try {
+        const result = await extractEmail(
+          fullMessage,
+          schemaContext,
+          entities,
+          exclusionRules,
+          options,
+        );
+        if (result.excluded) excluded++;
+        else processed++;
+      } catch (error) {
+        await recordExtractionFailure(messageId, error, options);
+      }
+      continue;
+    }
+
+    batchCandidates.push(fullMessage);
+  }
+
+  if (batchCandidates.length === 0) {
+    return { processed, excluded };
+  }
+
+  // Phase 2: Chunked batch Gemini calls with per-email fallback quarantine.
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const chunk of chunksOf(batchCandidates, CHUNK_SIZE)) {
+    const extractionInputs = chunk.map(toExtractionInput);
+    const prompt = buildBatchExtractionPrompt(extractionInputs, schemaContext, today);
+
+    let parsedResults: ExtractionResult[] | null = null;
+    let aiResult: Awaited<ReturnType<typeof callGemini>> | null = null;
+
+    try {
+      aiResult = await callGemini({
+        model: GEMINI_MODEL,
+        system: prompt.system,
+        user: prompt.user,
+        schemaId,
+        userId,
+        operation: "extraction",
       });
+      parsedResults = parseBatchExtraction(aiResult.content, chunk.length);
+    } catch (err) {
+      logger.warn({
+        service: "extraction",
+        operation: "extraction.batch.fallback",
+        schemaId,
+        chunkSize: chunk.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      parsedResults = null;
+    }
+
+    if (parsedResults && aiResult) {
+      // Amortize AI cost per email in the chunk so cost logs stay per-email.
+      const perEmailCost = {
+        inputTokens: Math.round(aiResult.inputTokens / chunk.length),
+        outputTokens: Math.round(aiResult.outputTokens / chunk.length),
+        latencyMs: Math.round(aiResult.latencyMs / chunk.length),
+      };
+
+      for (let i = 0; i < chunk.length; i++) {
+        const msg = chunk[i];
+        const parsed = parsedResults[i];
+        try {
+          const result = await persistExtractedEmail(
+            msg,
+            parsed,
+            entities,
+            options,
+            perEmailCost,
+          );
+          if (result.excluded) excluded++;
+          else processed++;
+        } catch (error) {
+          await recordExtractionFailure(msg.id, error, options);
+        }
+      }
+      continue;
+    }
+
+    // Quarantine fallback: run each email through the single-email
+    // `extractEmail` path so one bad apple doesn't poison the whole chunk.
+    for (const msg of chunk) {
+      try {
+        const result = await extractEmail(
+          msg,
+          schemaContext,
+          entities,
+          exclusionRules,
+          options,
+        );
+        if (result.excluded) excluded++;
+        else processed++;
+      } catch (error) {
+        await recordExtractionFailure(msg.id, error, options);
+      }
     }
   }
 
