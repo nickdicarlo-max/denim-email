@@ -13,6 +13,7 @@ import { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { MODEL_PRICING } from "@/lib/ai/cost-constants";
 import { logAICost } from "@/lib/ai/cost-tracker";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { logger } from "@/lib/logger";
 import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
@@ -255,7 +256,7 @@ async function synthesizeCaseImpl(
     model: "claude-sonnet-4-6",
     system: prompt.system,
     user: prompt.user,
-    maxTokens: 4096,
+    maxTokens: ONBOARDING_TUNABLES.synthesis.maxTokens,
     schemaId,
     operation: "synthesis",
   });

@@ -71,7 +71,7 @@ export async function runDiscoveryQueries(
   // Run queries in parallel with bounded concurrency. Gmail API calls are
   // independent per query; the `remaining` check is non-atomic but cheap over-fetch
   // is trimmed by the final Set size + cap. Dedup preserved via the shared Set.
-  const limit = pLimit(3);
+  const limit = pLimit(ONBOARDING_TUNABLES.discovery.queryConcurrency);
   await Promise.all(
     queries.map(({ query }) =>
       limit(async () => {

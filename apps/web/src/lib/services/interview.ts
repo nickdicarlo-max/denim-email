@@ -15,6 +15,7 @@ import type {
 import { ExternalAPIError } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
+import { CLUSTERING_TUNABLES } from "@/lib/config/clustering-tunables";
 import { logger } from "@/lib/logger";
 import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
@@ -463,15 +464,15 @@ export async function persistSchemaRelations(
     })),
   ];
 
-  // Cap mergeThreshold at the mathematically achievable ceiling.
-  // Without sender-entity match, max score = subjectMatchScore + tagMatchScore
-  // (typically 20 + 15 = 35). A threshold above 40 makes merges unreachable.
+  // Cap mergeThreshold at the mathematically achievable ceiling. See
+  // `clustering-tunables.ts` for the scoring math and the rationale
+  // behind the ceiling/clamp values (#59).
   const clusteringConfig = hypothesis.clusteringConfig as unknown as Record<string, unknown>;
   if (
     typeof clusteringConfig.mergeThreshold === "number" &&
-    clusteringConfig.mergeThreshold > 40
+    clusteringConfig.mergeThreshold > CLUSTERING_TUNABLES.validator.unreachableCeiling
   ) {
-    clusteringConfig.mergeThreshold = 30;
+    clusteringConfig.mergeThreshold = CLUSTERING_TUNABLES.validator.clampReachableValue;
   }
 
   const runWork = async (tx: Prisma.TransactionClient) => {

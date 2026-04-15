@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { OnboardingFlow } from "@/components/onboarding/flow";
 import { OnboardingProgress } from "@/components/onboarding/progress";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
 import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 
@@ -28,7 +29,7 @@ import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
  *     there's no React warning to chase.
  */
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = ONBOARDING_TUNABLES.ui.pollIntervalMs;
 
 export default function OnboardingObserverPage() {
   const router = useRouter();

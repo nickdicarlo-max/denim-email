@@ -232,8 +232,7 @@ async function persistExtractedEmail(
   const senderIsKnownEntity = senderEntityMatch !== null;
 
   // 3b. Log when a known-entity email bypasses the relevance gate
-  const RELEVANCE_THRESHOLD = 0.4;
-  if (senderIsKnownEntity && parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+  if (senderIsKnownEntity && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
     logger.info({
       service: "extraction",
       operation: "relevanceGateBypass",
@@ -246,7 +245,7 @@ async function persistExtractedEmail(
 
   // 3c. Relevance gate: reject emails that don't connect to user-input entities
   // Known entities bypass — their emails are always relevant by definition.
-  if (!senderIsKnownEntity && parsed.relevanceScore < RELEVANCE_THRESHOLD) {
+  if (!senderIsKnownEntity && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
     const email = await prisma.email.upsert({
       where: {
         schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
@@ -787,7 +786,10 @@ export async function processEmailBatch(
 
     let fullMessage: GmailMessageFull;
     try {
-      fullMessage = await gmailClient.getEmailFullWithPacing(messageId, 100);
+      fullMessage = await gmailClient.getEmailFullWithPacing(
+        messageId,
+        ONBOARDING_TUNABLES.extraction.gmailPacingMs,
+      );
     } catch (error) {
       await recordExtractionFailure(messageId, error, options);
       continue;

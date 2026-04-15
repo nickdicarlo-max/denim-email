@@ -17,7 +17,7 @@ import { runOnboarding, runOnboardingPipeline } from "./onboarding";
 import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runScan } from "./scan";
 
-const BATCH_SIZE = 20;
+const BATCH_SIZE = ONBOARDING_TUNABLES.extraction.fanOutBatchSize;
 
 /**
  * Shared onFailure handler for downstream scan-pipeline functions

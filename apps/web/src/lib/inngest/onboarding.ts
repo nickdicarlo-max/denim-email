@@ -37,7 +37,7 @@ import {
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
 
-const SCAN_WAIT_TIMEOUT = "20m";
+const SCAN_WAIT_TIMEOUT = ONBOARDING_TUNABLES.pipeline.scanWaitTimeout;
 
 // ---------------------------------------------------------------------------
 // Function A: runOnboarding

@@ -42,6 +42,8 @@ export const ONBOARDING_TUNABLES = {
   discovery: {
     lookback: "56d",
     maxTotalEmails: 200,
+    /** Parallel Gmail search queries during discovery (#81). Was `pLimit(3)`. */
+    queryConcurrency: 3,
   },
 
   /**
@@ -65,6 +67,25 @@ export const ONBOARDING_TUNABLES = {
      * time, so total wall ≈ (batches / concurrency) × perBatchLatency.
      */
     batchConcurrency: 8,
+    /**
+     * Emails per fan-out Inngest event (was `BATCH_SIZE=20` in
+     * functions.ts). 200 emails ÷ 20 = 10 events; each event is one
+     * extractBatch invocation that chunks into Gemini calls of
+     * `chunkSize`.
+     */
+    fanOutBatchSize: 20,
+    /**
+     * Gmail per-fetch pacing inside `getEmailFullWithPacing` (ms). 215
+     * fetches × 100ms = 21.5s serial delay on a 200-email run. Lower
+     * this cautiously — Gmail throttles aggressively on burst.
+     */
+    gmailPacingMs: 100,
+    /**
+     * Gemini-produced relevance score threshold for the known-entity
+     * bypass gate. Below this, emails from known entities are still
+     * kept (logged as `relevanceGateBypass`). Raise to be stricter.
+     */
+    relevanceThreshold: 0.4,
   },
 
   synthesis: {
@@ -74,5 +95,32 @@ export const ONBOARDING_TUNABLES = {
      * and total wall ≈ (cases / concurrency) × perCaseLatency.
      */
     caseConcurrency: 4,
+    /**
+     * Claude output token budget per case. 4096 hit its ceiling on a
+     * 22-email maintenance thread and returned truncated JSON (#87).
+     * 6144 gives ~50% headroom; Sonnet 4.6 supports up to 8192.
+     */
+    maxTokens: 6144,
+  },
+
+  /**
+   * Pipeline-level timeouts that gate how long one stage can take
+   * before the orchestrator treats it as stuck.
+   */
+  pipeline: {
+    /**
+     * Function B's `waitForEvent("scan.completed")` timeout. If the
+     * scan pipeline doesn't emit `scan.completed` within this window,
+     * onboarding fails open. Inngest duration string format.
+     */
+    scanWaitTimeout: "20m",
+  },
+
+  /**
+   * Client-side polling cadence for the onboarding scan-progress page.
+   * Paired with the live case-count counter (#82).
+   */
+  ui: {
+    pollIntervalMs: 2000,
   },
 } as const;
