@@ -308,6 +308,45 @@ Implications that surface only at volume:
 
 ---
 
+## 2026-04-16: Config-as-spec still needs runtime validation before locking
+
+**Context:** Entity Robustness Phase 1 produced 3 locked per-domain spec files (`property.md`, `school_parent.md`, `agency.md`) under `docs/domain-input-shapes/`. Each contains a Stage 1 Gmail keyword list that will drive domain detection in the forthcoming fast-discovery onboarding rebuild (issue #95). The agency keyword list was drafted from consulting-industry formal vocabulary (invoice, scope, deliverable, retainer, kickoff, SOW, milestone, etc.) and shipped with a `Status: DRAFT — Nick to review` marker. Before flipping to LOCKED, we validated against a local sample of 417 real Gmail messages from Nick's inbox.
+
+### Discovery 9: The drafted agency keyword list had 0% recall on known-agency senders
+
+**Symptom:** Running the draft keyword list against 19 emails from 3 known-agency senders (Portfolio Pro Advisors × 2 contacts, Stallion × 1 contact) produced **0/19 subject matches**. Every single known-agency email would have been filtered out by Stage 1's keyword gate.
+
+**Root cause:** The gap between drafted vocabulary and *observed* vocabulary. The draft list captured how consulting is *described on a website* (commercial, contractual, project-lifecycle terms). Actual client traffic uses *working* vocabulary — "AI Session #2", "V7 Update - Teams Call", "Stallion slides", "Few documents", "Intermediate Round - Demo File To Use", "Rhodes Data Test Sample". The formal list and the working list overlap almost not at all.
+
+**Fix:** Extended the agency list with 10 working-vocabulary terms (`call, meeting, session, update, slides, documents, demo, round, initiative, project`). Post-extension:
+- Per-email subject recall: 0% → 42%
+- And — more decisively — both client domains now land in Stage 1's top-5 domain aggregation (ranks 2 and 4 of 10 candidates in the sample).
+
+The domain-aggregation result is the one that matters. Stage 1's job is not to match every email; it's to surface the sender domain. A few keyword hits per domain is enough for the domain to rank.
+
+**Rule exposed:** **Configuration that reads like a spec (keyword lists, regex patterns, threshold values) still needs to be validated against real production-shaped data before it's locked.** A markdown table of "Stage 1 keywords" reviewed by a domain expert is not sufficient evidence — the expert's intuition reflects formal vocabulary, and the real data reflects informal vocabulary. The gap between them is invisible until you run the filter.
+
+**The validation workflow** (applied to the agency list, re-usable for every future domain):
+
+1. **Collect an oracle.** A small list of senders the user confirms are in-scope for the domain. For agency, Nick named 3 addresses across 2 client domains. The oracle does not need to be large; it needs to be ground truth.
+2. **Collect a realistic inbox sample.** The `Denim_Samples_Individual/` folder holds 417 Gmail JSON files (`payload.headers`, `payload.parts[].body.data` as UTF-8 byte arrays, `labelIds`). Gitignored — local-only, because it contains real PII.
+3. **Per-sender recall script.** Walks the sample, filters to the oracle senders, counts per-keyword subject matches against each sender's emails. Reports N/N matched, top keywords, and a list of *missed* subjects so the reviewer can eyeball what vocabulary is absent. The miss list is where the signal comes from — it reveals the gap between drafted and observed vocabulary in a glance.
+4. **Stage 1 aggregation simulation.** Walks the sample with the full Stage 1 filter chain applied (`-category:promotions`, drop `PUBLIC_PROVIDERS`, drop user's own domain), groups keyword-matching emails by sender domain, reports top-10 domains by filtered count, and reports the **rank** of the target domains. This is the question that actually matters: does the domain land in top-5?
+
+**The decision rule:** flip `DRAFT → LOCKED` only when both are true —
+- Per-email recall is meaningful (>30%) on the oracle senders, AND
+- Oracle domains rank in Stage 1's top-5 after filtering.
+
+Per-email recall alone is insufficient. A domain can rank top-5 with only modest per-email recall if the domain has enough total traffic.
+
+**Why the validator scripts stay untracked:** they embed specific business contacts and reference a gitignored sample folder. The *result* of the validation (recall numbers, domain ranks) is captured in the `LOCKED` marker inside the spec file so the validation trail survives even without the scripts. Future domain validation (construction, legal, general, company-internal per issue #94) re-writes the scripts rather than depending on artifacts in the repo.
+
+**Meta:** This is a config-correctness analog of Bug 1, Bug 5, and Bug 6 — the test suite cannot catch this class of mistake because there is no test suite for a markdown file. The only defense is this manual validation gate, applied preventively before the spec file is treated as authoritative by downstream code.
+
+**Rule for Phase 2+ of the fast-discovery rebuild (issue #95):** the Stage 1 keyword list must be read from the spec files at runtime AND the same validation harness must be runnable against any fresh user inbox during onboarding, so a user whose vocabulary diverges from the lab sample can be detected and flagged before the onboarding silently misses their domains.
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
@@ -364,6 +403,22 @@ matches, and the workflow times out.
 **Check:** For every `waitForEvent` with a `match` clause, verify the matched field
 exists on both the trigger event schema AND the awaited event schema. If the field
 names differ between events, you can't use `match` — use `if` instead.
+
+### 6. "Spec reviewed, not spec validated"
+
+If a config artifact (keyword list, regex pattern, threshold value, decision table)
+is drafted from domain expertise and reviewed by eye, it hasn't been validated. The
+expert's intuition reflects formal/deliberate vocabulary; real traffic reflects
+informal/working vocabulary. The gap is invisible until you run the filter against
+real production-shaped data.
+
+**Check:** Before flipping any `Status: DRAFT` marker to `LOCKED` on a config-as-spec
+artifact, collect an oracle (known-good inputs), run the draft against a realistic
+sample, and measure two numbers: (a) per-input recall on the oracle, and (b) the rank
+of the oracle's identifying attribute (sender domain, entity name, etc.) in whatever
+aggregate the config produces. The LOCKED marker should carry both numbers so the
+validation trail survives. See the 2026-04-16 agency keyword-list entry above for
+the canonical version of this workflow.
 
 ---
 
