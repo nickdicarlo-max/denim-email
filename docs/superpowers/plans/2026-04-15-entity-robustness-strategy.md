@@ -34,9 +34,30 @@ Both problems are symptoms of **Claude generating alias lists without domain-awa
 
 Right now the hypothesis prompt relies on Claude's general instincts to produce alias lists, and on Gemini's stochastic rule-following to surface new primaries. Both layers are under-specified. **Domain-aware rules at both layers fix both problems simultaneously.**
 
+## Update 2026-04-16
+
+Phase 1 strategy session completed. The work clarified that the destination of this entity-robustness effort is the **staged fast-discovery onboarding flow** (Control Surface pattern). The 6 cross-domain principles surfaced during Phase 1 — particularly Principle 5 (validation feedback loop) and Principle 6 (WHO-discovery speed constraint) — are the design DNA of that rebuild.
+
+This plan's Phase 2-5 (prompt rewrites for hypothesis + extraction + Stage 4b trust gate + eval) remain valid but are **reframed**: they now improve the **deep-scan stage** of the new flow (~5 min, background, scanned after the user has already seen value at confirmation screens). They are no longer the primary user-experience lever.
+
+The headline architectural work is tracked in **issue #95** (Epic: Staged fast-discovery onboarding rebuild).
+
+**Per-domain spec files** (the locked entity rules + UI copy + Stage 1 keyword lists + Stage 2 entity-shape regex + dedup rules):
+- `docs/domain-input-shapes/property.md`
+- `docs/domain-input-shapes/school_parent.md`
+- `docs/domain-input-shapes/agency.md`
+
+The cross-domain preamble (6 principles + fast-discovery destination + pairing principle) is reproduced verbatim at the top of each per-domain file AND below as a new section in this plan.
+
+See also: design spec at `docs/superpowers/specs/2026-04-16-entity-robustness-phase1-design.md`.
+
+---
+
 ## Proposed approach — phased
 
 ### Phase 1 — Strategy session (documentation, no code)
+
+> **Status: COMPLETE 2026-04-16.** Locked deliverables: `docs/domain-input-shapes/property.md`, `docs/domain-input-shapes/school_parent.md`, `docs/domain-input-shapes/agency.md`. Construction, legal, general, and company-internal domains tracked under issue #94 (remaining-domain interviews).
 
 **Scope:** start with 3 domains where Nick has strong intuition + live data. The other 3 can be filled in later (`construction`, `legal`, `general`).
 
@@ -80,6 +101,8 @@ Each file is the filled table plus short preamble about the domain's email inbox
 
 ### Phase 2 — Revised hypothesis prompt (alias generation)
 
+> *Reframed 2026-04-16: this work improves the deep-scan stage of the fast-discovery flow (background, not user-visible). Still useful; no longer the primary UX lever. See update block above.*
+
 Update `packages/ai/src/prompts/interview-hypothesis.ts` to:
 
 - Take domain as a strong signal, not just a tag.
@@ -96,6 +119,8 @@ Measurable success: the generated hypothesis's alias list for `3910 Bucknell` in
 
 ### Phase 3 — Revised extraction prompt (detection rules)
 
+> *Reframed 2026-04-16: same as Phase 2 — deep-scan improvement, not primary UX lever.*
+
 Update `packages/ai/src/prompts/extraction.ts` to:
 
 - Replace rule #4 with a **domain-aware** two-part rule:
@@ -106,6 +131,8 @@ Update `packages/ai/src/prompts/extraction.ts` to:
 This lets Stage 4b fire reliably — Gemini is INSTRUCTED to invent new-primary candidates that match the domain shape, not prohibited from it.
 
 ### Phase 4 — Tighten Stage 4b trust gate
+
+> *Reframed 2026-04-16: same as Phase 2 — deep-scan improvement, not primary UX lever.*
 
 Currently (`apps/web/src/lib/services/extraction.ts:539`), Stage 4b fires if ANY of three signals are present:
 - Sender is an ambiguous SECONDARY (≥2 associated primaries)
@@ -119,6 +146,8 @@ With the revised prompt, Gemini will return more new-primary candidates. The tru
 Decide empirically after Phase 3 measurement.
 
 ### Phase 5 — Eval pass + re-run Property
+
+> *Reframed 2026-04-16: still measures deep-scan improvements correctly. Time-to-first-finding (Stages 1+2 = ~11 sec target) becomes the primary user-visible metric, tracked under issue #95.*
 
 Expected outcomes vs current run baseline:
 - Alias list for `3910 Bucknell` has 3-4 entries, all compound, no single words → Bucknell University emails go back to being excluded as `relevance:low`. **Target: ≤1 Bucknell University email attached to any 3910 Bucknell case (vs current 8).**
@@ -145,3 +174,33 @@ For this plan to be called "done":
 - Don't propose solutions without evidence from the database. Every claim in this plan is backed by a DB forensic query against `01KP98PM2BNXE7D8PR7ZM1R39H` or `01KP8MRJQJXF302KP19NB5RAVR`.
 - Don't optimize prematurely. Rule #4's current wording exists for a reason (hallucination guard). Replace it with something more specific, not with nothing.
 - Don't pretend the system is learning. It's not. Every schema starts fresh from hypothesis + validation. Domain-aware rules in the prompts are the closest thing to "memory" we have.
+
+
+---
+
+## Cross-Domain Preamble (added 2026-04-16)
+
+The following preamble is the foundation that the per-domain spec files build on. It is reproduced verbatim here AND at the top of each `docs/domain-input-shapes/<domain>.md` file. Source-of-truth design: `docs/superpowers/specs/2026-04-16-entity-robustness-phase1-design.md`.
+
+### The destination
+
+Onboarding is a 3-stage flow modeled on **The Control Surface** (Nick's other product, NOT this repo):
+
+1. **Domain confirmation (~5 sec)** — Gmail `format: 'metadata'` query with a per-domain keyword list, parallel `Promise.all` of ~500 From-header fetches, group by sender domain, drop generic providers (`@gmail.com` etc.), top 3. **Zero AI.** Pure regex + counting. User confirms the relevant domain(s).
+2. **Entity confirmation (~6 sec)** — `from:*@<confirmed-domain>` query in parallel, regex-extract entity shapes from subjects, Levenshtein dedup, top 20. **Zero AI.** User confirms entities.
+3. **Deep scan (~5 min, background)** — Gemini extraction + Claude clustering + case synthesis on confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
+
+The per-domain spec files specify what makes Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.**
+
+### The 6 principles
+
+1. **Asymmetric axes.** PRIMARY = WHATs (the things being managed); SECONDARY = WHOs (email-addressable interactors). WHO signal is cheap and reliable (headers); WHAT signal is harder (subject regex + content parsing).
+2. **Time-durability.** A PRIMARY exists without a date; a CASE is always tied to a date/event. Test: *"Can this exist without a date attached?"*
+3. **SECONDARY = email addresses, not names.** Names are search hints; addresses are identity. Routing for SECONDARIES happens on `From:`/`To:`/`Cc:` only — never on body text. A name appearing in body or signature is NOT a SECONDARY routing signal.
+4. **Compounding-context inclusion.** No single signal confirms entity membership. Candidates become real entities when multiple signals align (user-seed + content-about-confirmed-PRIMARY + recurrence + sender-reliability).
+5. **Validation feedback loop.** Seeded-WHO → discovered-PRIMARY → expanded-WHO. The user's typed SECONDARIES validate PRIMARIES; new senders writing about confirmed PRIMARIES become candidate SECONDARIES. This loop IS the architectural reason Stages 1, 2, 3 exist as separate stages.
+6. **Speed constraint on WHO discovery.** <10 seconds for several hundred emails, achieved via metadata-only Gmail fetches + parallel batches + regex/string-math (no AI). Slow AI work is reserved for the deep scan, after the user has already seen value.
+
+### Pairing principle
+
+Every per-domain entity rule ships paired with the UI copy the user sees on the matching screen. A locked PRIMARY/SECONDARY rule for a domain is incomplete without the matching Q1 description, WHAT label/placeholder/helper, and WHO label/placeholder/helper. Mismatched copy silently undoes the rules — see the Consulting run failure where the user typed "Asset Management" instead of the company name because the placeholder said `"Acme Corp rebrand"`.
