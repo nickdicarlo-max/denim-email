@@ -137,7 +137,14 @@
       "Bash(mkdir -p ~/.claude/skills/onboarding-timing)",
       "Bash(cp .claude/skills/onboarding-timing.md ~/.claude/skills/onboarding-timing/SKILL.md)",
       "Bash(mkdir -p ~/.claude/skills/supabase-db)",
-      "Bash(cp .claude/skills/supabase-db.md ~/.claude/skills/supabase-db/SKILL.md)"
+      "Bash(cp .claude/skills/supabase-db.md ~/.claude/skills/supabase-db/SKILL.md)",
+      "Bash(gh label *)",
+      "Bash(git *)",
+      "Bash(python3)",
+      "Bash(awk '/^> ## Cross-Domain Preamble/,/Acme Corp rebrand`\\\\.$/' docs/domain-input-shapes/property.md)",
+      "Bash(awk '/^> ## Cross-Domain Preamble/,/Acme Corp rebrand`\\\\.$/' docs/domain-input-shapes/school_parent.md)",
+      "Bash(sed -n '3,28p' docs/domain-input-shapes/property.md)",
+      "Bash(sed -n '3,28p' docs/domain-input-shapes/school_parent.md)"
     ]
   }
 }

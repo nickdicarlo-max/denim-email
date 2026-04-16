@@ -79,6 +79,14 @@ Phase 1 and Phase 2 verified end-to-end on 4 live runs. One regression surfaced 
 
 Baseline for Phase 3 measurement: Run B = 339.5s scan / 5.6 min end-to-end; Run C = 207.5s scan.
 
+**Session 4 — 2026-04-15 (Phase 4.1 done; 4.2/4.3 deferred pending more testing):**
+
+| Phase / Task | Issue | Commit | Status | Notes |
+|---|---|---|---|---|
+| 4.1 Batch persistSchemaRelations | #63 | `b9c4a41` | ✅ DONE | Landed ad-hoc under a generic commit subject ("feat: progress on E2E testing through phase 3"). The `interview.ts` diff matches the plan's spec: single merged `caseSchema.update`, fingerprint-coalesced `associatedPrimaryIds` updateMany, in-memory auto-promotion (no per-primary findUnique), all writes batched via `Promise.all`, `{ timeout: 15000 }` removed, `opts.tx` atomicity contract (#67) preserved. Round-trips ~47 → ~6 wall-clock awaits. typecheck clean, 159/159 tests pass. Plan step 6 (E2E wall <5s) pending Nick's next Property run. |
+| 4.2 Review screen render time | #73 | — | ⏸️ DEFERRED | Pending more E2E timing data. |
+| 4.3 Scanning UX umbrella close | #25 | — | ⏸️ DEFERRED | Pending 4.2 + visible cohesion of #77 #78 #79 #80 #81 #82 in a fresh E2E. |
+
 ---
 
 ## Verification Protocol (runs between every phase)
