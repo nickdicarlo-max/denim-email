@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-15 (afternoon — Phase 3 CODE-COMPLETE on `feature/perf-quality-sprint`; E2E measurement pending)
+Last updated: 2026-04-16 (Entity Robustness Phase 1 shipped; 3 per-domain spec files + strategy plan reframe committed as `5f1c062`)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -513,6 +513,22 @@ Sprint plan reference: `docs/superpowers/plans/2026-04-14-perf-and-quality-sprin
 3. **If #91 clean + #88 clean (extraction ~50s):** dispatch **Phase 4.1 (#63)** — batch `persistSchemaRelations`
 4. **If regressions:** bisect across today's 8 commits — relevance-gate expansion and routing swap are the risk surface
 5. **If timing on Function A is still slow:** Phase 4.2 (#73) review-screen investigation using `/onboarding-timing`
+
+## 2026-04-16 Session — Entity Robustness Phase 1 Complete
+
+Phase 1 of the entity-robustness work shipped: 3 locked per-domain spec files (property, school_parent, agency) under `docs/domain-input-shapes/`, with cross-domain preamble (6 principles + staged fast-discovery destination from the Control Surface pattern) reproduced verbatim across all three. Strategy plan `docs/superpowers/plans/2026-04-15-entity-robustness-strategy.md` got an additive update — Phase 1 stamped COMPLETE, Phases 2-5 reframed as deep-scan improvements (no longer the primary UX lever). Yesterday's session log marked SUPPLANTED.
+
+The session's substantive shift: the destination of all entity-robustness work is now explicitly the **staged fast-discovery onboarding flow** modeled on Nick's Control Surface product (~5s domain confirm + ~6s entity confirm + background deep scan). Per Nick: *"this isn't a change in direction, it's a clarification."*
+
+Issues filed: **#94** (complete remaining-domain interviews — construction, legal, general, company-internal), **#95** (Epic: staged fast-discovery onboarding rebuild — collapses 4 yesterday-follow-ups into a single epic), **#96** (domain-shape registry refactor), **#97** (home-renovation single-topic schema, future), **#98** (company-internal Q1 option, future).
+
+Spec: `docs/superpowers/specs/2026-04-16-entity-robustness-phase1-design.md`. Implementation plan: `docs/superpowers/plans/2026-04-16-entity-robustness-phase1-implementation.md`. Two commits on `feature/perf-quality-sprint`: `1a2e71d` (spec + supplanted stamp) and `5f1c062` (3 per-domain spec files + plan reframe).
+
+### Next action on resume
+
+1. Nick reviews the Stage 1 keyword lists in `school_parent.md` and `agency.md` against his real inbox; flips the `Status: DRAFT — Nick to review` markers to locked once validated.
+2. With Phase 1 closed, dispatch issue #95 to the writing-plans skill for the staged fast-discovery rebuild — the larger architectural effort.
+3. Or, if Nick wants to finish per-domain coverage first: dispatch issue #94 (remaining-domain interviews) using the same brainstorming flow that produced today's locked files.
 
 ## What's Next
 
