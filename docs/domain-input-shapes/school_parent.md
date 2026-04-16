@@ -50,7 +50,7 @@ The user is a parent (or guardian, grandparent, etc.) coordinating one or more c
 
 ## 3. Stage 1 — Domain Discovery (~5 sec)
 
-> **Status: DRAFT — Nick to review.** Stage 1 keyword list is a Claude-drafted starting point that needs Nick's review against his real inbox before being treated as locked.
+> **Status: LOCKED 2026-04-16.** Keyword list reviewed against Nick's real inbox and confirmed sufficient.
 
 Discovers the schools, activity platforms, and care-provider organizations that touch the user's children. In contrast to property (where one or two domains usually dominate), school_parent users typically have 5-15 relevant domains — a school district, multiple activity platforms (TeamSnap, GameChanger, Class Dojo), a religious organization, and a few medical/therapy providers.
 
@@ -87,7 +87,7 @@ subject:("practice" OR "game" OR "tournament" OR "schedule" OR "registration"
 
 ## 4. Stage 2 — Entity Discovery (~6 sec)
 
-> **Status: DRAFT — Nick to review.** Two-pattern entity extraction is structurally novel for this codebase; rules need real-inbox validation.
+> **Status: LOCKED 2026-04-16.** Nick reviewed the two-pattern approach (institutions + activities/teams) and approved.
 
 Given confirmed Stage-1 domains, extract candidate school/activity/team/provider entities from subjects.
 

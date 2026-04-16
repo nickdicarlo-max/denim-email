@@ -50,7 +50,7 @@ The user works at an agency or consulting firm that serves external client compa
 
 ## 3. Stage 1 — Domain Discovery (~5 sec)
 
-> **Status: DRAFT — Nick to review.** Stage 1 keyword list is a Claude-drafted starting point that needs Nick's review against his real inbox before being treated as locked.
+> **Status: LOCKED 2026-04-16.** Keyword list extended after validation against a local inbox sample (19 emails from 3 known-agency senders across two client domains). Original formal-consulting vocabulary produced 0/19 subject-match recall; the working-vocabulary additions (`call, meeting, session, update, slides, documents, demo, round, initiative, project`) raised per-email recall to 42% AND, more importantly, both client domains now land in the Stage 1 top-5 aggregation (ranks 2 and 4 of 10 candidate domains in the sample).
 
 Discovers the **client domains** the user actively corresponds with. In the agency mental model, every client = its own non-user, non-generic email domain. Stage 1 separates noise (newsletters, internal threads, generic providers) from signal (`@<client>.com` domains the user emails frequently).
 
@@ -60,14 +60,17 @@ Discovers the **client domains** the user actively corresponds with. In the agen
 subject:("invoice" OR "scope" OR "deliverable" OR "review" OR "deck"
   OR "proposal" OR "contract" OR "retainer" OR "kickoff" OR "status"
   OR "deadline" OR "agreement" OR "RFP" OR "SOW" OR "milestone"
-  OR "feedback" OR "approval" OR "draft")
+  OR "feedback" OR "approval" OR "draft"
+  OR "call" OR "meeting" OR "session" OR "update" OR "slides"
+  OR "documents" OR "demo" OR "round" OR "initiative" OR "project")
   -category:promotions after:{12_months_ago}
 ```
 
-**Why these keywords (rationale for Nick's review):**
+**Why these keywords:**
 - Commercial/contract: `invoice, scope, deliverable, contract, retainer, agreement, RFP, SOW`
 - Project lifecycle: `kickoff, milestone, deadline, status`
 - Deliverable language: `deck, draft, review, proposal, feedback, approval`
+- Working vocabulary (added 2026-04-16 post-validation against Nick's sample inbox — the formal list alone had 0/19 recall on known-agency senders): `call, meeting, session, update, slides, documents, demo, round, initiative, project`
 
 **Fetch shape:** identical to property/school — up to 500 messages, single `Promise.all` batch, no bodies.
 
