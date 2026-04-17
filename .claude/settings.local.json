@@ -144,7 +144,10 @@
       "Bash(awk '/^> ## Cross-Domain Preamble/,/Acme Corp rebrand`\\\\.$/' docs/domain-input-shapes/property.md)",
       "Bash(awk '/^> ## Cross-Domain Preamble/,/Acme Corp rebrand`\\\\.$/' docs/domain-input-shapes/school_parent.md)",
       "Bash(sed -n '3,28p' docs/domain-input-shapes/property.md)",
-      "Bash(sed -n '3,28p' docs/domain-input-shapes/school_parent.md)"
+      "Bash(sed -n '3,28p' docs/domain-input-shapes/school_parent.md)",
+      "Bash(kill %1)",
+      "Bash(pkill -f \"find /\")",
+      "Bash(awk -F: '{print $1, $2}')"
     ]
   }
 }
