@@ -209,8 +209,51 @@ perDomain: Array<{
 
 ---
 
+---
+
+## Task 3.1 — POST /api/onboarding/[schemaId]/domain-confirm (commit TBD — this commit)
+
+### D3.1-1 — Optimistic emit updates outbox row to `EMITTED` on success
+
+**Plan said:**
+
+```typescript
+try {
+  await inngest.send({
+    name: "onboarding.entity-discovery.requested",
+    data: { schemaId, userId },
+  });
+} catch {
+  // Drain cron picks it up within ~1 minute.
+}
+```
+
+Best-effort emit only — no status update on success.
+
+**Shipped:** `.then(() => prisma.onboardingOutbox.update({ status: "EMITTED", emittedAt, attempts: { increment: 1 }, lastAttemptAt }))` chained off the `inngest.send` promise, with a `.catch` that warn-logs the failure. Matches the exact pattern already used by `POST /api/onboarding/[schemaId]` (`route.ts:264-293`) for `onboarding.review.confirmed`.
+
+**Why:** The outbox schema sets `nextAttemptAt @default(now())` (schema.prisma:1190). The drain cron (`drainOnboardingOutbox`) polls `status = "PENDING_EMIT" AND nextAttemptAt <= now()` every minute. If we don't flip the row to EMITTED after a successful optimistic emit, the drain re-emits the same event within ~1 minute on every happy path. The drain's own comment calls this out ("Downstream Inngest functions use `advanceSchemaPhase` CAS guards and no-op when the schema has already moved past the expected `from` phase — so double emission is safe at the workflow layer"), but "safe" ≠ "intended." Double-firing every Stage 2 entity-discovery job is wasted Gmail + compute and noisy logs. The existing POST route avoids it; the plan's sample for Task 3.1 regressed the pattern.
+
+Trade-off: adds a second DB round-trip on the happy path, but it's detached via `void` so it doesn't block the response. Consistent with what ships today for `onboarding.review.confirmed`.
+
+### D3.1-2 — Test mocks reshape from `(global as any).__X` to `vi.hoisted`
+
+**Plan said:** Attach mock state to `(global as any).__updateMany` / `__outboxCreate` / `__findUnique`, reset in `beforeEach`, and thread through `vi.mock` factories that read the globals at call time.
+
+**Shipped:** `const mocks = vi.hoisted(() => ({ findUnique, updateMany, outboxCreate, outboxUpdate, writeStage2ConfirmedDomains, inngestSend }))` — vitest-native pattern. Factories capture `mocks.*` handles directly.
+
+**Why:** Two practical reasons, one correctness reason.
+
+1. **Correctness — `inngest.send` must return a thenable.** The plan's mock `inngest: { send: vi.fn() }` returns `undefined`. The shipped route (per D3.1-1) does `inngest.send(...).then(...)` — calling `.then` on `undefined` throws synchronously. `vi.hoisted` lets us declare `inngestSend: vi.fn(async () => undefined)` cleanly.
+2. **Correctness — outbox `update` mock is needed.** Per D3.1-1 the success path calls `prisma.onboardingOutbox.update`. The plan's mock only exposed `create` inside the tx closure. `vi.hoisted` keeps both handles in one place.
+3. **Style.** `vi.hoisted` is the officially supported way to share mock state across factories since vitest 0.33+. Using `(global as any).__X` works but trips the project's Biome `noExplicitAny` rule and adds ceremony (beforeEach re-assignment, type casts on every access). Roughly 30 lines shorter and lint-clean.
+
+The three assertions the plan called for (400 on invalid body, 409 on CAS count=0, 200 + outbox + emit on success) are all preserved.
+
+---
+
 ## Open items / future tasks
 
-All Phase 2 primitives + wrapper shipped. Phase 3 (review-screen routes + components) is next.
+Task 3.1 shipped. Phase 3 Task 3.2 (POST /entity-confirm) is next.
 
 Append new sections here as tasks land.
