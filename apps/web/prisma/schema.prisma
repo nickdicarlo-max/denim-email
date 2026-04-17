@@ -1034,7 +1034,14 @@ enum ScanPhase {
 // phase to NULL once AWAITING_REVIEW is confirmed and the schema goes live.
 enum SchemaPhase {
   PENDING
+  // Legacy — kept during Phase 0-3, removed in Phase 6
   GENERATING_HYPOTHESIS
+  // New fast-discovery phases
+  DISCOVERING_DOMAINS
+  AWAITING_DOMAIN_CONFIRMATION
+  DISCOVERING_ENTITIES
+  AWAITING_ENTITY_CONFIRMATION
+  // Kept
   FINALIZING_SCHEMA
   PROCESSING_SCAN
   AWAITING_REVIEW
