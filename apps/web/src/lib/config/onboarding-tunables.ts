@@ -60,8 +60,13 @@ export const ONBOARDING_TUNABLES = {
     topNEntities: 20,
     /** Levenshtein threshold for short strings (≤6 chars). */
     levenshteinShortThreshold: 1,
-    /** Levenshtein threshold for longer strings. */
-    levenshteinLongThreshold: 2,
+    /**
+     * Levenshtein threshold for longer strings. 3 catches common abbreviation
+     * expansions within same-key buckets (e.g., "Dr" ↔ "Drive", "St" ↔ "Saint")
+     * while staying tight enough to reject "cat" ↔ "dog"-style noise under the
+     * short threshold above.
+     */
+    levenshteinLongThreshold: 3,
     // fetchBatchSize + lookbackDays intentionally omitted — Stage 2 reuses
     // ONBOARDING_TUNABLES.stage1's values. One source of truth, no drift.
   },

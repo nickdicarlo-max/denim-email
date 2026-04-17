@@ -10,8 +10,10 @@ describe("stage1/stage2 tunables", () => {
     expect(ONBOARDING_TUNABLES.stage2.topNEntities).toBe(20);
   });
 
-  it("Levenshtein thresholds match spec (1 short, 2 long)", () => {
+  it("Levenshtein thresholds match spec (1 short, 3 long)", () => {
     expect(ONBOARDING_TUNABLES.stage2.levenshteinShortThreshold).toBe(1);
-    expect(ONBOARDING_TUNABLES.stage2.levenshteinLongThreshold).toBe(2);
+    // 3 catches abbreviation expansions (Dr↔Drive, St↔Saint) within same-key
+    // buckets — validated by dedupByLevenshtein's tests (Task 2.1).
+    expect(ONBOARDING_TUNABLES.stage2.levenshteinLongThreshold).toBe(3);
   });
 });
