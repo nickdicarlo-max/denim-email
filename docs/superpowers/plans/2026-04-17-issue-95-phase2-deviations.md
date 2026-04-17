@@ -252,8 +252,50 @@ The three assertions the plan called for (400 on invalid body, 409 on CAS count=
 
 ---
 
+## Task 3.2 — POST /api/onboarding/[schemaId]/entity-confirm + `persistConfirmedEntities` (commit TBD — this commit)
+
+### D3.2-1 — Optimistic emit flips outbox row to EMITTED on success
+
+**Plan said:**
+
+```typescript
+try {
+  await inngest.send({ name: "onboarding.review.confirmed", data: { schemaId, userId } });
+} catch {
+  // Drain cron retries.
+}
+```
+
+**Shipped:** Same `.then()` → `onboardingOutbox.update({ status: "EMITTED", ... })` pattern from D3.1-1, reused verbatim for `onboarding.review.confirmed`.
+
+**Why:** Same reason as D3.1-1 — the outbox row's `nextAttemptAt @default(now())` makes it drain-eligible immediately, and the drain cron will re-emit within ~1 minute unless we flip to EMITTED on success. The existing `POST /:schemaId` route owned the `onboarding.review.confirmed` event before this task; it already does the EMITTED flip. Adopting the same pattern here keeps the two producers of the same event name consistent.
+
+### D3.2-2 — CAS updateMany also sets `phaseUpdatedAt`
+
+**Plan said:** `data: { phase: "PROCESSING_SCAN" }`.
+
+**Shipped:** `data: { phase: "PROCESSING_SCAN", phaseUpdatedAt: new Date() }`.
+
+**Why:** Matches the pattern already baked into `writeStage2ConfirmedDomains` (`apps/web/src/lib/services/interview.ts:1049-1057`) and the broader conventions in this repo where any `phase` mutation ships with a `phaseUpdatedAt` bump so polling, observability, and timeout detection stay honest. The plan's sample just omitted the field; no reason not to keep it.
+
+### D3.2-3 — 400 test split into two cases (body-shape + reserved-prefix refine)
+
+**Plan said:** Three cases — 400, 409, 200.
+
+**Shipped:** Four cases — two 400s (`{}` body missing `confirmedEntities`; valid body with `@`-prefixed PRIMARY rejected by the Zod `.refine`), plus 409 and 200.
+
+**Why:** The `@`-prefix refine rule is a load-bearing security check (stops a malicious confirm from squatting on server-derived SECONDARY slots via the `(schemaId, identityKey, type)` unique constraint). Exercising both Zod paths in tests prevents a regression where the refine silently gets dropped or inverted. Strictly additive vs. the plan.
+
+### D3.2-4 — Test mocks use `vi.hoisted` pattern (inherits D3.1-2)
+
+**Plan said:** "Mirror Task 3.1's route test file structure."
+
+**Shipped:** Mirrored the **shipped** Task 3.1 test style (`vi.hoisted` + typed mock handles), not the plan's `(global as any).__X` sample. Same three justifications from D3.1-2 apply: `inngest.send` must return a thenable for the EMITTED `.then()` chain, `outboxUpdate` needs a mock handle, and `vi.hoisted` is lint-clean.
+
+---
+
 ## Open items / future tasks
 
-Task 3.1 shipped. Phase 3 Task 3.2 (POST /entity-confirm) is next.
+Tasks 3.1 + 3.2 shipped. Phase 3 Task 3.3 (GET polling extensions for Stage 1/2 payloads) is next.
 
 Append new sections here as tasks land.

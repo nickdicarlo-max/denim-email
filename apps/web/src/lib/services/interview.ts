@@ -1056,3 +1056,67 @@ export async function writeStage2ConfirmedDomains(
   });
   return count;
 }
+
+export interface ConfirmedEntity {
+  displayLabel: string;
+  identityKey: string;
+  kind: "PRIMARY" | "SECONDARY";
+  secondaryTypeName?: string;
+}
+
+/**
+ * Persist user-confirmed entities from the Stage 2 review screen (issue #95).
+ *
+ * Uses createMany(skipDuplicates) + per-label updateMany instead of a per-row
+ * upsert loop. At 30 entities, the loop cost 30 DB roundtrips (~450ms at
+ * pooler latency); this is 1 insert + (≤N) targeted updates on distinct
+ * labels. The user-visible confirm click is on the critical path — every ms
+ * here is felt.
+ *
+ * Semantics match an upsert-with-update loop:
+ *   1. createMany(skipDuplicates) inserts new rows with autoDetected=false.
+ *   2. updateMany refreshes `name` + `isActive` on pre-existing rows (auto-
+ *      discovered entities the user is now explicitly confirming). Scoped to
+ *      the schemaId so there is no cross-tenant risk.
+ *
+ * No-op on an empty array.
+ */
+export async function persistConfirmedEntities(
+  tx: Prisma.TransactionClient,
+  schemaId: string,
+  entities: ConfirmedEntity[],
+): Promise<void> {
+  if (entities.length === 0) return;
+
+  await tx.entity.createMany({
+    data: entities.map((e) => ({
+      schemaId,
+      name: e.displayLabel,
+      identityKey: e.identityKey,
+      type: e.kind,
+      secondaryTypeName: e.secondaryTypeName,
+      autoDetected: false,
+      isActive: true,
+    })),
+    skipDuplicates: true,
+  });
+
+  // Group by display label so one updateMany refreshes every row that shares
+  // a label. In practice labels are usually distinct, making this N small
+  // statements; still strictly fewer round-trips than a per-row upsert loop.
+  const byLabel = new Map<string, ConfirmedEntity[]>();
+  for (const e of entities) {
+    const bucket = byLabel.get(e.displayLabel) ?? [];
+    bucket.push(e);
+    byLabel.set(e.displayLabel, bucket);
+  }
+  for (const [label, bucket] of byLabel) {
+    await tx.entity.updateMany({
+      where: {
+        schemaId,
+        OR: bucket.map((e) => ({ identityKey: e.identityKey, type: e.kind })),
+      },
+      data: { name: label, isActive: true },
+    });
+  }
+}
