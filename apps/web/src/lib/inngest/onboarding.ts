@@ -539,15 +539,16 @@ export const runOnboardingPipeline = inngest.createFunction(
             newDiscoveries.map((d) =>
               prisma.entity.upsert({
                 where: {
-                  schemaId_name_type: {
+                  schemaId_identityKey_type: {
                     schemaId,
-                    name: d.name,
+                    identityKey: d.name,
                     type: d.type,
                   },
                 },
                 create: {
                   schemaId,
                   name: d.name,
+                  identityKey: d.name,
                   type: d.type,
                   secondaryTypeName: d.secondaryTypeName,
                   aliases: [],

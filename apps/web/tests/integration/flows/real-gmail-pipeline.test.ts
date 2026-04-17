@@ -107,6 +107,7 @@ async function createGenericTestSchema(userId: string) {
     data: {
       schemaId: schema.id,
       name: "General",
+      identityKey: "General",
       type: "PRIMARY",
       aliases: [],
       autoDetected: false,

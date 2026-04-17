@@ -70,6 +70,7 @@ export async function createTestSchema(userId: string): Promise<TestSchemaResult
     data: {
       schemaId: schema.id,
       name: "Valley Montessori School",
+      identityKey: "Valley Montessori School",
       type: "PRIMARY",
       aliases: ["VMS", "Valley Montessori"],
       autoDetected: false,
@@ -81,6 +82,7 @@ export async function createTestSchema(userId: string): Promise<TestSchemaResult
     data: {
       schemaId: schema.id,
       name: "East Valley Sports Complex",
+      identityKey: "East Valley Sports Complex",
       type: "PRIMARY",
       aliases: ["EVSC", "East Valley Sports"],
       autoDetected: false,
@@ -93,6 +95,7 @@ export async function createTestSchema(userId: string): Promise<TestSchemaResult
     data: {
       schemaId: schema.id,
       name: "Coach Martinez",
+      identityKey: "Coach Martinez",
       type: "SECONDARY",
       secondaryTypeName: "Coach/Teacher",
       aliases: ["Martinez", "Coach M"],

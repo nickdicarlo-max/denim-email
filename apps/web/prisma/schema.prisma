@@ -325,6 +325,8 @@ model Entity {
   schema        CaseSchema @relation(fields: [schemaId], references: [id], onDelete: Cascade)
 
   name          String                  // "Harbor View Renovation", "Acme Corp"
+  // Dedup identity. For PRIMARY: same as name. For SECONDARY: email address or "@domain".
+  identityKey   String
   type          EntityType              // PRIMARY or SECONDARY
   
   // For secondary entities: which config entry this belongs to
@@ -362,7 +364,7 @@ model Entity {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@unique([schemaId, name, type])
+  @@unique([schemaId, identityKey, type])
   @@index([schemaId, type, isActive])
   @@map("entities")
 }

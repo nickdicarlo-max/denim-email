@@ -569,15 +569,21 @@ async function persistExtractedEmail(
           ? "confidence>=0.7"
           : "sender-ambiguous";
 
-      // Upsert is idempotent under @@unique([schemaId, name, type]) so
+      // Upsert is idempotent under @@unique([schemaId, identityKey, type]) so
       // extraction retries and parallel batches don't create duplicates.
+      // For PRIMARY entities created here, identityKey = name (Phase 0 baseline).
       const newEntity = await prisma.entity.upsert({
         where: {
-          schemaId_name_type: { schemaId, name: detected.name, type: "PRIMARY" },
+          schemaId_identityKey_type: {
+            schemaId,
+            identityKey: detected.name,
+            type: "PRIMARY",
+          },
         },
         create: {
           schemaId,
           name: detected.name,
+          identityKey: detected.name,
           type: "PRIMARY",
           secondaryTypeName: null,
           aliases: [],

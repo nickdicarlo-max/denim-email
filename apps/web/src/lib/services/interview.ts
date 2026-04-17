@@ -611,6 +611,7 @@ export async function persistSchemaRelations(
         data: finalEntities.map((e) => ({
           schemaId,
           name: e.name,
+          identityKey: e.name,
           type: e.type,
           secondaryTypeName: e.secondaryTypeName,
           aliases: e.aliases,
@@ -752,6 +753,7 @@ export async function persistSchemaRelations(
         .map((whoName) => ({
           schemaId,
           name: whoName,
+          identityKey: whoName,
           type: "SECONDARY" as const,
           secondaryTypeName: null,
           aliases: [] as string[],
