@@ -35,6 +35,38 @@ export const ONBOARDING_TUNABLES = {
   },
 
   /**
+   * Fast-discovery Stage 1 — domain detection from From-headers (issue #95).
+   * Target: < 5s wall for 500 emails. All metadata-only; no bodies, no AI.
+   */
+  stage1: {
+    /** Max Gmail message IDs to fetch metadata for in a single Stage 1 pass. */
+    maxMessages: 500,
+    /** Parallel batch size for the metadata fetch. */
+    fetchBatchSize: 40,
+    /** Lookback window passed to the Gmail `newer_than:` qualifier. */
+    lookbackDays: 365,
+    /** Gmail API pacing between batches, in milliseconds. */
+    pacingMs: 50,
+  },
+
+  /**
+   * Fast-discovery Stage 2 — entity detection from per-domain subjects (issue #95).
+   * Target: < 6s wall per confirmed domain; fan-out runs in parallel.
+   */
+  stage2: {
+    /** Max Gmail message IDs to fetch per confirmed Stage-1 domain. */
+    maxMessagesPerDomain: 500,
+    /** Top N candidate entities to surface per confirmed domain. */
+    topNEntities: 20,
+    /** Levenshtein threshold for short strings (≤6 chars). */
+    levenshteinShortThreshold: 1,
+    /** Levenshtein threshold for longer strings. */
+    levenshteinLongThreshold: 2,
+    // fetchBatchSize + lookbackDays intentionally omitted — Stage 2 reuses
+    // ONBOARDING_TUNABLES.stage1's values. One source of truth, no drift.
+  },
+
+  /**
    * Full discovery scan (runs inside `runScan` via
    * `apps/web/src/lib/services/discovery.ts`). These values were the
    * previously-hardcoded `DISCOVERY_LOOKBACK` and `MAX_DISCOVERY_EMAILS`.
