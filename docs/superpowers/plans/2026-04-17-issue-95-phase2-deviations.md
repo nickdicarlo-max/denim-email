@@ -128,9 +128,49 @@ Two independent branches joined with `|`.
 
 ---
 
+## Task 2.4 — `deriveAgencyEntity` (commit TBD — this commit)
+
+### D2.4-1 — Convergence check replaced with whole-display-name token frequency
+
+**Plan said:**
+
+```typescript
+function extractCompanyFromDisplayName(name: string): string | null {
+  const separators = /\s+[|@]\s+|\s+at\s+/i;
+  const parts = name.split(separators);
+  if (parts.length >= 2) return parts[parts.length - 1].trim();
+  return null;
+}
+
+// ...
+if (senderDisplayNames.length >= 5) {
+  const tokens = senderDisplayNames
+    .map(extractCompanyFromDisplayName)
+    .filter((t): t is string => t !== null);
+  // ... count tokens, gate at 80% of senderDisplayNames.length
+}
+```
+
+Extract a company token only when the display name has an explicit separator (`|`, `@`, or ` at `). Then gate the convergence fraction on the total display-name count.
+
+**Shipped:** `tokenize(name)` splits the whole display name on whitespace + `| , @ . -`, keeps all multi-char words. Count each token at most once per name, then pick the max and gate at `≥80% of names`.
+
+**Why:** The plan's Test 5 feeds 5 names — three have `|`/`at` separators with `Anthropic` as the tail, one is `"Anthropic Team"` (no separator), one is `"Sarah Chen"` (no company). Plan's extractor returns 3 tokens; 3/5 = 60% < 80% ⇒ test fails against the plan. Shipped tokenizer counts `Anthropic` in 4/5 names (`Sarah Chen | Anthropic`, `Mike Roberts | Anthropic`, `Jane at Anthropic`, `Anthropic Team`), hits 80% exactly, returns `"Anthropic"`.
+
+Trade-off: the broader tokenizer could pick up a person name if the same first name happens to appear in 80% of "From" headers. Mitigated by (a) the 80% threshold itself being strict and (b) in real data, company names dominate over personal-name repetition in a Stage-1-confirmed domain's From pool. Worth revisiting during Phase 7 eval if the false-positive rate spikes.
+
+### D2.4-2 — Dropped the `senderDisplayNames.length >= 5` gate
+
+**Plan said:** Only attempt display-name convergence when at least 5 names are available (`if (senderDisplayNames.length >= 5)`).
+
+**Shipped:** No size gate. The `≥80% of names` fraction is meaningful at any sample size — 4/4 or 3/3 is stronger evidence than 4/5. The "falls back to domain when convergence below 80%" test still passes with `[Sarah Chen, Mike Roberts, Jane, Person D]` (max token count 1/4 = 25%).
+
+**Why:** A hard `>=5` gate is a scale assumption, not a correctness rule. If Stage 2 has a strict per-domain sample cap that sometimes yields <5 names (e.g., a domain with only 3 senders observed), the plan's gate would unnecessarily fall back to domain derivation even with unanimous display-name convergence. The 80% threshold alone is the right invariant.
+
+---
+
 ## Open items / future tasks
 
-- Task 2.4 (agency-entity) — not yet started.
 - Task 2.5 (dispatcher + Inngest wrapper) — corrections already applied to the plan; deviations during implementation TBD.
 
 Append new sections here as tasks land.
