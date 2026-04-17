@@ -286,20 +286,28 @@ export function dedupByLevenshtein(items: DedupInput[]): DedupOutput[] {
   const out: DedupOutput[] = [];
   for (const [, bucket] of byKey) {
     // Within a key bucket, merge variants whose display strings are close enough.
-    const merged: DedupOutput[] = [];
+    // We track topFrequency separately from the running-sum `frequency` so the
+    // "pick highest-observed display form" rule compares the new item's count
+    // against the max seen so far, not the post-increment total.
+    type MergeRow = DedupOutput & { topFrequency: number };
+    const merged: MergeRow[] = [];
     for (const item of bucket) {
       const existing = merged.find(m => withinThreshold(m.displayString, item.displayString));
       if (existing) {
         existing.frequency += item.frequency;
-        if (item.frequency > existing.frequency - item.frequency) {
+        if (item.frequency > existing.topFrequency) {
           existing.displayString = item.displayString;
+          existing.topFrequency = item.frequency;
         }
         existing.autoFixed = true;
       } else {
-        merged.push({ ...item, autoFixed: false });
+        merged.push({ ...item, autoFixed: false, topFrequency: item.frequency });
       }
     }
-    out.push(...merged);
+    for (const m of merged) {
+      const { topFrequency: _tf, ...rest } = m;
+      out.push(rest);
+    }
   }
   return out;
 }

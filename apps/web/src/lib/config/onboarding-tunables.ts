@@ -61,10 +61,13 @@ export const ONBOARDING_TUNABLES = {
     /** Levenshtein threshold for short strings (≤6 chars). */
     levenshteinShortThreshold: 1,
     /**
-     * Levenshtein threshold for longer strings. 3 catches common abbreviation
-     * expansions within same-key buckets (e.g., "Dr" ↔ "Drive", "St" ↔ "Saint")
-     * while staying tight enough to reject "cat" ↔ "dog"-style noise under the
-     * short threshold above.
+     * Levenshtein threshold for longer strings. 3 is tuned for within-bucket
+     * variant merging once keys have already collapsed (e.g., "Saint Agnes"
+     * vs "St Agnes" both land in the `stagnes` bucket, then distance=3
+     * merges their display forms). Most abbreviation expansions like
+     * Dr ↔ Drive actually merge via shared normalized key, not by this
+     * distance — but the threshold still has to be loose enough that
+     * residual display-form variants inside the same bucket collapse.
      */
     levenshteinLongThreshold: 3,
     // fetchBatchSize + lookbackDays intentionally omitted — Stage 2 reuses
