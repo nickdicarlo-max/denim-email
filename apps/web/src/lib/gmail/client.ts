@@ -176,9 +176,16 @@ export class GmailClient {
 
       return filtered;
     } catch (error) {
-      logger.error({ service: "gmail", operation, error });
+      // Sanitize: Gmail 401/403 response bodies can echo the Authorization
+      // Bearer token on some proxies. Log only error name + HTTP status,
+      // never the raw error.message (same shape as sanitizeError in
+      // gmail-metadata-fetch.ts).
+      const name = error instanceof Error ? error.name : "Error";
+      const status =
+        error instanceof Error ? (error.message.match(/\b[45]\d\d\b/)?.[0] ?? "") : "";
+      logger.error({ service: "gmail", operation, errorName: name, errorStatus: status });
       throw new ExternalAPIError(
-        `Gmail listMessageIds failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Gmail list failed: ${name}${status ? `:${status}` : ""}`,
         "gmail",
       );
     }

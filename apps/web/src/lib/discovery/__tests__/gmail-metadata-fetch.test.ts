@@ -92,9 +92,9 @@ describe("fetchFromHeaders", () => {
     expect(result.messagesRequested).toBe(3);
     expect(result.results).toHaveLength(2);
     expect(result.errorCount).toBe(1);
-    expect(result.firstError).toBeDefined();
-    // Sanitized form: "<ErrorName>:<status>" — status extracted from message.
-    // Message contained "429", so we expect a 429 in the sanitized string.
-    expect(result.firstError).toMatch(/429/);
+    // Pin the exact sanitized form: "<ErrorName>:<status>". Asserting the
+    // full string (not just /429/) means a future sanitization regression
+    // that leaks the raw message ("429 rate limit exceeded") fails here.
+    expect(result.firstError).toBe("Error:429");
   });
 });
