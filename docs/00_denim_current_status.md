@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-16 (Fast-discovery rebuild plan hardened through 3 review passes and committed as `323ea9f` — ready to execute tomorrow)
+Last updated: 2026-04-17 (Issue #95 fast-discovery rebuild: **Phase 0 + Phase 1 code-complete + real-sample ground-truth validated**. 11 commits on `feature/perf-quality-sprint`. Stopping here for commit review before Phase 2.)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -575,12 +575,102 @@ The staged fast-discovery rebuild plan (`docs/superpowers/plans/2026-04-16-issue
 
 Both are Discovery 9 validator work from earlier today (2026-04-16). Not committed because they embed specific business contacts + reference the gitignored `Denim_Samples_Individual/` folder. Leave as-is.
 
+## 2026-04-17 Session — Issue #95 Phase 0 + Phase 1 Complete
+
+Executed the first two phases of the fast-discovery rebuild. Foundation (schema + config + tunables) and Stage 1 domain discovery (primitives + aggregator + Inngest function) are all landed. Ground-truthed against 417 real Gmail samples through the real code path. Stopping for commit review before Phase 2.
+
+### Commits landed (11 total on `feature/perf-quality-sprint`)
+
+**Phase 0 — Foundation (4 commits)**
+
+| Task | Commit | Scope |
+|---|---|---|
+| 0.1 | `0f3e991` | `SchemaPhase` enum + 4 fast-discovery values; `SCHEMA_PHASE_ORDER` map extended (unanticipated typecheck gap — existing exhaustive Record broke on new values) |
+| 0.2 | `5ff6cfe` | `Entity.identityKey` column + unique constraint swap `(schemaId, name, type)` → `(schemaId, identityKey, type)`; 140 rows backfilled; 8 callers updated |
+| 0.3 | `e3242be` | `domain-shapes.ts` runtime config matching the 3 locked spec files (property 13 / school_parent 19 / agency 28 keywords) + 6 tests |
+| 0.4 | `dafc373` | `ONBOARDING_TUNABLES.stage1` + `.stage2` nested groups + 3 tests |
+
+**Phase 1 — Stage 1 Domain Discovery (7 commits)**
+
+| Task | Commit | Scope |
+|---|---|---|
+| 1.1 | `8e2964e` | `PUBLIC_PROVIDERS` constant (15 domains) + `isPublicProvider` + 4 tests |
+| 1.2 | `d383de6` + `487040f` | `GmailClient.listMessageIds` + `.getMessageMetadata` primitives; `fetchFromHeaders` with batching, pacing, per-message error counting, PII-safe `firstError` sanitizer. Spec-review + code-review passes caught a token-leak in the new catch block — fixed in `487040f`. |
+| 1.3 | `5fe2a89` | `aggregateDomains` pure function (group by domain, drop generics + user domain, sort, topN) + 6 tests |
+| 1.4 | `a6d9ab5` | `buildStage1Query` + `discoverDomains` orchestrator + 4 tests |
+| 1.5 | `aa940e1` | In-process integration test for `discoverDomains` with mocked Gmail (property top-3 + agency top-5) |
+| 1.6 + 1.6b | `96ff38d` | `runDomainDiscovery` Inngest function + 6 new `CaseSchema` columns (4 stage1 + 2 stage2) + `writeStage1Result` / `writeStage2Result` / `writeStage2ConfirmedDomains` InterviewService writers + new event type `onboarding.domain-discovery.requested`. Combined 1.6+1.6b because mutually-dependent (1.6 imports writers from 1.6b). |
+
+### Test count
+
+- Baseline (start of day): 153 unit tests
+- After Phase 0: 169
+- After Phase 1: **188 unit tests green** across `packages/types` + `packages/ai` (52) + `packages/engine` (92) + `apps/web` (44)
+- Typecheck clean on all workspaces throughout
+
+### Real-sample ground-truth validation
+
+Built `scripts/validate-stage1-real-samples.ts` (untracked — samples folder is gitignored) that drives the REAL `discoverDomains` code path through a stub `GmailClient` serving from `Denim_Samples_Individual/*.json` (417 real Gmail messages).
+
+Unlike the existing `simulate-stage1-domains.mjs` which re-implements Stage 1 logic, this validator imports the actual primitives — regression-safe.
+
+**Results (all 3 ground-truth targets pass):**
+- `property`: `judgefite.com` rank **1** (3 keyword-matching emails) — real property manager ✅
+- `agency`: `portfolioproadvisors.com` rank **2**, `stallionis.com` rank **4** — real consulting clients ✅
+- `school_parent`: `email.teamsnap.com` rank **1** (13 matches) — legitimate activity platform ✅
+
+### Issues filed this session
+
+- **#99** Plan/reality API-signature gaps — 8 specific corrections catalogued (advanceSchemaPhase takes opts+callback not positional, markSchemaFailed 3-args, getValidGmailToken not loadGmailTokens, matchesGmailAuthError not isGmailAuthError, 2-arg vs 3-arg createFunction shape, registration in functions.ts not route.ts, SchemaPhase Record extension, STAGE1_TUNABLES→ONBOARDING_TUNABLES.stage1 substitution, GmailClient already does metadata fetches). Recommendation: treat plan as architectural direction, not code spec; every implementer brief should say "check signatures against real code."
+- **#100** Stage 1 agency newsletter noise — `t.biggerpockets.com` (newsletter, 13 emails) outranks real clients in real-sample validation. Agency top-5 still contains PPA + stallionis so spec is met, but newsletter domains outranking real clients is worth tracking. Recommend defer to Phase 7 eval for quantitative measurement.
+
+### DB migrations applied via supabase-db skill
+
+- `entities.identityKey` text NOT NULL, backfilled from `name`
+- `entities` unique constraint swap: drop `entities_schemaId_name_type_key`, create `entities_schemaId_identityKey_type_key`
+- `case_schemas` + 6 columns: `stage1Candidates` jsonb, `stage1QueryUsed` text, `stage1MessagesSeen` int, `stage1ErrorCount` int, `stage2ConfirmedDomains` jsonb, `stage2Candidates` jsonb
+- `SchemaPhase` enum + 4 values: `DISCOVERING_DOMAINS`, `AWAITING_DOMAIN_CONFIRMATION`, `DISCOVERING_ENTITIES`, `AWAITING_ENTITY_CONFIRMATION` (all inserted `BEFORE 'FINALIZING_SCHEMA'`)
+
+### Subagent-driven-development notes
+
+Used subagent dispatch for Tasks 1.2, 1.3, 1.4, 1.5 (the plan's meatier items). Worked well for 1.3–1.5. Task 1.2 required a two-stage review loop (spec reviewer approved; code-quality reviewer flagged a Critical token-leak risk in `listMessageIds` catch-block log — fix committed as `487040f`). Subagents were blocked from running `git` commands due to permission policy — I staged + committed on their behalf based on their diff reports.
+
+Task 1.6 + 1.6b were done manually because the plan had 7+ signature mismatches to correct; briefing a subagent on all the corrections would have been longer than just implementing it. Phase 0 tasks (all 4) were also manual because the Agent tool errored on Task 0.1's first dispatch and the tasks were trivially mechanical anyway.
+
+### Key state for resume
+
+- **Active branch:** `feature/perf-quality-sprint` (not pushed to remote)
+- **Trigger wiring deferred:** no route emits `onboarding.domain-discovery.requested` yet — that's Phase 4 pipeline cutover
+- **All 4 new SchemaPhase values are additive** — existing `GENERATING_HYPOTHESIS` flow still works; nothing is deleted until Phase 6
+
+### Next action on resume
+
+**Phase 2 — Stage 2 Entity Discovery (9 tasks):**
+
+1. Open `docs/superpowers/plans/2026-04-16-issue-95-fast-discovery-rebuild.md` at **Task 2.1** (`fastest-levenshtein@1` dep + shared `levenshtein-dedup.ts` module + test).
+2. Then 2.2 (`property-entity.ts` address regex + year-number guard), 2.3 (`school-entity.ts` two-pattern regex), 2.4 (`agency-entity.ts` sender-domain derivation).
+3. Then 2.5 (`entity-discovery.ts` dispatcher), 2.6 (integration tests), 2.7 (Inngest function wrapper `runEntityDiscovery`).
+4. Before executing: **cross-check any imports the plan's code samples make against real code** (per issue #99). The plan's signatures are stale — read the actual file before writing call sites.
+5. **Keep using manual execution** for Phase 2 mechanical tasks; reserve subagent dispatch for Phase 2's integration tests + Inngest function wrapper. Phase 0/1 experience showed subagent overhead doesn't pay off for small mechanical work, but catches real bugs in meatier tasks.
+
+**After Phase 2:** Ground-truth validate again via the untracked `scripts/validate-stage1-real-samples.ts` — extend it to also feed Stage 2 with known-good inputs (e.g., confirmed domains `judgefite.com` for property, `portfolioproadvisors.com` for agency) and check that Stage 2 surfaces specific real entities (addresses for property, project codes for agency).
+
+### Three untracked scripts in working tree (as of end of 2026-04-17)
+
+- `scripts/simulate-stage1-domains.mjs` (pre-existing 2026-04-16)
+- `scripts/validate-agency-keywords.mjs` (pre-existing 2026-04-16)
+- `scripts/validate-stage1-real-samples.ts` (new 2026-04-17 — real-code-path validator, ground-truth passing)
+
+All three depend on the gitignored `Denim_Samples_Individual/` folder. Leave untracked.
+
 ---
 
 ## What's Next
 
 ### Immediate
-- **Issue #95 — Fast-discovery onboarding rebuild** (plan committed as `323ea9f` on 2026-04-16 evening). Start at Task 0.1. See the 2026-04-16 Evening session block above for gotchas and ordering rules.
+- **Issue #95 — Fast-discovery onboarding rebuild:** Phase 0 ✅ + Phase 1 ✅ (2026-04-17, 11 commits `0f3e991`..`96ff38d`). **Resume at Phase 2 Task 2.1** (`fastest-levenshtein` dep + shared dedup module). See 2026-04-17 session block for full state, gotchas, and the real-sample ground-truth validator results.
+- **Issue #99 — Plan/reality API-signature gaps** (filed 2026-04-17): read before executing Phase 2+ tasks. The plan's code samples have stale signatures; cross-check every import against real code.
+- **Issue #100 — Stage 1 agency newsletter noise** (filed 2026-04-17): deferred to Phase 7 quantitative measurement; not blocking.
 - ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 early AM (3 runs, all GOOD post-#85)
 - **Phase 3 code-complete** ✅ 2026-04-15 PM (commits `7c0d1d0`, `2c6b373`, `f3b54ff`) — E2E measurement pending
 - **Phase 4 (#63 batch round-trips → #73 review screen render → #25 umbrella close)** — was the prior sprint's next-up; superseded by #95 rebuild. Revisit after #95 ships.
