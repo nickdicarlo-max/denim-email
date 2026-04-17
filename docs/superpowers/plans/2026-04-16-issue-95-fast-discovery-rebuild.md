@@ -248,7 +248,7 @@ describe("dedupByLevenshtein", () => {
 ```typescript
 // apps/web/src/lib/discovery/levenshtein-dedup.ts
 import { distance } from "fastest-levenshtein";
-import { STAGE2_TUNABLES } from "@/lib/config/onboarding-tunables";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 
 export interface DedupInput {
   /** Grouping key — typically house number, acronym stem, etc. */
@@ -269,8 +269,8 @@ const SHORT_LIMIT = 6;
 function withinThreshold(a: string, b: string): boolean {
   const maxLen = Math.max(a.length, b.length);
   const threshold = maxLen <= SHORT_LIMIT
-    ? STAGE2_TUNABLES.levenshteinShortThreshold
-    : STAGE2_TUNABLES.levenshteinLongThreshold;
+    ? ONBOARDING_TUNABLES.stage2.levenshteinShortThreshold
+    : ONBOARDING_TUNABLES.stage2.levenshteinLongThreshold;
   return distance(a.toLowerCase(), b.toLowerCase()) <= threshold;
 }
 
@@ -969,7 +969,7 @@ import { discoverEntitiesForDomain } from "../entity-discovery";
 describe("discoverEntitiesForDomain", () => {
   it("property: runs address extraction on subjects from Stage-1-confirmed domain", async () => {
     const mockGmail = {
-      searchEmails: vi.fn(async () => ["1", "2"]),
+      listMessageIds: vi.fn(async () => ["1", "2"]),
       getMessageMetadata: vi.fn()
         .mockResolvedValueOnce({ id: "1", payload: { headers: [
           { name: "Subject", value: "Repair quote 1906 Crockett" },
@@ -992,7 +992,7 @@ describe("discoverEntitiesForDomain", () => {
 
   it("agency: runs domain derivation on confirmed domain (does not parse subjects)", async () => {
     const mockGmail = {
-      searchEmails: vi.fn(async () => ["1"]),
+      listMessageIds: vi.fn(async () => ["1"]),
       getMessageMetadata: vi.fn(async () => ({
         id: "1",
         payload: { headers: [
@@ -1019,7 +1019,7 @@ describe("discoverEntitiesForDomain", () => {
 ```typescript
 // apps/web/src/lib/discovery/entity-discovery.ts
 import { getDomainShape, type DomainName } from "@/lib/config/domain-shapes";
-import { STAGE2_TUNABLES } from "@/lib/config/onboarding-tunables";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { extractPropertyCandidates } from "./property-entity";
 import { extractSchoolCandidates } from "./school-entity";
 import { deriveAgencyEntity } from "./agency-entity";
@@ -1052,13 +1052,15 @@ async function fetchSubjectsAndDisplayNames(
   client: GmailClient,
   confirmedDomain: string,
 ): Promise<{ subjects: string[]; displayNames: string[]; errorCount: number }> {
-  const q = `from:*@${confirmedDomain} newer_than:${STAGE2_TUNABLES.lookbackDays}d`;
-  const ids = await client.searchEmails(q, STAGE2_TUNABLES.maxMessagesPerDomain);
+  // Stage 2 reuses stage1 lookback + batch size (see onboarding-tunables.ts
+  // file-level comment). maxMessagesPerDomain is stage2-specific.
+  const q = `from:*@${confirmedDomain} newer_than:${ONBOARDING_TUNABLES.stage1.lookbackDays}d`;
+  const ids = await client.listMessageIds(q, ONBOARDING_TUNABLES.stage2.maxMessagesPerDomain);
   const subjects: string[] = [];
   const displayNames: string[] = [];
   let errorCount = 0;
 
-  const batchSize = STAGE2_TUNABLES.fetchBatchSize;
+  const batchSize = ONBOARDING_TUNABLES.stage1.fetchBatchSize;
   for (let i = 0; i < ids.length; i += batchSize) {
     const batch = ids.slice(i, i + batchSize);
     const rows = await Promise.all(
@@ -1136,6 +1138,10 @@ export async function discoverEntitiesForDomain(
         errorCount,
       };
     }
+    default: {
+      const _exhaustive: never = shape.stage2Algorithm;
+      throw new Error(`Unknown stage2Algorithm: ${_exhaustive}`);
+    }
   }
 }
 ```
@@ -1154,22 +1160,26 @@ git add apps/web/src/lib/discovery/entity-discovery.ts \
 git commit -m "feat(discovery): discoverEntitiesForDomain dispatcher"
 ```
 
-- [ ] **Step 5: Add Stage 2 result columns to CaseSchema via supabase-db**
+- [ ] **Step 5: Verify Stage 2 result columns already exist**
 
-```sql
-ALTER TABLE case_schemas ADD COLUMN "stage2Candidates" jsonb;
-ALTER TABLE case_schemas ADD COLUMN "stage2ConfirmedDomains" jsonb;
+No migration needed. `stage2Candidates` and `stage2ConfirmedDomains` were added in commit `96ff38d` (Task 1.6b) and are already present in `schema.prisma` (lines 168–169). Sanity-check:
+
+```bash
+grep -n "stage2" apps/web/prisma/schema.prisma
+# Should show: stage2Candidates, stage2ConfirmedDomains
 ```
 
-Add to `schema.prisma`:
+- [ ] **Step 5b: Register the new Inngest event in `DenimEvents`**
 
-```prisma
-// Stage 2 result (populated by runEntityDiscovery via InterviewService)
-// Shape: [{ confirmedDomain, algorithm, subjectsScanned, candidates[], errorCount, failed?, errorMessage? }]
-stage2Candidates          Json?
-// Which Stage-1 domains the user confirmed (drives Stage 2 fan-out)
-stage2ConfirmedDomains    Json?
+Add to `packages/types/src/events.ts` so `inngest.send({ name: "onboarding.entity-discovery.requested", ... })` typechecks:
+
+```typescript
+"onboarding.entity-discovery.requested": {
+  data: { schemaId: string; userId: string };
+};
 ```
+
+(Mirror how `onboarding.domain-discovery.requested` was registered in commit `96ff38d`.)
 
 - [ ] **Step 6: Inngest wrapper**
 
@@ -1182,9 +1192,9 @@ import { prisma } from "@/lib/prisma";
 import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { writeStage2Result } from "@/lib/services/interview";
-import { loadGmailTokens } from "@/lib/services/gmail-tokens";
+import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { GmailClient } from "@/lib/gmail/client";
-import { isGmailAuthError } from "@/lib/gmail/auth-errors";
+import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { logger } from "@/lib/logger";
 
 /**
@@ -1209,6 +1219,7 @@ export const runEntityDiscovery = inngest.createFunction(
   {
     id: "run-entity-discovery",
     name: "Stage 2 — Entity Discovery",
+    triggers: [{ event: "onboarding.entity-discovery.requested" }],
     retries: 2,
     priority: { run: "120" },
     concurrency: [
@@ -1216,9 +1227,8 @@ export const runEntityDiscovery = inngest.createFunction(
       { limit: 20 },
     ],
   },
-  { event: "onboarding.entity-discovery.requested" },
   async ({ event, step }) => {
-    const schemaId: string = event.data.schemaId;
+    const { schemaId, userId } = event.data;
 
     try {
       const schema = await step.run("load-schema", async () =>
@@ -1241,12 +1251,15 @@ export const runEntityDiscovery = inngest.createFunction(
       // so a retry only re-runs the failed one. Per-domain errors are caught
       // inside the step so one domain's Gmail hiccup can't kill the rest
       // (Gmail-auth errors are rethrown — that's a schema-wide failure).
+      // Step ids are slugified so domains with dots ("email.teamsnap.com")
+      // render cleanly in the Inngest dashboard.
+      const slug = (d: string) => d.replace(/[^a-z0-9]/gi, "-");
       const perDomain = await Promise.all(
         confirmed.map((confirmedDomain) =>
-          step.run(`discover-${confirmedDomain}`, async () => {
+          step.run(`discover-${slug(confirmedDomain)}`, async () => {
             try {
-              const tokens = await loadGmailTokens(schema.userId);
-              const gmail = new GmailClient(tokens.accessToken);
+              const accessToken = await getValidGmailToken(userId);
+              const gmail = new GmailClient(accessToken);
               const r = await discoverEntitiesForDomain({
                 gmailClient: gmail,
                 schemaDomain: schema.domain as any,
@@ -1262,7 +1275,7 @@ export const runEntityDiscovery = inngest.createFunction(
               };
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
-              if (isGmailAuthError(message)) throw err; // schema-wide failure
+              if (matchesGmailAuthError(message)) throw err; // schema-wide failure
               logger.warn({ schemaId, confirmedDomain }, "stage2 per-domain failure (isolated)");
               return {
                 confirmedDomain,
@@ -1280,20 +1293,26 @@ export const runEntityDiscovery = inngest.createFunction(
       const allFailed = perDomain.every(d => d.failed);
       if (allFailed) throw new Error("All per-domain Stage 2 runs failed");
 
-      await step.run("persist-candidates", async () => {
+      await step.run("persist-and-advance", async () => {
         await writeStage2Result(schemaId, { perDomain });
-      });
-
-      await step.run("advance-to-awaiting", async () => {
-        await advanceSchemaPhase(schemaId, "DISCOVERING_ENTITIES", "AWAITING_ENTITY_CONFIRMATION");
+        await advanceSchemaPhase({
+          schemaId,
+          from: "DISCOVERING_ENTITIES",
+          to: "AWAITING_ENTITY_CONFIRMATION",
+          work: async () => undefined,
+        });
       });
 
       return { domainsProcessed: confirmed.length, domainsFailed: perDomain.filter(d => d.failed).length };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const authFailed = isGmailAuthError(message);
+      const authFailed = matchesGmailAuthError(message);
       await step.run("mark-failed", async () => {
-        await markSchemaFailed(schemaId, authFailed ? `GMAIL_AUTH: ${message}` : message);
+        await markSchemaFailed(
+          schemaId,
+          "DISCOVERING_ENTITIES",
+          authFailed ? new Error(`GMAIL_AUTH: ${message}`) : err,
+        );
       });
       throw err;
     }
@@ -1304,16 +1323,16 @@ export const runEntityDiscovery = inngest.createFunction(
 - [ ] **Step 7: Register + commit**
 
 ```bash
-pnpm --filter web prisma generate
 pnpm typecheck
 ```
 
-Register `runEntityDiscovery` in the Inngest serve config.
+Register `runEntityDiscovery` by adding it to the array in `apps/web/src/lib/inngest/functions.ts` (the array that `app/api/inngest/route.ts` passes to `serve`). Mirror how `runDomainDiscovery` was registered in commit `96ff38d`.
 
 ```bash
 git add apps/web/src/lib/inngest/entity-discovery-fn.ts \
-        apps/web/prisma/schema.prisma apps/web/src/app/api/inngest/route.ts
-git commit -m "feat(inngest): runEntityDiscovery Inngest function + CaseSchema stage2 columns"
+        apps/web/src/lib/inngest/functions.ts \
+        packages/types/src/events.ts
+git commit -m "feat(inngest): runEntityDiscovery Inngest function"
 ```
 
 ---
@@ -1425,64 +1444,77 @@ export const POST = withAuth(async ({ userId, request }) => {
 
 ```typescript
 // apps/web/src/app/api/onboarding/[schemaId]/domain-confirm/__tests__/route.test.ts
+//
+// withAuth wraps a single-arg handler: (handler) => async (request) => handler({ userId, request }).
+// schemaId is parsed from request URL via extractOnboardingSchemaId.
+// writeStage2ConfirmedDomains must be mocked — otherwise the real impl runs against the fake tx.
+//
 // Assertion focus: 400 on invalid body, 409 when CAS loses the race (wrong phase or
-// concurrent click), 200 + outbox row on success. The happy path must hit the CAS
-// updateMany path, not a plain update.
+// concurrent click), 200 + outbox row on success.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    findUnique: vi.fn(),
     $transaction: vi.fn(async (fn: any) => fn({
       caseSchema: { updateMany: (global as any).__updateMany },
       onboardingOutbox: { create: (global as any).__outboxCreate },
     })),
+    caseSchema: { findUnique: (...args: any[]) => (global as any).__findUnique(...args) },
   },
 }));
 vi.mock("@/lib/middleware/auth", () => ({
-  withAuth: (handler: any) => (req: any, ctx: any) =>
-    handler(req, { ...ctx, user: { id: "user-1" } }),
+  // Real shape: withAuth(handler) => async (request) => handler({ userId, request })
+  withAuth: (handler: any) => async (request: any) => handler({ userId: "user-1", request }),
 }));
 vi.mock("@/lib/middleware/ownership", () => ({
-  assertResourceOwnership: vi.fn(async () => {}),
+  assertResourceOwnership: vi.fn(),
+}));
+vi.mock("@/lib/services/interview", () => ({
+  writeStage2ConfirmedDomains: vi.fn(async (_tx: any, _id: string, _d: string[]) =>
+    (global as any).__updateMany().count ?? 0,
+  ),
 }));
 vi.mock("@/lib/inngest/client", () => ({ inngest: { send: vi.fn() } }));
 
 import { POST } from "../route";
 import { inngest } from "@/lib/inngest/client";
 
-function makeRequest(body: unknown) {
-  return new Request("http://x/", { method: "POST", body: JSON.stringify(body) }) as any;
+function makeRequest(schemaId: string, body: unknown) {
+  return new Request(
+    `http://x/api/onboarding/${schemaId}/domain-confirm`,
+    { method: "POST", body: JSON.stringify(body) },
+  ) as any;
 }
 
 describe("POST /domain-confirm", () => {
   beforeEach(() => {
     (global as any).__updateMany = vi.fn();
     (global as any).__outboxCreate = vi.fn();
+    (global as any).__findUnique = vi.fn(async () => ({
+      id: "s", userId: "user-1", phase: "AWAITING_DOMAIN_CONFIRMATION",
+    }));
     vi.clearAllMocks();
   });
 
   it("400 on invalid body", async () => {
-    const res = await POST(makeRequest({}), { params: Promise.resolve({ schemaId: "s" }) });
+    const res = await POST(makeRequest("s", {}));
     expect(res.status).toBe(400);
   });
 
   it("409 when CAS returns count=0 (wrong phase or concurrent click)", async () => {
-    (global as any).__updateMany.mockResolvedValue({ count: 0 });
-    const res = await POST(
-      makeRequest({ confirmedDomains: ["x.com"] }),
-      { params: Promise.resolve({ schemaId: "s" }) },
-    );
+    (global as any).__updateMany.mockReturnValue({ count: 0 });
+    const res = await POST(makeRequest("s", { confirmedDomains: ["x.com"] }));
     expect(res.status).toBe(409);
     expect((global as any).__outboxCreate).not.toHaveBeenCalled();
     expect(inngest.send).not.toHaveBeenCalled();
   });
 
   it("200 + persists + emits when CAS succeeds", async () => {
-    (global as any).__updateMany.mockResolvedValue({ count: 1 });
-    const res = await POST(
-      makeRequest({ confirmedDomains: ["portfolioproadvisors.com", "stallionis.com"] }),
-      { params: Promise.resolve({ schemaId: "s" }) },
-    );
+    (global as any).__updateMany.mockReturnValue({ count: 1 });
+    const res = await POST(makeRequest("s", {
+      confirmedDomains: ["portfolioproadvisors.com", "stallionis.com"],
+    }));
     expect(res.status).toBe(200);
     expect((global as any).__outboxCreate).toHaveBeenCalled();
     expect(inngest.send).toHaveBeenCalledWith(expect.objectContaining({
@@ -1702,12 +1734,34 @@ git commit -m "feat(api): POST /onboarding/:schemaId/entity-confirm + persistCon
 - Modify: `apps/web/src/lib/services/onboarding-polling.ts`
 - Modify: `apps/web/src/app/api/onboarding/[schemaId]/route.ts` (response shape only)
 
-- [ ] **Step 1: Extend `derivePollingResponse`**
+- [ ] **Step 1a: Extend the `OnboardingPhase` union**
 
-Read the current function. Add these optional fields to the response, filled based on phase:
+`apps/web/src/lib/services/onboarding-polling.ts` lines 15–25 currently list the 10 existing phases. Add the 4 new fast-discovery values — without this, the mapping function silently falls through to `PENDING` and masks the new UI entirely:
 
 ```typescript
-// Add to the polling response type/interface:
+export type OnboardingPhase =
+  | "PENDING"
+  | "GENERATING_HYPOTHESIS"
+  | "DISCOVERING_DOMAINS"
+  | "AWAITING_DOMAIN_CONFIRMATION"
+  | "DISCOVERING_ENTITIES"
+  | "AWAITING_ENTITY_CONFIRMATION"
+  | "DISCOVERING"
+  | "EXTRACTING"
+  | "CLUSTERING"
+  | "SYNTHESIZING"
+  | "AWAITING_REVIEW"
+  | "COMPLETED"
+  | "NO_EMAILS_FOUND"
+  | "FAILED";
+```
+
+- [ ] **Step 1b: Extend `derivePollingResponse`**
+
+The function uses if/return chains and returns a new object literal per branch — there is no mutable `resp` accumulator. Add explicit branches for the four new phases that return the stage1/stage2 payload alongside the existing fields. The response type gains the new optional fields:
+
+```typescript
+// Added to OnboardingPollingResponse:
 stage1Candidates?: { domain: string; count: number }[];
 stage1QueryUsed?: string;
 stage2Candidates?: Array<{
@@ -1722,13 +1776,25 @@ stage2Candidates?: Array<{
   }>;
 }>;
 
-// In the body of derivePollingResponse:
-if (schema.phase === "AWAITING_DOMAIN_CONFIRMATION" || schema.phase === "DISCOVERING_DOMAINS") {
-  resp.stage1Candidates = (schema.stage1Candidates as any) ?? [];
-  resp.stage1QueryUsed = schema.stage1QueryUsed ?? undefined;
+// New branches in derivePollingResponse (early returns, matching existing style):
+if (schema.phase === "DISCOVERING_DOMAINS" || schema.phase === "AWAITING_DOMAIN_CONFIRMATION") {
+  return {
+    schemaId: schema.id,
+    phase: schema.phase,
+    progress: {},
+    stage1Candidates: (schema.stage1Candidates as any) ?? [],
+    stage1QueryUsed: schema.stage1QueryUsed ?? undefined,
+    updatedAt: schema.updatedAt.toISOString(),
+  };
 }
-if (schema.phase === "AWAITING_ENTITY_CONFIRMATION" || schema.phase === "DISCOVERING_ENTITIES") {
-  resp.stage2Candidates = (schema.stage2Candidates as any) ?? [];
+if (schema.phase === "DISCOVERING_ENTITIES" || schema.phase === "AWAITING_ENTITY_CONFIRMATION") {
+  return {
+    schemaId: schema.id,
+    phase: schema.phase,
+    progress: {},
+    stage2Candidates: (schema.stage2Candidates as any) ?? [],
+    updatedAt: schema.updatedAt.toISOString(),
+  };
 }
 ```
 
@@ -1746,71 +1812,22 @@ git commit -m "feat(polling): surface Stage 1/Stage 2 candidates in GET response
 
 ---
 
-### Task 3.3b: Extend `drainOnboardingOutbox` to handle the two new event names
+### Task 3.3b: Extend `drainOnboardingOutbox` — VERIFIED NO-OP
 
-**Files:**
-- Modify: `apps/web/src/lib/inngest/drain-onboarding-outbox.ts` (or wherever the drain cron lives — per issue #33)
+**Status:** No code change required. `apps/web/src/lib/inngest/onboarding-outbox-drain.ts` (lines 85–98) is already event-generic — it reads `row.eventName` + `row.payload` from the outbox row and calls `inngest.send({ name: row.eventName, data: row.payload })` with no allowlist. The file-level comment explicitly states: "adding a new lifecycle event means writing a new outbox row from a new producer — no drain change needed."
 
-The drain cron today only knows about `onboarding.session.started`. The two new confirm routes (3.1, 3.2) write `onboarding.entity-discovery.requested` and `onboarding.review.confirmed` to `OnboardingOutbox` with `status: PENDING_EMIT`. Without extending the drain handler, a failed optimistic emit would strand those rows forever — the exact stranding bug #33 was designed to prevent.
+Keep this task in the plan so Phase 3 reviewers know the decision was deliberate; do not add the registry / allowlist abstraction — it would be drift risk without upside.
 
-- [ ] **Step 1: Find the current drain handler**
-
-```bash
-grep -rn "drainOnboarding\|PENDING_EMIT" apps/web/src/lib/inngest/ apps/web/src/lib/services/
-```
-
-- [ ] **Step 2: If the drain hard-codes event names, replace with a registry**
-
-The drain's existing code fetches pending rows and calls `inngest.send({ name: row.eventName, data: row.payload })`. If it already dispatches by `eventName` generically, no change needed — just verify in Step 3's test.
-
-If it hard-codes `"onboarding.session.started"`, factor out the allow-list into a registry so adding future outbox events is a one-line change and drift between the drain + the emitters is structurally impossible:
-
-```typescript
-// apps/web/src/lib/inngest/outbox-emitters.ts
-//
-// Single source of truth for which Inngest events are driven by OnboardingOutbox.
-// When adding a new outbox event, add it here AND nowhere else — the drain reads
-// from this registry and the event-type validator does too.
-export const OUTBOX_EMITTERS = {
-  "onboarding.session.started": true,
-  "onboarding.entity-discovery.requested": true,
-  "onboarding.review.confirmed": true,
-} as const;
-
-export type OutboxEventName = keyof typeof OUTBOX_EMITTERS;
-
-export function isOutboxEventName(name: string): name is OutboxEventName {
-  return name in OUTBOX_EMITTERS;
-}
-```
-
-Drain:
-
-```typescript
-for (const row of pending) {
-  if (!isOutboxEventName(row.eventName)) {
-    logger.error({ rowId: row.id, eventName: row.eventName }, "Unknown outbox event");
-    continue;
-  }
-  await inngest.send({ name: row.eventName, data: row.payload as any });
-  await prisma.onboardingOutbox.update({
-    where: { id: row.id },
-    data: { status: "EMITTED", emittedAt: new Date() },
-  });
-}
-```
-
-- [ ] **Step 3: Integration test — all three event names drain**
-
-Extend the existing drain test to seed three `PENDING_EMIT` rows (one per event name) and assert all three are emitted + marked EMITTED.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 1: Verify (one command)**
 
 ```bash
-pnpm --filter web test -- drain-onboarding
-git add apps/web/src/lib/inngest/drain-onboarding-outbox.ts
-git commit -m "feat(outbox): extend drain to handle stage1/stage2 confirm events"
+grep -n "eventName" apps/web/src/lib/inngest/onboarding-outbox-drain.ts
+# Expect: dispatches row.eventName directly, no hardcoded event list.
 ```
+
+- [ ] **Step 2: Integration test coverage**
+
+The existing drain test already covers the generic dispatch path. No new test needed here; Task 7.7 (chaos test) will exercise the Stage 1/Stage 2 events end-to-end through the drain.
 
 ---
 
@@ -2206,29 +2223,19 @@ git commit -m "feat(onboarding-ui): PhaseEntityConfirmation component"
 
 - [ ] **Step 1: Add two phase cases**
 
-Inside the existing `switch (phase)`:
+`flow.tsx` destructures `{ response }: { response: OnboardingPollingResponse }` and switches on `response.phase`; each branch passes `response` to the child component (there is no `pollingData`, no `schemaId` prop, no `refresh` callback — polling owns refresh at the parent). Add two cases that match this existing pattern:
 
 ```tsx
 case "AWAITING_DOMAIN_CONFIRMATION":
-  return (
-    <PhaseDomainConfirmation
-      schemaId={schemaId}
-      candidates={pollingData.stage1Candidates ?? []}
-      onConfirmed={refresh}
-    />
-  );
+  return <PhaseDomainConfirmation response={response} />;
 case "AWAITING_ENTITY_CONFIRMATION":
-  return (
-    <PhaseEntityConfirmation
-      schemaId={schemaId}
-      stage2Candidates={pollingData.stage2Candidates ?? []}
-      onConfirmed={refresh}
-    />
-  );
+  return <PhaseEntityConfirmation response={response} />;
 case "DISCOVERING_DOMAINS":
 case "DISCOVERING_ENTITIES":
-  return <PhasePending message={phase === "DISCOVERING_DOMAINS" ? "Finding the right domains…" : "Finding the right topics…"} />;
+  return <PhasePending response={response} />;
 ```
+
+The two new components read `response.schemaId` + `response.stage1Candidates` / `response.stage2Candidates` directly from the response prop. Update Tasks 3.4 and 3.5 component signatures to accept `{ response }: { response: OnboardingPollingResponse }` instead of the `{ schemaId, candidates, onConfirmed }` shape shown earlier — the samples in 3.4/3.5 were drafted against a prior flow.tsx contract.
 
 - [ ] **Step 2: Commit**
 
@@ -2253,17 +2260,26 @@ git commit -m "feat(onboarding-ui): route new phases in flow.tsx"
 
 The new function is much smaller — it just transitions PENDING and emits the Stage 1 request event:
 
+Preserve the existing `cancelOn`, per-user concurrency limit, and retries — the plan must NOT regress these. The current `runOnboarding` shape (2-arg createFunction, triggers array, cancelOn + two-tier concurrency) is the contract to mirror — see `apps/web/src/lib/inngest/onboarding.ts:49–64`:
+
 ```typescript
 export const runOnboarding = inngest.createFunction(
   {
     id: "run-onboarding",
     name: "Onboarding — Stage 1 Trigger",
+    triggers: [{ event: "onboarding.session.started" }],
+    // Preserve existing cancel semantics — DELETE /api/onboarding/:schemaId
+    // emits onboarding.session.cancelled; Inngest cancels this run when
+    // data.schemaId matches.
+    cancelOn: [{ event: "onboarding.session.cancelled", match: "data.schemaId" }],
+    concurrency: [
+      { key: "event.data.schemaId", limit: 1 },
+      { key: "event.data.userId", limit: 3 },
+    ],
     retries: 2,
-    concurrency: [{ key: "event.data.schemaId", limit: 1 }],
   },
-  { event: "onboarding.session.started" },
   async ({ event, step }) => {
-    const schemaId: string = event.data.schemaId;
+    const { schemaId, userId } = event.data; // userId is needed downstream for Gmail tokens
 
     const schema = await step.run("load-schema", async () =>
       prisma.caseSchema.findUniqueOrThrow({
@@ -2272,13 +2288,15 @@ export const runOnboarding = inngest.createFunction(
       }),
     );
 
+    // Task 4.4 must wire `domain` into createSchemaStub BEFORE this check can succeed.
+    // Without that, every new onboarding throws here.
     if (!schema.domain) throw new Error(`Schema ${schemaId} missing domain`);
 
     // Use step.sendEvent (not inngest.send) so Inngest memoizes the dispatch across
     // function replays — prevents double-firing on retry.
     await step.sendEvent("emit-domain-discovery", {
       name: "onboarding.domain-discovery.requested",
-      data: { schemaId },
+      data: { schemaId, userId }, // userId flows to Stage 1 so it can load Gmail tokens
     });
 
     return { emitted: true };
@@ -2322,11 +2340,11 @@ await step.run("verify-confirmed-entities", async () => {
 });
 ```
 
-- [ ] **Step 2: CRITICAL — remove any `advanceSchemaPhase(… "AWAITING_ENTITY_CONFIRMATION", "PROCESSING_SCAN")` or equivalent**
+- [ ] **Step 2: CRITICAL — retarget `create-scan-job`'s phase advance from `AWAITING_REVIEW` to `AWAITING_ENTITY_CONFIRMATION`**
 
-The `/entity-confirm` API route (Task 3.2) now owns this transition via CAS `updateMany`. Function B runs AFTER the route commits, so Function B must observe the schema **already in PROCESSING_SCAN**. This matches the existing pattern for `AWAITING_REVIEW → PROCESSING_SCAN` documented in `docs/01_denim_lessons_learned.md` line 447.
+There is no standalone `advanceSchemaPhase("AWAITING_REVIEW" → "PROCESSING_SCAN")` to delete. The advance lives **inside** the `create-scan-job` step (`onboarding.ts:592–624`) as `advanceSchemaPhase({ from: "AWAITING_REVIEW", to: "PROCESSING_SCAN", work: ... })`.
 
-Grep for any phase-advance calls from PROCESSING_SCAN's upstream state in `runOnboardingPipeline` and delete them. Keep only the CAS calls it does own: `PROCESSING_SCAN → COMPLETED` and `PROCESSING_SCAN → NO_EMAILS_FOUND`.
+Task 3.2's `/entity-confirm` route now owns `AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN` via CAS `updateMany`, so Function B must observe the schema **already in PROCESSING_SCAN**. Update `create-scan-job` to guard against the new upstream phase instead — change its `advanceSchemaPhase` call to `from: "AWAITING_ENTITY_CONFIRMATION"`. This keeps the pattern documented at `docs/01_denim_lessons_learned.md` CAS map (Bug 3 rule).
 
 ```bash
 grep -n "advanceSchemaPhase" apps/web/src/lib/inngest/onboarding.ts
@@ -2339,8 +2357,10 @@ grep -n "advanceSchemaPhase" apps/web/src/lib/inngest/onboarding.ts
 `stage1Candidates` and `stage2Candidates` contain subject strings + sender domains — PII that's no longer needed once the pipeline has committed cases and entities. In the terminal step of `runOnboardingPipeline` that transitions PROCESSING_SCAN → COMPLETED, clear them:
 
 ```typescript
-// inside the advanceSchemaPhase PROCESSING_SCAN → COMPLETED work()
-await tx.caseSchema.update({
+// inside the advance-to-completed step's advanceSchemaPhase work() callback
+// (see onboarding.ts:714–725). There is no `tx` in scope — the work callback
+// uses the singleton `prisma` client directly.
+await prisma.caseSchema.update({
   where: { id: schemaId },
   data: {
     // keep stage2ConfirmedDomains for debugging history; clear the bulky PII JSON
@@ -2367,17 +2387,39 @@ git commit -m "refactor(onboarding): remove Pass 2 + null out stage1/2 JSON on C
 **Files:**
 - Modify: `apps/web/src/app/api/onboarding/[schemaId]/route.ts` (the old POST handler for single-screen review confirm)
 
-- [ ] **Step 1: Return 410 Gone from the old POST**
+- [ ] **Step 1: Keep `withAuth` wrapper; preserve #33 already-confirmed retry semantics**
 
-The old review-confirm flow is gone. New clients use `/entity-confirm`.
+The old POST handler is wrapped in `withAuth` and returns 200 `{ status: "already-confirmed" }` for stale retries where the schema is already in a post-confirmation phase (issue #33 TOCTOU guard). Replacing the whole handler with a bare `function POST()` returning 410 would break in-flight retries from older clients. Keep the wrapper; short-circuit with 410 ONLY for phases that belong to the old single-screen flow, and preserve the 200 already-confirmed response for new-flow phases.
 
 ```typescript
-export async function POST() {
-  return NextResponse.json(
-    { error: "Use /api/onboarding/:schemaId/entity-confirm (new fast-discovery flow)" },
-    { status: 410 },
-  );
-}
+export const POST = withAuth(async ({ userId, request }) => {
+  try {
+    const schemaId = extractOnboardingSchemaId(request);
+    const schema = await prisma.caseSchema.findUnique({
+      where: { id: schemaId },
+      select: { id: true, userId: true, phase: true },
+    });
+    assertResourceOwnership(schema, userId, "Schema");
+
+    // New-flow phases — retry landed after migration; return already-confirmed.
+    if (
+      schema!.phase === "PROCESSING_SCAN" ||
+      schema!.phase === "COMPLETED" ||
+      schema!.phase === "AWAITING_ENTITY_CONFIRMATION" ||
+      schema!.phase === "AWAITING_DOMAIN_CONFIRMATION"
+    ) {
+      return NextResponse.json({ data: { status: "already-confirmed" } });
+    }
+
+    // Old-flow phases — the single-screen review is gone.
+    return NextResponse.json(
+      { error: "Use /api/onboarding/:schemaId/entity-confirm (new fast-discovery flow)" },
+      { status: 410 },
+    );
+  } catch (error) {
+    return handleApiError(error, { service: "onboarding", operation: "deprecated-confirm", userId });
+  }
+});
 ```
 
 - [ ] **Step 2: Commit**
@@ -2397,10 +2439,14 @@ git commit -m "refactor(api): deprecate old POST /onboarding/:schemaId confirm"
 - [ ] **Step 1: Find and update `createSchemaStub`**
 
 ```bash
-grep -n "createSchemaStub\|createCaseSchemaStub" apps/web/src/lib/services/interview.ts
+grep -n "createSchemaStub" apps/web/src/lib/services/interview.ts
 ```
 
-Remove any code that pre-fills `hypothesis` / `validation` / `primaryEntityConfig`. New stub sets only `phase = PENDING`, `inputs`, `domain`. Stage 1+2 populate the rest.
+Current stub at `interview.ts:329–365` already does NOT set `hypothesis` / `validation` — those are stored inside the raw hypothesis JSON by `persistSchemaRelations`, not by the stub. The stub DOES set placeholder strings for `name`, `description`, `primaryEntityConfig: {}`, `discoveryQueries: []`, `summaryLabels: {}`, `clusteringConfig: {}`, `extractionPrompt: ""`, `synthesisPrompt: ""`, `status: "DRAFT"` because those columns are likely NOT NULL.
+
+**Before removing placeholders**, verify each column's nullability in `apps/web/prisma/schema.prisma`. Any column that is NOT NULL must either stay defaulted in the stub OR be migrated to nullable (raw-SQL migration via `/supabase-db`) before the removal lands. Don't break schema validity to save a few lines.
+
+**Critically** — add `domain: opts.inputs?.domain` (or equivalent) as a first-class field write on the stub. Task 4.1 Step 1 checks `!schema.domain` and throws; that check fails today because the stub never populates `domain`. This closes the gap.
 
 - [ ] **Step 2: Typecheck, commit**
 
@@ -2538,6 +2584,13 @@ This replaces the entire prior Phase 5 (Tasks 5.1–5.4).
 
 Each file holds ONLY the machine-readable bits. The corresponding `.md` file keeps the prose + the LOCKED marker. If you edit the `.yaml`, the runtime config changes. If you edit the `.md`, you're documenting intent.
 
+- [ ] **Step 0: Install the YAML loader**
+
+```bash
+pnpm --filter web add js-yaml
+pnpm --filter web add -D @types/js-yaml
+```
+
 - [ ] **Step 1: Create `property.config.yaml`**
 
 ```yaml
@@ -2565,6 +2618,8 @@ stage1Keywords:
 - [ ] **Step 2: Create `school_parent.config.yaml`** (19 keywords)
 - [ ] **Step 3: Create `agency.config.yaml`** (28 keywords; 18 formal + 10 working)
 - [ ] **Step 4: Rewrite `domain-shapes.ts` to import the YAML at module load**
+
+This step **deletes** the hardcoded `DOMAIN_SHAPES` Record that landed in commit `e3242be` (Task 0.3) and replaces it with the YAML-backed loader below. Not coexistence — wholesale replacement. The existing Task 0.3 tests continue to pass because the YAML keyword counts match the TS values exactly (property 13 / school_parent 19 / agency 28).
 
 ```typescript
 // apps/web/src/lib/config/domain-shapes.ts
@@ -2612,9 +2667,9 @@ The tests that assert "property has 13 keywords, agency has 28" still pass becau
 
 They are obsolete. No spec-compliance harness, no markdown parser, no Section 9 YAML-in-markdown, no CI step. If the YAML and code ever disagree, there IS no code to disagree — the YAML IS the code.
 
-- [ ] **Step 7: Deployment note**
+- [ ] **Step 7: Deployment note — HARD GATE**
 
-The YAML files must ship to Vercel. They live in `docs/` which is already part of the repo and not gitignored, so no action needed — just verify in the first preview deployment that `readFileSync` finds them. If the `docs/` path isn't in the Vercel build output, switch to `import` with a JSON/YAML loader (vite-plugin-yaml or bun/node native JSON import with a build-step conversion).
+The YAML files must ship to Vercel. They live in `docs/` which is already part of the repo and not gitignored. `path.resolve(process.cwd(), "../../docs/...")` is cwd-sensitive — on Vercel, `process.cwd()` is the function bundle root, not the repo root. **Treat the first preview deployment as a hard verification gate**: start the preview, load an onboarding session end-to-end, and confirm `getDomainShape` doesn't throw at request time. If the path resolves wrong, fall back to a build-step that copies each `*.config.yaml` into `apps/web/public/domain-shapes/` (or bundles as JSON via a `next.config.ts` import rule) and reads from the known-shipped path at runtime. Do not merge Phase 5 until this is green.
 
 - [ ] **Step 8: Commit**
 
@@ -3104,12 +3159,20 @@ git push
 - `packages/ai/src/prompts/interview-hypothesis.ts`
 - `packages/ai/src/prompts/interview-validate.ts`
 - `packages/ai/src/parsers/validation-parser.ts`
-- `packages/ai/src/__tests__/validation-parser.test.ts`
+- `packages/ai/src/__tests__/validation-parser.test.ts` — **NOTE:** Added by issue #70 in commit `9a658fd`. Confirm deletion is deliberate. If the parser regex patterns are reused anywhere post-migration, transplant the test before deleting.
 
 **Files (modify):**
 - `apps/web/src/lib/services/interview.ts` — delete `generateHypothesis`, `validateHypothesis`, `resolveWhoEmails`
 - `apps/web/src/lib/services/expansion-targets.ts` — delete file
 - `apps/web/src/lib/services/__tests__/expansion-targets.test.ts` — delete file
+
+- [ ] **Step 0: Verify Task 7.4 differential eval is committed**
+
+```bash
+git log --oneline --all | grep -iE "differential|eval.*baseline|eval.*run|7\.4"
+```
+
+Abort Phase 6 if no commit is present. **After this task's deletions commit, the old hypothesis/validate path is irrecoverable and Task 7.4 cannot re-run.** Task 7.4 must compare old-flow vs new-flow on the same fixtures before deletion.
 
 - [ ] **Step 1: Delete + run typecheck + fix any dangling imports**
 
@@ -3180,6 +3243,9 @@ git commit -m "chore: delete phase-review (superseded by phase-domain/entity-con
 
 **Files:**
 - Modify: `apps/web/prisma/schema.prisma`
+- Sweep: 18 files reference `GENERATING_HYPOTHESIS` — `packages/types/src/events.ts`, `apps/web/src/lib/inngest/onboarding.ts`, `apps/web/src/lib/services/onboarding-state.ts` (`SCHEMA_PHASE_ORDER` at line 35), `apps/web/src/lib/services/onboarding-polling.ts`, `apps/web/src/app/api/onboarding/[schemaId]/retry/route.ts`, `apps/web/src/components/onboarding/phase-generating.tsx`, `apps/web/src/components/onboarding/flow.tsx`, plus 3 integration tests. Each reference either re-routes to `DISCOVERING_DOMAINS` or is guarded as a deprecated no-op.
+
+Since Postgres cannot drop enum values cheaply, the enum value itself STAYS. `SCHEMA_PHASE_ORDER` must also keep `GENERATING_HYPOTHESIS: 1` — removing it breaks the exhaustive Record TypeScript gate. This task is a sweep + documentation update, not a deletion.
 
 Only do this AFTER confirming no rows in `case_schemas` are in the old phase:
 
@@ -3466,6 +3532,8 @@ git commit -m "test(eval): synthetic fixture generator + committed outputs"
 - Create: `apps/web/tests/eval/run-discovery-eval.ts`
 - Create: `apps/web/tests/eval/eval-types.ts`
 
+**Dependency:** this task cannot land until Phase 2 Task 2.4 (agency-entity) completes — the runner imports `extractPropertyCandidates`, `extractSchoolCandidates`, and `deriveAgencyEntity` from the Phase 2 modules.
+
 Modes:
 - **Committed fixture mode** (always): reads `tests/fixtures/onboarding/*/*.yaml`.
 - **Local sample mode** (local only): if `DENIM_GMAIL_SAMPLES_DIR` env var set, also walks the 417-email JSON sample.
@@ -3559,7 +3627,9 @@ The Vitest wrapper integrates with CI's pass/fail signal. Fails if precision-at-
 
 - [ ] **Step 2: Implement `discovery-eval.vitest.ts`**
 
-See `2026-04-16-issue-95-eval-draft.md` for the full file (~60 lines). Iterates every domain × fixture-type, asserts `precisionAt20 >= threshold` using `SLO.stage1.p95Ms` (from Task 8.1) as the latency sanity bound.
+See `2026-04-16-issue-95-eval-draft.md` for the full file (~60 lines). Iterates every domain × fixture-type, asserts `precisionAt20 >= threshold`.
+
+**Ordering note:** Task 7.5 lands BEFORE Task 8.1. If you want to use `SLO.stage1.p95Ms` as the latency sanity bound (per the eval draft), either (a) reorder 7.5 to land after 8.1, or (b) inline a local constant here and let Task 8.1 refactor it to read from `slo.ts` when that file is introduced. Prefer (b) for this sprint — it keeps Phase 7 landing-order simple.
 
 - [ ] **Step 3: Add to CI**
 
@@ -3930,6 +4000,8 @@ The existing `pnpm test:eval` glob (`tests/eval/*.test.ts` / `.vitest.ts`) picks
 - Modify: `apps/web/src/lib/inngest/entity-discovery-fn.ts`
 
 Thin structured-log emission at stage completion. No new infrastructure; forward-compatible with any log drain.
+
+**Relationship to existing telemetry:** `apps/web/src/lib/inngest/onboarding.ts` currently emits per-step wall-clock timings (`stepDurationMs`, `dbReadMs`, `gmailTokenMs`, `gmailSampleScanMs`, `validateHypothesisMs`, `dbWriteMs` — added in commit `fcc8420`). Task 6.1's deletion of the old hypothesis/validate code path removes those emission sites along with the code. **This task is the replacement for that telemetry in the new flow.** Together with `runDomainDiscovery` / `runEntityDiscovery` own logs, it re-establishes full wall-clock visibility across the pre-scan stages so the `onboarding-timing` skill has something to read.
 
 - [ ] **Step 1: `domain-discovery-fn.ts` — capture duration inside `step.run("discover", …)`**
 
