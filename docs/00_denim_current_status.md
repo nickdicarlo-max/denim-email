@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-16 (Entity Robustness Phase 1 shipped; 3 per-domain spec files + strategy plan reframe committed as `5f1c062`)
+Last updated: 2026-04-16 (Fast-discovery rebuild plan hardened through 3 review passes and committed as `323ea9f` — ready to execute tomorrow)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -530,12 +530,60 @@ Spec: `docs/superpowers/specs/2026-04-16-entity-robustness-phase1-design.md`. Im
 2. With Phase 1 closed, dispatch issue #95 to the writing-plans skill for the staged fast-discovery rebuild — the larger architectural effort.
 3. Or, if Nick wants to finish per-domain coverage first: dispatch issue #94 (remaining-domain interviews) using the same brainstorming flow that produced today's locked files.
 
+## 2026-04-16 Evening — Issue #95 Plan Hardened (3 Review Passes)
+
+The staged fast-discovery rebuild plan (`docs/superpowers/plans/2026-04-16-issue-95-fast-discovery-rebuild.md`) went through three full review passes tonight. Ready to execute tomorrow.
+
+### Commit
+
+- **`323ea9f`** on `feature/perf-quality-sprint` — +2,065 / −371 lines. Plan is now 5,228 lines covering 10 phases.
+
+### What's in the plan
+
+- **Phases 0-6** — schema + config, Stage 1 domain discovery, Stage 2 entity discovery, review UX, pipeline cutover, spec-as-config, cleanup
+- **Phase 7** — eval framework (7 tasks): YAML fixtures, synthetic generator, runner with precision-at-20 / recall / rank / dup-rate, differential mode (old-flow vs new-flow before Phase 6 deletes the old), CI gate, dataset-growth workflow, **outbox chaos test**
+- **Phase 8** — SLO commitments (4 tasks): `slo.ts` single source of truth, latency-regression CI teeth, stage1/stage2 duration telemetry, weekly dashboard
+- **Phase 9** — rollback runbook (2am-ready, 3 scenarios with copy-pasteable SQL + git)
+- **Phase 10** — deferred: Claude validator pass (wait for eval data)
+
+### Critical ordering rule
+
+**Task 7.4 (differential eval) MUST run before Phase 6 commits.** Phase 6 deletes `generateHypothesis` + `validateHypothesis`. Task 7.4 compares old-flow vs new-flow output on the same fixtures so Nick can mark each diff as improvement / regression / neutral. After Phase 6, the old column is irrecoverable.
+
+### Hardening passes applied (summary of what changed vs the first draft)
+
+1. **Pass #1 — lessons-learned review.** TOCTOU guards on confirm routes (#33 pattern), table ownership (CaseSchema writes routed through InterviewService), CAS Transition Ownership Map updated in `01_denim_lessons_learned.md`, outbox drain extended to new event names.
+2. **Pass #2 — security + performance + simplification.** Fixed IDOR in confirm routes (wrong `withAuth` shape that defeated ownership checks — would have shipped a cross-tenant bug); added `userId` to OnboardingOutbox inserts; Zod validated `identityKey` charset + reserved `@`-prefix for SECONDARY; removed `res.text()` from Gmail error path (could echo Bearer header); added ReDoS guard. Reverted Stage 2 serialization to parallel fan-out (quota math showed serialization was overcorrection). `persistConfirmedEntities` batched via `createMany` + `updateMany`. Spec files became runtime config via sibling `.config.yaml` import — deleted the spec-compliance harness, markdown parser, fixture runner, and CI step.
+3. **Pass #3 — "would Jeff Dean be proud?" quality layer.** Added Phases 7 + 8 + 9 + regex v2. This is what turns "feels like it works" into "precision-at-20 ≥ 0.70 enforced in CI" and "Stage 1 p95 ≤ 8s enforced via latency-regression test."
+
+### Next action on resume
+
+**Tomorrow's first task:** open `docs/superpowers/plans/2026-04-16-issue-95-fast-discovery-rebuild.md`, start at **Task 0.1** (extend `SchemaPhase` enum with 4 new values), work through Phase 0 foundation (4 tasks: enum, `identityKey` column, domain-shapes config, tunables). Estimated Phase 0 wall: ~1-2 hours.
+
+**Execution harness recommendation:** use `superpowers:subagent-driven-development` — fresh subagent per task + two-stage review. Each task's checkboxes + commit message are ready-to-run.
+
+**Key gotchas to remember:**
+- Task 1.2 adds a new `getMessageMetadata` method to the existing `GmailClient` class. Don't invent `listMessages` / factory functions — use `searchEmails` + `new GmailClient(token)`.
+- `withAuth` passes `{ userId, request }` — NOT `{ user, params }`. Read the existing `[schemaId]/route.ts:73-78` pattern.
+- OnboardingOutbox has composite PK `(schemaId, eventName)` — two concurrent routes for the same event collide on P2002; that's the idempotency guard.
+- Task 7.4 runs BEFORE Phase 6. Mark this with a blocker annotation on the plan TODO when executing.
+
+### Two untracked scripts in working tree (unrelated to this plan)
+
+- `scripts/simulate-stage1-domains.mjs`
+- `scripts/validate-agency-keywords.mjs`
+
+Both are Discovery 9 validator work from earlier today (2026-04-16). Not committed because they embed specific business contacts + reference the gitignored `Denim_Samples_Individual/` folder. Leave as-is.
+
+---
+
 ## What's Next
 
 ### Immediate
+- **Issue #95 — Fast-discovery onboarding rebuild** (plan committed as `323ea9f` on 2026-04-16 evening). Start at Task 0.1. See the 2026-04-16 Evening session block above for gotchas and ordering rules.
 - ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 early AM (3 runs, all GOOD post-#85)
 - **Phase 3 code-complete** ✅ 2026-04-15 PM (commits `7c0d1d0`, `2c6b373`, `f3b54ff`) — E2E measurement pending
-- **Phase 4 (#63 batch round-trips → #73 review screen render → #25 umbrella close)** — ready to start after Phase 3 measurement
+- **Phase 4 (#63 batch round-trips → #73 review screen render → #25 umbrella close)** — was the prior sprint's next-up; superseded by #95 rebuild. Revisit after #95 ships.
 
 ### Open pipeline issues (prioritized)
 - **#73** Review screen timing — partially addressed by Plan 1; timing variance remains (~48–107s); will be re-measured at Phase 4.2
