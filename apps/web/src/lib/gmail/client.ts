@@ -143,6 +143,87 @@ export class GmailClient {
   }
 
   /**
+   * List Gmail message IDs matching a query, without fetching per-message metadata.
+   *
+   * Thin wrapper around `users.messages.list` — one API call, returns only the
+   * ID strings. Pair with `getMessageMetadata` when you want From/Subject/etc
+   * headers but need to count per-message errors yourself.
+   */
+  async listMessageIds(query: string, maxResults: number): Promise<string[]> {
+    const start = Date.now();
+    const operation = "listMessageIds";
+
+    logger.info({ service: "gmail", operation, query, maxResults });
+
+    try {
+      const response = await this.callGmailWithRetry(() =>
+        this.gmail.users.messages.list({
+          userId: "me",
+          q: query,
+          maxResults,
+        }),
+      );
+
+      const ids = response.data.messages?.map((m: { id?: string | null }) => m.id ?? "") ?? [];
+      const filtered = ids.filter((id: string) => id.length > 0);
+
+      logger.info({
+        service: "gmail",
+        operation,
+        durationMs: Date.now() - start,
+        messageCount: filtered.length,
+      });
+
+      return filtered;
+    } catch (error) {
+      logger.error({ service: "gmail", operation, error });
+      throw new ExternalAPIError(
+        `Gmail listMessageIds failed: ${error instanceof Error ? error.message : String(error)}`,
+        "gmail",
+      );
+    }
+  }
+
+  /**
+   * Fetch metadata (selected headers only) for a single Gmail message.
+   *
+   * Returns the raw response payload shape `{ id, payload: { headers } }` so
+   * callers can decide which headers to read. Per Gmail API semantics, the
+   * response includes ONLY the headers named in `headerNames`.
+   *
+   * Errors are thrown as-is (not wrapped in ExternalAPIError) so the caller
+   * can count per-message failures. Transient errors are already retried by
+   * `callGmailWithRetry`.
+   */
+  async getMessageMetadata(
+    messageId: string,
+    headerNames: string[] = ["From", "Subject"],
+  ): Promise<{ id: string; payload: { headers: Array<{ name: string; value: string }> } }> {
+    const response = await this.callGmailWithRetry(() =>
+      this.gmail.users.messages.get({
+        userId: "me",
+        id: messageId,
+        format: "metadata",
+        metadataHeaders: headerNames,
+      }),
+    );
+
+    const data = response.data as {
+      id?: string | null;
+      payload?: { headers?: Array<{ name?: string | null; value?: string | null }> };
+    };
+
+    const headers = (data.payload?.headers ?? [])
+      .filter((h) => typeof h.name === "string" && typeof h.value === "string")
+      .map((h) => ({ name: h.name as string, value: h.value as string }));
+
+    return {
+      id: data.id ?? messageId,
+      payload: { headers },
+    };
+  }
+
+  /**
    * Fetch recent emails and group by sender domain.
    * Returns messages and discovery summary sorted by count descending.
    *
