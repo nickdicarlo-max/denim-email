@@ -16,6 +16,7 @@ import { dailyStatusDecay } from "./daily-status-decay";
 import { runOnboarding, runOnboardingPipeline } from "./onboarding";
 import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runDomainDiscovery } from "./domain-discovery-fn";
+import { runEntityDiscovery } from "./entity-discovery-fn";
 import { runScan } from "./scan";
 
 const BATCH_SIZE = ONBOARDING_TUNABLES.extraction.fanOutBatchSize;
@@ -1186,6 +1187,7 @@ export const functions = [
   runOnboarding, // Function A — consumes onboarding.session.started, advances to AWAITING_REVIEW
   runOnboardingPipeline, // Function B — consumes onboarding.review.confirmed, drives pipeline to COMPLETED
   runDomainDiscovery, // #95 Stage 1 — consumes onboarding.domain-discovery.requested, advances to AWAITING_DOMAIN_CONFIRMATION
+  runEntityDiscovery, // #95 Stage 2 — consumes onboarding.entity-discovery.requested, advances to AWAITING_ENTITY_CONFIRMATION
   runScan, // Parent workflow — consumes scan.requested, emits scan.emails.discovered
   fanOutExtraction,
   extractBatch,

@@ -169,8 +169,48 @@ Trade-off: the broader tokenizer could pick up a person name if the same first n
 
 ---
 
+## Task 2.5 — Stage 2 dispatcher + Inngest wrapper (commit TBD — this commit)
+
+### D2.5-1 — `findConvergentToken` requires `best.count >= 2`
+
+**Plan said / previously shipped (D2.4-2):** No minimum count; 80% of names was the only gate.
+
+**Shipped now:** Additional guard — `best.count < 2 ⇒ return null`.
+
+**Why:** Task 2.5's dispatcher test `"agency: runs domain derivation on confirmed domain"` passes a single display name (`"Sarah Chen | Anthropic"`). Under the prior D2.4-2 algorithm, every token in that name trivially has count=1, fraction=100%, and Map-iteration order picks "Sarah" as the "convergent" label. Requiring at least 2 names to agree before claiming convergence closes the single-sample false-positive without losing real convergence (the task 2.4 happy path has 4 matches across 5 names and still passes).
+
+This tightens D2.4-2, not reverses it — the `length >= 5` size gate from the original plan is still gone. The new invariant is "at least 2 independent names agree AND they are ≥80% of the sample," which is closer to the statistical intent.
+
+### D2.5-2 — Widened `Stage2Result.perDomain[]` with `failed?: boolean` / `errorMessage?: string`
+
+**Plan said:**
+
+```typescript
+perDomain: Array<{
+  confirmedDomain: string;
+  algorithm: string;
+  subjectsScanned: number;
+  candidates: unknown[];
+  errorCount: number;
+}>;
+```
+
+**Shipped:** Added optional `failed?: boolean` and `errorMessage?: string`.
+
+**Why:** The Inngest wrapper constructs a wider per-domain object (includes `failed` to signal isolated per-domain crashes + optional `errorMessage` for observability) and passes it to `writeStage2Result`. TypeScript's structural typing admits the assignment against the narrower schema, but the wider fields get silently stripped at the DB write boundary, which defeats the purpose of writing them. Widening the interface to match the data actually written makes the persistence honest and keeps the JSON column faithful to the producer.
+
+### D2.5-3 — Logger call-shape: single-arg `LogContext`, not pino-style `(obj, msg)`
+
+**Plan said (and Task 2.1's plan sample too):** `logger.warn({ ... }, "message string")`.
+
+**Shipped:** `logger.warn({ service, operation, ...context })` — one argument only. The `operation` field carries the short label that pino-style would have put in the message.
+
+**Why:** The project's `apps/web/src/lib/logger.ts` exports `logger.{info,warn,error}: (context: LogContext) => void` — single-arg only. Passing a second argument is a TS2554 error. The plan's sample assumed a pino-like API. Noted here so future wrappers match the real shape.
+
+---
+
 ## Open items / future tasks
 
-- Task 2.5 (dispatcher + Inngest wrapper) — corrections already applied to the plan; deviations during implementation TBD.
+All Phase 2 primitives + wrapper shipped. Phase 3 (review-screen routes + components) is next.
 
 Append new sections here as tasks land.

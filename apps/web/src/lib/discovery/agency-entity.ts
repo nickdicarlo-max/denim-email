@@ -60,8 +60,11 @@ function tokenize(name: string): string[] {
 
 /**
  * Find the token that appears (case-insensitively) in ≥80% of display
- * names, counting at most once per name. Returns the original-cased form
- * of the token as seen in the data.
+ * names, counting at most once per name. Requires at least 2 names to
+ * converge on the same token — a single display name trivially has 100%
+ * "convergence" on every one of its own tokens, which would pick the
+ * first word (typically a first name) instead of the company name.
+ * Returns the original-cased form of the token as seen in the data.
  */
 function findConvergentToken(names: string[]): string | null {
   if (names.length === 0) return null;
@@ -85,6 +88,7 @@ function findConvergentToken(names: string[]): string | null {
     if (!best || row.count > best.count) best = row;
   }
   if (!best) return null;
+  if (best.count < 2) return null;
   return best.count / names.length >= CONVERGENCE_THRESHOLD ? best.original : null;
 }
 

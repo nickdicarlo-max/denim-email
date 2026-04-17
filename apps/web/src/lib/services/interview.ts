@@ -1016,6 +1016,10 @@ export interface Stage2Result {
     subjectsScanned: number;
     candidates: unknown[];
     errorCount: number;
+    /** True when the per-domain Stage 2 pass crashed and was isolated
+     *  (a Gmail auth error rethrows to fail the whole schema instead). */
+    failed?: boolean;
+    errorMessage?: string;
   }>;
 }
 

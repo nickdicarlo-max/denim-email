@@ -18,6 +18,20 @@ export type DenimEvents = {
       userId: string;
     };
   };
+  "onboarding.entity-discovery.requested": {
+    /**
+     * Fast-discovery Stage 2 entry (issue #95). Emitted by
+     * POST /api/onboarding/:schemaId/domain-confirm after the user confirms
+     * Stage-1 domains. runEntityDiscovery fans out one per-domain pass per
+     * confirmed domain, advances DISCOVERING_ENTITIES →
+     * AWAITING_ENTITY_CONFIRMATION, and writes stage2Candidates via
+     * InterviewService.
+     */
+    data: {
+      schemaId: string;
+      userId: string;
+    };
+  };
   "onboarding.session.started": {
     /**
      * Kicks off the runOnboarding parent workflow. The CaseSchema stub
