@@ -5,6 +5,19 @@
  */
 
 export type DenimEvents = {
+  "onboarding.domain-discovery.requested": {
+    /**
+     * Fast-discovery Stage 1 entry (issue #95). CaseSchema stub must exist
+     * in phase=PENDING with `domain` set. runDomainDiscovery advances
+     * PENDING → DISCOVERING_DOMAINS → AWAITING_DOMAIN_CONFIRMATION and
+     * writes stage1Candidates via InterviewService. User confirms in the
+     * new Stage 1 UI, which emits onboarding.entity-discovery.requested.
+     */
+    data: {
+      schemaId: string;
+      userId: string;
+    };
+  };
   "onboarding.session.started": {
     /**
      * Kicks off the runOnboarding parent workflow. The CaseSchema stub

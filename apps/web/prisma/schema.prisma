@@ -158,6 +158,16 @@ model CaseSchema {
   hypothesis      Json?
   validation      Json?
 
+  // Fast-discovery Stage 1 result (runDomainDiscovery → InterviewService). Issue #95.
+  stage1Candidates    Json?
+  stage1QueryUsed     String?
+  stage1MessagesSeen  Int?
+  stage1ErrorCount    Int?
+
+  // Fast-discovery Stage 2 — user-confirmed domains + per-domain entity candidates. Issue #95.
+  stage2ConfirmedDomains  Json?
+  stage2Candidates        Json?
+
   // Relationships
   tags              SchemaTag[]
   extractedFields   ExtractedFieldDef[]

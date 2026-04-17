@@ -980,3 +980,75 @@ export async function finalizeSchema(
     (schemaId) => ({ schemaId }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Fast-discovery writers (issue #95). CaseSchema is single-writer-owned by
+// InterviewService per engineering-practices.md — Inngest functions must
+// never write stage1/stage2 columns directly.
+// ---------------------------------------------------------------------------
+
+export interface Stage1Result {
+  candidates: Array<{ domain: string; count: number }>;
+  queryUsed: string;
+  messagesSeen: number;
+  errorCount: number;
+}
+
+export async function writeStage1Result(
+  schemaId: string,
+  result: Stage1Result,
+): Promise<void> {
+  await prisma.caseSchema.update({
+    where: { id: schemaId },
+    data: {
+      stage1Candidates: result.candidates as unknown as Prisma.InputJsonValue,
+      stage1QueryUsed: result.queryUsed,
+      stage1MessagesSeen: result.messagesSeen,
+      stage1ErrorCount: result.errorCount,
+    },
+  });
+}
+
+export interface Stage2Result {
+  perDomain: Array<{
+    confirmedDomain: string;
+    algorithm: string;
+    subjectsScanned: number;
+    candidates: unknown[];
+    errorCount: number;
+  }>;
+}
+
+export async function writeStage2Result(
+  schemaId: string,
+  result: Stage2Result,
+): Promise<void> {
+  await prisma.caseSchema.update({
+    where: { id: schemaId },
+    data: {
+      stage2Candidates: result.perDomain as unknown as Prisma.InputJsonValue,
+    },
+  });
+}
+
+/**
+ * CAS-style write: persist confirmed domains AND advance the phase in a
+ * single row update. Returns the number of rows updated — 0 means the phase
+ * gate didn't match (TOCTOU or double-submit), and the caller should treat
+ * that as "already advanced, don't re-run Stage 2" (issue #33 pattern).
+ */
+export async function writeStage2ConfirmedDomains(
+  tx: Prisma.TransactionClient,
+  schemaId: string,
+  confirmedDomains: string[],
+): Promise<number> {
+  const { count } = await tx.caseSchema.updateMany({
+    where: { id: schemaId, phase: "AWAITING_DOMAIN_CONFIRMATION" },
+    data: {
+      stage2ConfirmedDomains: confirmedDomains as unknown as Prisma.InputJsonValue,
+      phase: "DISCOVERING_ENTITIES",
+      phaseUpdatedAt: new Date(),
+    },
+  });
+  return count;
+}
