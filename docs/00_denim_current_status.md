@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-17 (Issue #95 fast-discovery rebuild: **Phase 0 + Phase 1 code-complete + real-sample ground-truth validated**. 11 commits on `feature/perf-quality-sprint`. Stopping here for commit review before Phase 2.)
+Last updated: 2026-04-17 PM (Issue #95 fast-discovery rebuild: **Phase 2 code-complete**. +11 commits today on `feature/perf-quality-sprint` landing plan corrections + all 5 Phase 2 tasks (2.1–2.5) + a running deviations log. Phase 3 (review-screen routes/UI) queued.)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -663,13 +663,79 @@ Task 1.6 + 1.6b were done manually because the plan had 7+ signature mismatches 
 
 All three depend on the gitignored `Denim_Samples_Individual/` folder. Leave untracked.
 
+## 2026-04-17 PM Session — Issue #95 Phase 2 Code-Complete + Plan Corrections
+
+Single session shipped all 5 Phase 2 tasks, the pre-exec plan corrections from yesterday's audit, and a running deviations log. +11 commits on `feature/perf-quality-sprint` atop `96ff38d`.
+
+### Plan corrections applied (`d0d7b34`)
+
+Patched ~40 call-site / signature mismatches between the plan's code samples and the real codebase, as catalogued in `docs/superpowers/plans/2026-04-17-issue-95-phase2-corrections.md` (audit artifact from 2026-04-17 AM). Every Phase 2+ sample now matches Phase 0/1 conventions: `ONBOARDING_TUNABLES.stage{1,2}` namespacing, 2-arg `createFunction({..., triggers:[{event}]}, handler)`, opts-object `advanceSchemaPhase`, 3-arg `markSchemaFailed`, `matchesGmailAuthError`, `listMessageIds` (not `searchEmails`), `withAuth({userId, request})`, Task 3.3b flagged as verified no-op, OnboardingPhase union extension, Task 6.1 Step 0 gate for pre-Phase-6 differential eval, YAML loader install + Vercel deployment gate, and more.
+
+### Phase 2 commits (7 tasks = 5 features + polish + deviations log)
+
+| Commit | Task | Summary |
+|---|---|---|
+| `bf2f716` | 2.1 | `dedupByLevenshtein` — per-key Levenshtein merge; bumped `levenshteinLongThreshold` 2→3 |
+| `2e5bbee` | 2.2 | `extractPropertyCandidates` — address regex + year-guard + Levenshtein dedup |
+| `a8ee9dd` | polish | plan Task 2.1 sample sync + tunables comment accuracy |
+| `dd08b81` | 2.3 | `extractSchoolCandidates` — 2-pattern regex (institutions + activities) |
+| `870eba3` | deviations | created running deviations log doc |
+| `4a1de76` | 2.4 | `deriveAgencyEntity` — domain + ≥80% display-name token convergence |
+| `9db4364` | 2.5 | `runEntityDiscovery` Inngest fn + `discoverEntitiesForDomain` dispatcher + `onboarding.entity-discovery.requested` event + registration in `functions.ts` |
+
+### Deviations captured (canonical: `docs/superpowers/plans/2026-04-17-issue-95-phase2-deviations.md`)
+
+Short list — full rationale per entry in the doc:
+
+- **D2.1-1** merge picker rewritten with `topFrequency` (plan sample's `existing.frequency - item.frequency` reads post-increment sum)
+- **D2.1-2** `levenshteinLongThreshold` 2→3 (needed for `St Agnes`/`Saint Agnes`-style within-bucket merges)
+- **D2.2-1** non-greedy name capture `{0,1}?` replaced plan's greedy `{0,2}` which swallowed trailing verbs like "balance"/"statement"
+- **D2.2-2** preserve user's street-type spelling in display; normalize only the dedup key
+- **D2.3-1** Pattern A split into two branches per spec Section 4 (religious-prefix no-suffix + general-with-suffix); plan's single-branch regex dropped "St Agnes Auction"
+- **D2.4-1** `findConvergentToken` scans whole display name; plan's separator-only extractor missed prefix-word like "Anthropic Team"
+- **D2.4-2** dropped hard `senderDisplayNames.length >= 5` gate (80% fraction is the real invariant)
+- **D2.5-1** tightened D2.4-2 with `best.count >= 2` — single display name can't trivially claim 100% convergence on first token
+- **D2.5-2** widened `Stage2Result.perDomain[]` with `failed?` + `errorMessage?` so Inngest wrapper's richer output persists honestly
+- **D2.5-3** single-arg `LogContext` logger call-shape (pino-style `(obj, msg)` in plan is TS2554)
+
+### Test + type state
+
+- 83/83 web tests green (was 60 at session start — Phase 2 added 23)
+- Typecheck clean across all workspaces at every commit
+- No new migrations this session (Phase 2 doesn't touch schema.prisma)
+
+### Key state for resume — Phase 3 is next
+
+- **Active branch:** `feature/perf-quality-sprint` (not pushed to remote)
+- **Trigger wiring still deferred:** `runEntityDiscovery` is registered but NO route emits `onboarding.entity-discovery.requested` yet. The POST `/domain-confirm` route in Phase 3 Task 3.1 is what wires it up.
+- `runDomainDiscovery` (Stage 1, shipped in Phase 1) is still not emitted by any route either — Phase 4 pipeline cutover does that.
+- The 4 new `SchemaPhase` values (DISCOVERING_DOMAINS / AWAITING_DOMAIN_CONFIRMATION / DISCOVERING_ENTITIES / AWAITING_ENTITY_CONFIRMATION) are all additive; the legacy `GENERATING_HYPOTHESIS → AWAITING_REVIEW → PROCESSING_SCAN` flow is still live and unbroken.
+
+### Next action on resume
+
+**Phase 3 — Review Screen UX (6 tasks):**
+
+1. Open `docs/superpowers/plans/2026-04-16-issue-95-fast-discovery-rebuild.md` at **Task 3.1** (POST `/api/onboarding/[schemaId]/domain-confirm`). This is the first route that actually ships a Stage-1→Stage-2 trigger.
+2. Then 3.2 (POST `/entity-confirm`), 3.3 (GET polling extension), 3.3b (verified no-op — quick-check then continue), 3.4 (`phase-domain-confirmation.tsx`), 3.5 (`phase-entity-confirmation.tsx`), 3.6 (`flow.tsx` routing).
+3. The route-test withAuth mock shape from the corrections doc (P3-1/P3-2/P3-3) is important — tests inherit the same pattern across 3.1 and 3.2.
+4. **Keep appending to the deviations doc** every time implementation diverges from the plan's sample.
+5. After Phase 3 lands, still nothing emits Stage 1 yet — that's Phase 4's cutover.
+
+Three untracked scripts in the working tree (all dependent on gitignored `Denim_Samples_Individual/` — leave as-is):
+- `scripts/simulate-stage1-domains.mjs`
+- `scripts/validate-agency-keywords.mjs`
+- `scripts/validate-stage1-real-samples.ts`
+
+Plus an untracked `docs/superpowers/baselines/` directory that surfaced mid-session — not touched this session, left as-is.
+
 ---
 
 ## What's Next
 
 ### Immediate
-- **Issue #95 — Fast-discovery onboarding rebuild:** Phase 0 ✅ + Phase 1 ✅ (2026-04-17, 11 commits `0f3e991`..`96ff38d`). **Resume at Phase 2 Task 2.1** (`fastest-levenshtein` dep + shared dedup module). See 2026-04-17 session block for full state, gotchas, and the real-sample ground-truth validator results.
-- **Issue #99 — Plan/reality API-signature gaps** (filed 2026-04-17): read before executing Phase 2+ tasks. The plan's code samples have stale signatures; cross-check every import against real code.
+- **Issue #95 — Fast-discovery onboarding rebuild:** Phase 0 ✅ + Phase 1 ✅ + Phase 2 ✅ (2026-04-17 AM `0f3e991`..`96ff38d` + PM `d0d7b34`..`9db4364`). **Resume at Phase 3 Task 3.1** (POST `/domain-confirm` route — the first route that wires Stage-1→Stage-2). See 2026-04-17 PM session block for deviations log + Phase 3 specifics.
+- **Running deviations log:** `docs/superpowers/plans/2026-04-17-issue-95-phase2-deviations.md` — append a new section every time implementation diverges from the plan's code sample.
+- **Issue #99 — Plan/reality API-signature gaps** (filed 2026-04-17): partially addressed by the `d0d7b34` corrections commit; stays open for Phase 3+ vigilance. Still the rule: cross-check every plan import against real code.
 - **Issue #100 — Stage 1 agency newsletter noise** (filed 2026-04-17): deferred to Phase 7 quantitative measurement; not blocking.
 - ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 early AM (3 runs, all GOOD post-#85)
 - **Phase 3 code-complete** ✅ 2026-04-15 PM (commits `7c0d1d0`, `2c6b373`, `f3b54ff`) — E2E measurement pending
