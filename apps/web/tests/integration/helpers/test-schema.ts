@@ -63,7 +63,10 @@ export async function createTestSchema(userId: string): Promise<TestSchemaResult
     },
   });
 
-  // 2. Create PRIMARY entities
+  // 2. Create PRIMARY entities.
+  // Direct entity writes — integration test fixture for clustering/extraction,
+  // not exercising the onboarding confirm path. Fields beyond persistConfirmedEntities'
+  // surface (aliases, associatedPrimaryIds) are populated here intentionally.
   const vms = await prisma.entity.create({
     data: {
       schemaId: schema.id,
@@ -88,7 +91,10 @@ export async function createTestSchema(userId: string): Promise<TestSchemaResult
     },
   });
 
-  // 3. Create SECONDARY entity
+  // 3. Create SECONDARY entity.
+  // Direct entity write — pre-seeds a coach with associatedPrimaryIds so
+  // clustering can exercise SECONDARY → PRIMARY affinity without running the
+  // onboarding confirm flow.
   const coach = await prisma.entity.create({
     data: {
       schemaId: schema.id,

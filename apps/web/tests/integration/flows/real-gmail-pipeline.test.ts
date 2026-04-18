@@ -102,7 +102,10 @@ async function createGenericTestSchema(userId: string) {
     },
   });
 
-  // Create a default PRIMARY entity so clustering can assign cases
+  // Create a default PRIMARY entity so clustering can assign cases.
+  // Direct entity write — live-Gmail integration test bypasses the onboarding
+  // confirm path (persistConfirmedEntities) since the test drives clustering
+  // against real mailbox data, not the fast-discovery review flow.
   await prisma.entity.create({
     data: {
       schemaId: schema.id,
