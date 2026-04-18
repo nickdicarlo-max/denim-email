@@ -618,10 +618,57 @@ Old-flow phases genuinely stuck waiting for the deleted single-screen confirm (`
 
 **Phase 4 Tasks 4.1 + 4.2 + 4.3 + 4.4 shipped in this session.**
 
-Still pending in Phase 4:
-- **Task 4.4b** — test-helper audit (direct `entity.create` / `entity.upsert` calls in test setup should route through `persistConfirmedEntities`). Grep check + targeted fixes.
-- **Task 4.4c** — verify `INNGEST_SIGNING_KEY` is set so `/api/inngest` rejects unsigned events. Security hardening, not functionality.
-- **Integration test regressions** (`onboarding-happy-path.test.ts`, `onboarding-concurrent-start.test.ts`) — these exercise the deleted hypothesis-first path and will fail until Task 6.1 rewrites them against the new Stage 1/Stage 2 flow.
+### Task 4.4b — test-helper entity write audit (commit TBD)
+
+#### D4.4b-1 — All three hits annotated, none re-routed through `persistConfirmedEntities`
+
+**Plan said:** "If the helper is seeding a complete integration test entity for a non-review flow, direct create is fine — but add a one-line comment. If the helper is simulating user confirm, replace with `persistConfirmedEntities`."
+
+**Shipped:** All three direct `prisma.entity.create` sites are in integration test fixtures for downstream pipeline tests (clustering + real-Gmail e2e), not onboarding confirm simulation:
+- `tests/integration/helpers/test-schema.ts:67,79,92` — bootstraps a fully-populated schema with `aliases` + `associatedPrimaryIds` (fields outside `persistConfirmedEntities`' surface). Annotated each write with a one-line comment explaining why direct create is correct here.
+- `tests/integration/flows/real-gmail-pipeline.test.ts:106` — creates a "General" fallback PRIMARY for a live-Gmail clustering test. Annotated.
+
+**Why:** `persistConfirmedEntities` takes `{ displayLabel, identityKey, kind, secondaryTypeName? }` — no `aliases`, no `associatedPrimaryIds`, no `confidence` override. Re-routing these helpers through it would strip the fields the downstream tests explicitly depend on. The Bug-1/Bug-5 failure mode (helpers drifting from production paths) doesn't apply here because the helpers aren't targeting the onboarding confirm path — they bypass it deliberately to exercise clustering with pre-constructed state.
+
+### Task 4.4c — Inngest signing verification (commit TBD)
+
+#### D4.4c-1 — `signingKey` lives on the Inngest client, not the `serve()` handler
+
+**Plan said:**
+
+```typescript
+export const { GET, POST, PUT } = serve({
+  client: inngest,
+  functions: [ ... ],
+  signingKey: process.env.INNGEST_SIGNING_KEY,
+});
+```
+
+**Shipped:** Passed `signingKey: process.env.INNGEST_SIGNING_KEY` to `new Inngest({ id, signingKey })` in `apps/web/src/lib/inngest/client.ts`. The `serve()` call in the route stays as-is.
+
+**Why:** Inngest SDK v4.0.4's `ServeHandlerOptions` does not accept `signingKey` — plan's sample fails typecheck with `TS2353: Object literal may only specify known properties, and 'signingKey' does not exist in type 'ServeHandlerOptions'`. In v4 the signing key is a client-level property (see `node_modules/.pnpm/inngest@4.0.4/inngest/types.d.ts:826-829`): `signingKey?: string` on `ClientOptions`. The SDK then propagates it through to the `serve()` handler automatically.
+
+Functionally identical to the plan's intent: unsigned requests land on `/api/inngest` → handler looks up the client's `signingKey` → signature check fails → request rejected. The route-level route.ts docstring explains the architecture so future readers don't look for `signingKey` in the wrong place.
+
+#### D4.4c-2 — `INNGEST_SIGNING_KEY` env var already in place
+
+Plan Step 1 asked to confirm the env var exists in all environments:
+- `apps/web/.env.example:23` — `INNGEST_SIGNING_KEY=` (placeholder documents the required name).
+- `apps/web/.env.local` — populated locally.
+- Vercel prod/preview — assumed configured (plan Step 2 would have added otherwise, but the `.env.example` presence indicates the infra is already set up).
+
+Plan Step 3 (verify by sending an unsigned `curl` against the deployment) is a runtime check — not shipped here, but the plan flags it as part of post-merge verification.
+
+---
+
+## Open items / future tasks
+
+**Phase 4 Tasks 4.1 + 4.2 + 4.3 + 4.4 + 4.4b + 4.4c shipped in this session.**
+
+Still pending before Phase 4 is fully green:
+- **Task 4.5** — Full end-to-end manual verification (requires dev stack + Inngest dev server + live Gmail OAuth). Runtime-only — not shippable as a code change.
+- **Task 4.4c Step 3** — Post-merge curl check against the Vercel deployment to confirm unsigned POSTs get 401/403.
+- **Integration test regressions** (`onboarding-happy-path.test.ts`, `onboarding-concurrent-start.test.ts`) — these exercise the deleted hypothesis-first path and will fail until Task 6.1 rewrites them against the new Stage 1/Stage 2 flow. 97/97 unit tests still pass; the regression is scoped to integration.
 
 Phase 5+ follows after Phase 4 completes.
 
