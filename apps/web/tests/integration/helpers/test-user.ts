@@ -3,8 +3,8 @@
  * and the Prisma `users` table.
  */
 import { createClient } from "@supabase/supabase-js";
+import { storeCredentials } from "@/lib/gmail/credentials";
 import { prisma } from "@/lib/prisma";
-import { storeGmailTokens } from "@/lib/services/gmail-tokens";
 import { ensureUserRow } from "@/lib/services/user";
 
 const TEST_EMAIL = "integration-test@denim-email.test";
@@ -82,19 +82,26 @@ export async function createTestUser(): Promise<TestUser> {
  * `user.googleTokens` (e.g. POST /api/onboarding/start's pre-flight check)
  * succeed without a real OAuth dance.
  *
- * Routes through production `storeGmailTokens` to keep test setup aligned with
- * the real code path (per Bug 5 lesson: test helpers must not re-implement
- * prod DB writes). The token values are stubs — downstream Gmail API calls
- * will fail if exercised. Tests that only gate on token presence (idempotency,
- * validation) are fine; tests that need real Gmail access (happy path with
- * RUN_E2E_HAPPY=1) should overwrite with a real OAuth playground token.
+ * Routes through production `storeCredentials` (issue #105 credentials
+ * bounded-context module) so test setup exercises the same trust-boundary
+ * validation + encryption path as prod OAuth callback. Per Bug 5 lesson:
+ * test helpers must not re-implement prod DB writes.
+ *
+ * Token values are stubs — downstream Gmail API calls will fail if
+ * exercised. Tests that only gate on token presence (idempotency,
+ * validation) are fine; tests that need real Gmail access (happy path
+ * with RUN_E2E_HAPPY=1) should overwrite with a real OAuth playground
+ * token.
  */
 export async function seedGmailToken(userId: string): Promise<void> {
-  await storeGmailTokens(userId, TEST_EMAIL, {
-    access_token: "test-access-token",
-    refresh_token: "test-refresh-token",
-    expiry_date: Date.now() + 60 * 60 * 1000,
-    scope: "https://www.googleapis.com/auth/gmail.readonly",
+  await storeCredentials({
+    userId,
+    email: TEST_EMAIL,
+    accessToken: "test-access-token",
+    refreshToken: "test-refresh-token",
+    expiresInSeconds: 3600,
+    grantedScopes: "https://www.googleapis.com/auth/gmail.readonly",
+    verificationSource: "google_tokeninfo",
   });
 }
 

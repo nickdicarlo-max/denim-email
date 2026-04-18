@@ -65,3 +65,21 @@ export const GoogleTokenErrorResponseSchema = z.object({
 });
 
 export type GoogleTokenErrorResponse = z.infer<typeof GoogleTokenErrorResponseSchema>;
+
+/**
+ * Google `/oauth2/tokeninfo?access_token=...` endpoint response.
+ * Used by the manual fallback route at `/api/auth/store-tokens` to
+ * validate an externally-supplied access token before persisting.
+ *
+ * `expires_in` comes back as a stringified integer from Google despite
+ * being a numeric field — schema coerces to number.
+ */
+export const GoogleTokenInfoResponseSchema = z.object({
+  scope: z.string().min(1),
+  email: z.string().email().optional(),
+  expires_in: z.coerce.number().positive().default(3600),
+  audience: z.string().optional(),
+  user_id: z.string().optional(),
+});
+
+export type GoogleTokenInfoResponse = z.infer<typeof GoogleTokenInfoResponseSchema>;

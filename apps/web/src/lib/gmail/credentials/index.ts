@@ -9,6 +9,8 @@
 export {
   type GoogleTokenErrorResponse,
   GoogleTokenErrorResponseSchema,
+  type GoogleTokenInfoResponse,
+  GoogleTokenInfoResponseSchema,
   type GoogleTokenRefreshResponse,
   GoogleTokenRefreshResponseSchema,
   type SupabaseExchangeData,
