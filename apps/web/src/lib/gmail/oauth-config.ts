@@ -1,8 +1,12 @@
 "use client";
 
 import type { createBrowserClient } from "@/lib/supabase/client";
+import { GMAIL_SCOPES } from "./oauth-scopes";
 
-export const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly";
+// Re-export for existing client imports. Server code MUST import from
+// `./oauth-scopes` directly — importing this file server-side wraps the
+// constant into a Client Reference and breaks `String.prototype.includes`.
+export { GMAIL_SCOPES };
 
 export function signInWithGmail(
   supabase: ReturnType<typeof createBrowserClient>,
