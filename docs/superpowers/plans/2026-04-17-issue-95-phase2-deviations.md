@@ -348,8 +348,69 @@ The regression test added under "regression guards" verifies that `PENDING` sche
 
 ---
 
+## Task 3.4 — `PhaseDomainConfirmation` component (commit TBD — this commit)
+
+### D3.4-1 — Adopted the Task 3.6 revised signature upfront
+
+**Plan said (Task 3.4 sample):** `Props = { schemaId: string; candidates: DomainCandidate[]; onConfirmed: () => void }`.
+
+**Task 3.6 already revises this:** "Update Tasks 3.4 and 3.5 component signatures to accept `{ response }: { response: OnboardingPollingResponse }` instead of the `{ schemaId, candidates, onConfirmed }` shape shown earlier — the samples in 3.4/3.5 were drafted against a prior flow.tsx contract."
+
+**Shipped:** Final shape — `{ response }: { response: OnboardingPollingResponse }`. Component reads `response.schemaId`, pulls `candidates` from `response.stage1Candidates ?? []`, and lets the next poll tick drive the UI swap instead of firing an `onConfirmed` callback.
+
+**Why:** Task 3.6 explicitly supersedes the earlier signature. Writing the old shape in Task 3.4 then rewriting it in Task 3.6 is pure churn. Also matches the pattern every other phase component already uses (`phase-review.tsx`, `phase-pending.tsx`, etc.).
+
+### D3.4-2 — Design-system adoption instead of raw Tailwind grays
+
+**Plan said:**
+
+```tsx
+<h2 className="text-xl font-semibold">…</h2>
+<p className="text-sm text-gray-600">…</p>
+<button className="rounded bg-black px-4 py-2 text-white disabled:opacity-50">…</button>
+```
+
+Plain Tailwind with `bg-black`, `text-gray-600`, no font-family.
+
+**Shipped:** `font-serif`, `text-primary`, `text-muted`, `text-accent`, `bg-surface-highest`, `text-overdue` design tokens; `<Button>` from `@/components/ui/button`. Mirrors the pattern in `phase-review.tsx` and the "Digital Curator" rules documented in `ui/button.tsx`.
+
+**Why:** The project has a documented design system (`docs/design-system.md`) and every other `phase-*.tsx` component consumes it. The plan's sample was a placeholder, not a ship-it design — rendering raw `bg-black` Tailwind in production would be immediately visible as a regression.
+
+### D3.4-3 — Authenticated fetch instead of raw `fetch`
+
+**Plan said:** `await fetch(\`/api/onboarding/${schemaId}/domain-confirm\`, …)`
+
+**Shipped:** `authenticatedFetch` from `@/lib/supabase/authenticated-fetch`.
+
+**Why:** Every `/api/onboarding/*` route is wrapped in `withAuth` which requires an `Authorization: Bearer <supabaseAccessToken>` header. Raw `fetch` has no token; the POST returns 401 and the UI silently fails (plan's sample calls `onConfirmed()` unconditionally — even on a 401 the UI would advance). `authenticatedFetch` mirrors the exact pattern used by `phase-review.tsx` for the existing `POST /api/onboarding/:schemaId`. Not using it here would be a real-world auth bug.
+
+### D3.4-4 — Error handling + empty-state rendering added
+
+**Plan said:** Fire-and-forget POST, then `onConfirmed()`.
+
+**Shipped:** `SubmitStatus` union of `"idle" | "submitting" | "error"`; non-2xx responses surface `body.error` via `setErrorMessage`; empty `candidates` renders a loading spinner ("Finding your senders…") instead of an empty screen. After a successful 2xx, status stays `"submitting"` so the button is disabled during the hand-off to polling.
+
+**Why:** Two concrete scenarios covered:
+
+1. **Race to the POST.** A user who double-clicks or hits the endpoint after the phase already advanced gets a 409. Without error rendering, the UI hangs indefinitely with the button stuck in `"Confirming…"`. Surfacing the error lets them retry.
+2. **Stage 1 still running.** `DISCOVERING_DOMAINS → AWAITING_DOMAIN_CONFIRMATION` is a live transition. If the user reaches this component via a too-fast poll (or stale `stage1Candidates: null`), an empty state is honest; an empty `<ul>` would be eerie.
+
+Both are additive to the happy path; the plan's three-step flow still applies.
+
+### D3.4-5 — No in-repo component unit test — deferred to Phase 7 e2e
+
+**Plan said:** `apps/web/src/components/onboarding/__tests__/phase-domain-confirmation.test.tsx` with `@testing-library/react` + `fireEvent` + `waitFor`.
+
+**Shipped:** No component unit test. Typecheck is the only automated gate for this component in Phase 3.
+
+**Why:** The repo has **no DOM testing infrastructure** — `apps/web/vitest.config.ts` sets `environment: "node"` with `include: ["tests/unit/**/*.test.ts", "src/**/__tests__/**/*.test.ts"]` (no `.tsx` glob), and `package.json` has no `@testing-library/react` / `jsdom` / `happy-dom` dep. Adding those just for this one smoke test is: (a) a framework decision that should be made deliberately (Phase 7's Playwright e2e path is the existing convention for React behaviour); (b) a ~30 MB dep addition for three assertions that duplicate what Playwright will exercise end-to-end; (c) outside the scope of a Phase 3 component task.
+
+Phase 7 Task 7.x — Playwright happy-path tests — is the right home for "click domain, confirm, observe phase advance." Logged here so the gap is visible and the plan author can decide whether to retrofit DOM testing or leave it to e2e.
+
+---
+
 ## Open items / future tasks
 
-Tasks 3.1 + 3.2 + 3.3 shipped. Task 3.3b is a verified no-op (drain is event-generic). Phase 3 Task 3.4 (`phase-domain-confirmation.tsx` component) is next.
+Tasks 3.1 + 3.2 + 3.3 + 3.4 shipped. Phase 3 Task 3.5 (`phase-entity-confirmation.tsx`) is next; Task 3.6 (wire into `flow.tsx`) follows.
 
 Append new sections here as tasks land.
