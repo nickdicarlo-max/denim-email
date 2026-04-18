@@ -20,6 +20,11 @@ node_modules/
 .env.production
 .env.production.local
 
+# Claude Code per-user Bash allowlist. Contents are session-specific and
+# frequently include hardcoded DB URLs / credentials inside command
+# patterns. NEVER commit — use .claude/settings.json for shared rules.
+.claude/settings.local.json
+
 # === NEXT.JS ===
 .next/
 out/

@@ -1,15 +1,24 @@
 /**
  * Routing diagnostic report — run after a scan to see how emails were routed.
- * Run: npx tsx scripts/routing-report.ts [schemaId]
  *
- * If no schemaId given, reports on the most recent schema.
+ * Run: pnpm --filter web exec tsx ../../scripts/routing-report.ts [schemaId]
+ *
+ * If no schemaId given, reports on the most recent schema. Requires
+ * DIRECT_URL (or DATABASE_URL) in the environment -- no hardcoded
+ * fallback. Load apps/web/.env.local first.
  */
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient({
-  datasourceUrl:
-    "postgresql://postgres:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@db.xnewghhpuerhaottgalc.supabase.co:5432/postgres",
-});
+const connectionString = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error(
+    "routing-report: DIRECT_URL (or DATABASE_URL) env var is required. " +
+      "Load apps/web/.env.local before running.",
+  );
+  process.exit(1);
+}
+
+const prisma = new PrismaClient({ datasourceUrl: connectionString });
 
 interface RoutingDecision {
   method: string | null;

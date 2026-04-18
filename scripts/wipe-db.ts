@@ -1,14 +1,26 @@
 /**
  * Wipe all data from Supabase database in FK-safe order.
- * Run: npx tsx scripts/wipe-db.ts
+ *
+ * Run: pnpm --filter web exec tsx ../../scripts/wipe-db.ts
+ * (runs from apps/web/ so the Prisma client is resolvable)
+ *
+ * Requires DATABASE_URL (or DIRECT_URL) in the environment. Refuses to
+ * run without one -- no hardcoded fallback, ever. If you need to wipe
+ * locally, load apps/web/.env.local first (dotenv-cli or explicit export).
  */
 import { PrismaClient } from "@prisma/client";
 
-const prisma = new PrismaClient({
-  datasourceUrl:
-    process.env.DATABASE_URL ??
-    "postgresql://postgres.xnewghhpuerhaottgalc:j4vcoiu2yfjhbdfv78ywekhjbadvhjae@aws-0-us-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=5",
-});
+const connectionString = process.env.DATABASE_URL ?? process.env.DIRECT_URL;
+if (!connectionString) {
+  console.error(
+    "wipe-db: DATABASE_URL (or DIRECT_URL) env var is required. " +
+      "Load apps/web/.env.local before running, e.g.\n" +
+      "  cd apps/web && npx dotenv-cli -e .env.local -- npx tsx ../../scripts/wipe-db.ts",
+  );
+  process.exit(1);
+}
+
+const prisma = new PrismaClient({ datasourceUrl: connectionString });
 
 async function wipe() {
   console.log("Wiping all data in FK-safe order...\n");
