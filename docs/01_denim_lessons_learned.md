@@ -347,6 +347,49 @@ Per-email recall alone is insufficient. A domain can rank top-5 with only modest
 
 ---
 
+## 2026-04-18: Gmail reconnect loop — Bug 2 reappeared as a Next.js boundary trap
+
+**Context:** First live E2E of the post-#95 onboarding flow. User hit the scan phase, got a "Google connection lost" screen, clicked Reconnect Google, completed OAuth consent — and landed back on the same failure screen. Three retries, same result. Logs showed the OAuth callback was firing and returning 200, but `user.googleTokens` stayed NULL in the DB.
+
+### Bug 7: Server route imports a constant from a `"use client"` module → TypeError swallowed as warn
+
+**Symptom:** `/auth/callback` redirected to the happy-path destination, but `user.googleTokens` was never written. UI rendered "Google connection lost" on the next poll, user re-OAuthed, same stall. Infinite reconnect loop with no user-visible error.
+
+**Root cause (two compounding failures):**
+
+1. **Client Reference wrap at the module boundary.** `GMAIL_SCOPES` was exported from `apps/web/src/lib/gmail/oauth-config.ts`, which had `"use client"` at the top (the file also exports the client-only `signInWithGmail` function). When `/auth/callback/route.ts` (a server route) imported `GMAIL_SCOPES` from that file, Next.js App Router's RSC layer wrapped the export into a **Client Reference object** — not the raw string. Inside `storeGmailTokens`, the scope check `tokens.scope.includes("gmail.readonly")` threw `TypeError: tokens.scope.includes is not a function` because `.includes` isn't on a Client Reference.
+
+2. **The try/catch in the callback logged `warn` and continued to happy-path redirect.** The TypeError got swallowed by a `logger.warn({ operation: "callback.storeTokens.failed" })` block, then the callback issued a 307 redirect to `/onboarding/category` as though storage had succeeded. The user saw a normal-looking redirect into the app, where the next poll immediately hit the "no credentials" state and rendered the reconnect screen again.
+
+**This is Bug 2 (2026-04-09) reappearing.** Same class — *a broken critical feature swallowed as a warn* — different mechanics. Bug 2's rule was explicitly documented (*"Warnings that indicate broken functionality must be errors"*) but the callback's outer try/catch still used `warn` + continue on a path where continuing was never safe.
+
+**Fix (shipped as issue #105, commits `d34e8c4` → `3a7245b`): `GmailCredentials` bounded context.** Not a patch on the specific instance — a structural refactor that makes the class of bug impossible to write.
+
+- **One module owns credentials.** `apps/web/src/lib/gmail/credentials/` is the sole owner of the `user.googleTokens` column. Every read/write goes through its typed API (`getCredentialRecord`, `getAccessToken`, `storeCredentials`, `invalidateCredentials`). No other code reaches the column directly.
+- **Zod parsing at every external trust boundary.** Supabase exchange response, Google `/token` refresh response, Google `tokeninfo` response — all Zod-parsed on entry. A shape drift (Client Reference wrap, API change, scope denial) surfaces as a clean `ValidationError`, not a `TypeError` five frames deep.
+- **Typed errors replace string matching.** `GmailCredentialError` (extends `AuthError`) carries a `CredentialFailure` payload (`{ reason, remedy }`). The UI branches on `response.credentialFailure?.remedy === "reconnect"` — no more `matchesGmailAuthError(errorMessage)` string-match that would break whenever server-side error text drifted.
+- **Fail-closed everywhere.** Every auth-adjacent catch block in the callback ends in a visible error redirect with a typed `reason` code. No `warn` + continue. If credentials can't be stored, the user sees an error page, not a fake-success redirect.
+- **Server/client module boundary enforced structurally.** `lib/gmail/` split into three sub-directories:
+  - `shared/` — constants, no directives, importable from either side
+  - `client/` — `"use client"`, functions/components only
+  - `credentials/` — server-only
+  And a Biome `noRestrictedImports` rule in `biome.json` fails CI if any file under `credentials/`, `shared/`, `lib/inngest/**`, `lib/services/**`, `lib/middleware/**`, `app/api/**`, or `app/auth/**/route.ts` imports from `lib/gmail/client/**`. Verified by probe: intentional violation fails `biome check` with the project-specific error message.
+
+**Rule 1 (exposed, preventive): External boundary responses must be Zod-parsed before reaching business logic.** Never pass a raw response shape (Supabase exchange, Google `/token`, Gmail API) into storage or classification code. A parser schema at the boundary turns runtime `TypeError` into a typed `ValidationError` at the place it happens.
+
+**Rule 2 (re-affirmed, now with a second data point after Bug 2): Catch blocks in auth paths must fail closed.** If `storeCredentials` throws, the ONLY correct response is an error redirect or an error response — never a redirect to a happy-path destination. `warn` + continue is banned in any catch block whose try block can leave the system in an inconsistent state (missing credentials, uncommitted CAS, half-written events).
+
+**Rule 3 (exposed, structural): Constants shared between server and client must live in a `shared/` directory with no `"use client"` directive. Never re-export a plain value from a `"use client"` module.** TypeScript does not warn when a server file imports a value from a `"use client"` module — it only sees a valid import. The Client Reference wrapping happens at bundle time. The only defenses are (a) a directory convention that makes the intent visible, and (b) a Biome `noRestrictedImports` rule that fails CI on cross-boundary imports. Both are now in place for `lib/gmail/`; new subsystems that cross the client/server line (future Slack integration, calendar, extension bridge) must adopt the same three-directory layout.
+
+**Meta:** This is the third time a Bug-2-class failure has shipped (2026-04-09 original, 2026-04-10 Bug 4 duplication variant, now this). Each prior fix addressed the specific instance without closing the class. The #105 refactor is the first fix that closes the class structurally — typed errors make string-matching unreachable, Zod at boundaries makes untyped inputs unreachable, the Biome rule makes the Client Reference wrap unreachable. Preventive rigor moved from "code review catches it" to "CI catches it by construction."
+
+**Verification artifacts:**
+- Contract test fixtures under `apps/web/src/lib/gmail/credentials/__tests__/fixtures/` — real recorded shapes for Supabase exchange (with/without provider_token) and Google `/token` (happy/invalid_grant). Parsers test suite catches any future shape drift at CI time.
+- Biome rule verified with a temporary violation probe — rule fires with the project-specific message citing the 2026-04-18 bug and pointing at the `shared/` alternative.
+- Net code change: **+93 insertions, −345 deletions** across steps 1–7. The bounded context replaces ~400 lines of scattered string-based auth handling.
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
@@ -419,6 +462,36 @@ of the oracle's identifying attribute (sender domain, entity name, etc.) in what
 aggregate the config produces. The LOCKED marker should carry both numbers so the
 validation trail survives. See the 2026-04-16 agency keyword-list entry above for
 the canonical version of this workflow.
+
+### 7. "Plain constant exported from `"use client"`"
+
+If a `.ts` file starts with `"use client"` AND exports a non-component, non-hook value
+(string, number, object, function that isn't a React hook), a server-side import of
+that value gets wrapped into a Next.js Client Reference object — not the raw value.
+Subsequent operations like `.includes()` / `.length` / iteration silently break with
+a `TypeError: x is not a function` several frames deep. TypeScript does not warn
+because the import is valid at type level; the wrapping happens at bundle time.
+
+**Check:** Constants shared between server and client live in `shared/` directories
+with no directives. Never co-locate plain values with `"use client"` code. For
+`lib/gmail/`, the Biome `noRestrictedImports` rule in `biome.json` fails CI when any
+server surface imports from `lib/gmail/client/**` — the same pattern should extend
+to every future subsystem that crosses the client/server line.
+
+### 8. "Warn-and-continue in an auth-adjacent catch"
+
+If a `try/catch` wrapping credential storage, token refresh, OAuth exchange, or any
+write whose absence would break the next user action logs `warn` and continues to
+the happy-path destination, the user enters an infinite retry loop with no
+user-visible error. This class has shipped three times: 2026-04-09 (Bug 2),
+2026-04-10 (Bug 4 variant), 2026-04-18 (Bug 7). Each prior fix addressed the
+instance; the #105 refactor closes the class.
+
+**Check:** Every catch block in auth paths (`/auth/*`, `storeCredentials`,
+`getAccessToken`, token refresh) must end in an error response or error redirect
+with a typed `reason` code. Grep for `logger.warn` inside auth-adjacent try/catch
+blocks — each one needs a comment explaining why continuing is safe (in practice,
+the answer is almost always "it isn't" and the `warn` should be an error redirect).
 
 ---
 
