@@ -357,6 +357,11 @@ export async function createSchemaStub(opts: {
       status: "DRAFT",
       phase: "PENDING",
       phaseUpdatedAt: new Date(),
+      // Issue #95: runOnboarding's thin Stage-1 trigger guards on
+      // `schema.domain` (see apps/web/src/lib/inngest/onboarding.ts). Persist
+      // the interview-declared domain on the stub row so fast-discovery can
+      // pick up the per-domain shape config without a second round-trip.
+      domain: opts.inputs?.domain,
       inputs: opts.inputs ? (opts.inputs as unknown as Prisma.InputJsonValue) : undefined,
     },
     select: { id: true },
