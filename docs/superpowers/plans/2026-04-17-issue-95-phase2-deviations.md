@@ -409,8 +409,84 @@ Phase 7 Task 7.x — Playwright happy-path tests — is the right home for "clic
 
 ---
 
+## Task 3.5 — `PhaseEntityConfirmation` component (commit TBD — this commit)
+
+### D3.5-1 — `identityKey` comes straight from `candidate.key`, fixing an `@`-prefix collision with the server
+
+**Plan said:**
+
+```typescript
+function identityKeyFor(group: DomainGroup, candidate: EntityCandidate): string {
+  if (group.algorithm === "agency-domain-derive") {
+    const d = (candidate.meta?.authoritativeDomain as string) ?? group.confirmedDomain;
+    return `@${d}`;   // ← @-prefix + PRIMARY violates the /entity-confirm refine
+  }
+  return candidate.displayString.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function kindFor(group: DomainGroup): "PRIMARY" | "SECONDARY" {
+  return "PRIMARY";   // but agency is @-prefixed above, which the server rejects
+}
+```
+
+**Shipped:**
+
+```typescript
+function identityKeyFor(candidate: Stage2DomainCandidateDTO): string {
+  return candidate.key;
+}
+// All kinds are PRIMARY by construction — SECONDARY never comes out of Stage 2.
+```
+
+**Why:** The server-side Zod refine in `/entity-confirm` (Task 3.2) explicitly rejects `{ identityKey.startsWith("@"), kind: "PRIMARY" }` — that combination is reserved for SECONDARY entities (D3.2-3 codifies this as a security test). The plan's Task 3.5 sample would have failed every agency confirm submission with a 400 VALIDATION_ERROR: *"identityKey starting with @ is reserved for SECONDARY entities."*
+
+Additionally, `entity-discovery.ts` already produces a normalized `candidate.key` per algorithm — lowercased address for property, normalized institution name for school, bare DNS domain (`"anthropic.com"`) for agency — so re-normalizing `displayString` in the UI is wasted work and potentially drifts from the producer's canonical key. Using `candidate.key` verbatim:
+
+1. Uses the producer's authoritative normalization (idempotent Stage 2 reruns hit the same bucket).
+2. Keeps the `@` prefix out of PRIMARY identityKeys, so the server's refine stays happy.
+3. Matches the producer/consumer contract documented in `entity-discovery.ts` lines 33-46.
+
+This is a **correctness fix**, not stylistic drift; the plan's code would not have worked end-to-end.
+
+### D3.5-2 — Adopted Task-3.6 `{ response }` signature + inherits D3.4-2..5
+
+**Plan said (stale):** `Props = { schemaId: string; stage2Candidates: DomainGroup[]; onConfirmed: () => void }`; raw Tailwind (`bg-black`, `text-gray-700`); plain `fetch`; no error/empty states.
+
+**Shipped:** `{ response }: { response: OnboardingPollingResponse }` (Task 3.6's supersede); design-system tokens; `authenticatedFetch`; `SubmitStatus` union with error rendering; `totalCandidates === 0` empty state.
+
+**Why:** Same rationale as Task 3.4's D3.4-1..4. Applying them in Task 3.4 and not here would leave the Stage 2 screen broken in the same ways we just fixed in Stage 1 (auth 401s, regressive visuals, silent failures). Consolidated as one deviation to keep the log readable.
+
+### D3.5-3 — Reuses `Stage2DomainCandidateDTO` / `Stage2PerDomainDTO` types from `onboarding-polling.ts`
+
+**Plan said:** Redeclared local `EntityCandidate` / `DomainGroup` interfaces inside the component.
+
+**Shipped:** Imported the DTOs already exported from `onboarding-polling.ts` (D3.3-1 motivated the export).
+
+**Why:** Keeps the producer/consumer type contract in exactly one place. If the polling response shape changes, the component fails typecheck instead of drifting to a local stale mirror. Cost: one extra import; benefit: the boundary stays honest.
+
+### D3.5-4 — No DOM test — deferred to Phase 7 Playwright (inherits D3.4-5)
+
+**Plan said:** `phase-entity-confirmation.test.tsx` with `@testing-library/react`.
+
+**Shipped:** No `.test.tsx`. Same infrastructure gap as Task 3.4 (vitest env=node, no testing-library dep, plan's `*.test.tsx` file wouldn't even be picked up by the current `include` glob). Phase 7 Playwright is the existing home for React behaviour; retrofitting DOM testing should be a deliberate framework decision outside this task.
+
+### D3.5-5 — Minor UX additions: `autoFixed` "merged" badge, aria-label for rename input
+
+**Plan said:** Plain candidate row with checkbox, text input, frequency count.
+
+**Shipped:** Candidate row additionally shows a small `merged` badge when `candidate.autoFixed === true` (tooltip: "Variants merged automatically"), and the rename input gets an `aria-label` of `Name for <original displayString>`.
+
+**Why:**
+
+1. **`autoFixed` badge.** `dedupByLevenshtein` sets `autoFixed: true` when it collapsed multiple variants ("St Agnes" / "St. Agnes" / "Saint Agnes" → one bucket). The spec calls this out explicitly ("`autoFixed: true` lets the review UI flag 'we merged …'"). Surfacing it in the UI is the payoff for that whole dedup pass; without the badge the merging is invisible to the user and indistinguishable from the producer seeing only one variant.
+2. **aria-label.** The rename input replaces the candidate's display — without an accessible name tied to the original, screen readers announce "edit text" with no context. The label also helps Playwright e2e selectors lock onto the right row in Phase 7.
+
+Neither changes the submit payload; strictly presentation.
+
+---
+
 ## Open items / future tasks
 
-Tasks 3.1 + 3.2 + 3.3 + 3.4 shipped. Phase 3 Task 3.5 (`phase-entity-confirmation.tsx`) is next; Task 3.6 (wire into `flow.tsx`) follows.
+Tasks 3.1 + 3.2 + 3.3 + 3.4 + 3.5 shipped. Phase 3 Task 3.6 (wire `flow.tsx` to route the two new phases) is next — the last Phase 3 task before Phase 4 pipeline cutover.
 
 Append new sections here as tasks land.
