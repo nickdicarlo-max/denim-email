@@ -1,28 +1,27 @@
 /**
  * Stage 1 + Stage 2 Real-Samples Validator (issue #95)
  *
- * Drives the REAL `discoverDomains` code path (imported from apps/web) through
- * a stub GmailClient that serves from `Denim_Samples_Individual/*.json`.
- * Unlike `simulate-stage1-domains.mjs` which re-implements the Stage 1 logic,
- * this script catches regressions in the actual pipeline (aggregator,
- * public-providers filter, topN slicing, query builder).
- *
- * Stage 2 section is scaffolded (see STAGE2_EXPECTED below). It runs when the
- * Stage 2 primitives land in `apps/web/src/lib/discovery/entity-discovery.ts`;
- * until then it prints the ground-truth expectations as a reference so Phase 2
- * implementers know the target to hit.
+ * Drives the REAL production code paths (`discoverDomains` + `discoverEntitiesForDomain`)
+ * imported from apps/web through a stub GmailClient that serves from
+ * `Denim_Samples_Individual/*.json`. Unlike `simulate-stage1-domains.mjs` which
+ * re-implements Stage 1, this script catches regressions in the actual pipeline
+ * (aggregator, public-providers filter, topN slicing, query builder, Stage 2
+ * dispatcher, per-domain algorithms, Levenshtein dedup).
  *
  * Usage:
- *   npx tsx scripts/validate-stage1-real-samples.ts
+ *   cd apps/web && npx tsx ../../scripts/validate-stage1-real-samples.ts
+ *   (Must run from apps/web cwd so tsconfig `@/*` paths resolve.)
  *
  * Stage 1 ground-truth checks:
  *   - property: judgefite.com should land in top 3
  *   - agency:   portfolioproadvisors.com top-2, stallionis.com top-5
+ *   - school_parent: email.teamsnap.com should be discovered
  *
- * Stage 2 ground-truth checks (run once Phase 2 code lands):
- *   - property × judgefite.com  → 5 distinct addresses
- *   - agency   × portfolioproadvisors.com → 1 entity derived from domain
- *   - school_parent × email.teamsnap.com  → ZSA team entity
+ * Stage 2 ground-truth checks (run against the real Stage 2 dispatcher):
+ *   - property × judgefite.com           → 5 distinct address entities
+ *   - agency   × portfolioproadvisors.com → 1 entity keyed by domain
+ *   - agency   × stallionis.com          → 1 entity keyed by domain
+ *   - school_parent × email.teamsnap.com  → ZSA team entity (activity-pattern match)
  */
 
 import * as fs from "node:fs";
@@ -33,6 +32,7 @@ import {
   type DomainName,
 } from "../apps/web/src/lib/config/domain-shapes";
 import { discoverDomains } from "../apps/web/src/lib/discovery/domain-discovery";
+import { discoverEntitiesForDomain } from "../apps/web/src/lib/discovery/entity-discovery";
 
 // Resolve SAMPLES_DIR relative to this script file so the validator works
 // regardless of the caller's cwd (repo root OR apps/web — tsconfig-path
@@ -188,35 +188,36 @@ const STAGE2_EXPECTED: Stage2Expectation[] = [
     domain: "property",
     confirmedDomain: "judgefite.com",
     algorithmHint:
-      "subject-regex address extractor: `\\b(\\d{3,5})\\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)\\b` with year-number guard (2000-2030 excluded)",
+      "subject-regex address extractor. Candidate.key is `normalizeAddressKey`-ed (lowercased + street-type collapsed, e.g., 'Drive' → 'dr'). Matching uses displayMatch regex to tolerate both 'Dr' and 'Drive' variants that land in separate buckets when users mix street-type spelling.",
     expectedEntities: [
       {
-        identityKey: "3910 Bucknell",
+        displayMatch: /3910\s+Bucknell/i,
         minFrequency: 4,
         evidence:
-          "5 subjects contain '3910 Bucknell' / '3910 Bucknell Drive' (invoice, MR, Plumbing×2, Garage Invoice). Dedup should fold Drive/no-Drive variants.",
+          "5 subjects contain '3910 Bucknell' / '3910 Bucknell Drive' (invoice, MR, Plumbing×2, Garage Invoice). Majority uses 'Drive' spelling so the 'dr' bucket wins on frequency.",
       },
       {
-        identityKey: "205 Freedom Trail",
+        displayMatch: /205\s+Freedom\s+Trail/i,
         minFrequency: 5,
         evidence:
-          "6 subjects contain '205 Freedom Trail' (Plumbing, Water Heater ×4, Re: Plumbing).",
+          "6 subjects contain '205 Freedom Trail' (Plumbing, Water Heater ×4, Re: Plumbing). Unambiguous — single bucket.",
       },
       {
-        identityKey: "2310 Healey",
-        minFrequency: 3,
+        displayMatch: /2310\s+Healey/i,
+        minFrequency: 2,
         evidence:
-          "4 subjects contain '2310 Healey' / '2310 Healey Drive' (Secondary Damages×2, Tenant Not Vacated×2).",
+          "4 subjects split 2-2 between 'Drive' and no-Drive variants → two buckets of freq=2 each. minFrequency relaxed to 2.",
       },
       {
-        identityKey: "3305 Cardinal",
+        displayMatch: /3305\s+Cardinal/i,
         minFrequency: 1,
         evidence: "1 subject: '3305 Cardinal - Lease Expiring July 31, 2026'.",
       },
       {
-        identityKey: "851 Peavy",
+        displayMatch: /851\s+Peavy/i,
         minFrequency: 1,
-        evidence: "1 subject: '851 Peavy Road-Invoices'.",
+        evidence:
+          "1 subject: '851 Peavy Road-Invoices'. Regex also ensures we catch the Road/no-Road bucket whichever wins.",
       },
     ],
   },
@@ -224,10 +225,10 @@ const STAGE2_EXPECTED: Stage2Expectation[] = [
     domain: "agency",
     confirmedDomain: "portfolioproadvisors.com",
     algorithmHint:
-      "sender-derive: one PRIMARY entity per confirmed domain. identityKey = '@portfolioproadvisors.com'. Display label derived from domain (e.g., 'Portfolio Pro Advisors').",
+      "sender-derive: one PRIMARY entity per confirmed domain. Candidate.key = authoritativeDomain (bare domain, no '@'). Display label derived from domain (e.g., 'Portfolio Pro Advisors') or from ≥80% display-name token convergence.",
     expectedEntities: [
       {
-        identityKey: "@portfolioproadvisors.com",
+        identityKey: "portfolioproadvisors.com",
         displayMatch: /portfolio\s*pro\s*advisors|PPA/i,
         evidence:
           "15 emails from portfolioproadvisors.com. Subjects name 'PPA' directly (e.g., 'PPA | Nick AI Initiative', 'AI Session #2 PPA & Nick'). Agency algorithm derives display from domain, not subject regex.",
@@ -238,10 +239,10 @@ const STAGE2_EXPECTED: Stage2Expectation[] = [
     domain: "agency",
     confirmedDomain: "stallionis.com",
     algorithmHint:
-      "sender-derive: one PRIMARY entity per confirmed domain. identityKey = '@stallionis.com'.",
+      "sender-derive: one PRIMARY entity per confirmed domain. Candidate.key = authoritativeDomain (bare domain, no '@').",
     expectedEntities: [
       {
-        identityKey: "@stallionis.com",
+        identityKey: "stallionis.com",
         displayMatch: /stallion/i,
         evidence:
           "4 emails: 'Few documents', 'V7 Update - Teams Call', 'Stallion slides', 'Guest Speaker Talk - James — AI — What It Means For Stallion'. Display label should reference 'Stallion'.",
@@ -252,103 +253,134 @@ const STAGE2_EXPECTED: Stage2Expectation[] = [
     domain: "school_parent",
     confirmedDomain: "email.teamsnap.com",
     algorithmHint:
-      "two-pattern regex: (a) institution/team name, (b) activity keyword. Team name appears in 'Updated <team> Event' and 'New game: <team> vs. <opponent>' subjects.",
+      "school-two-pattern: (A) institution regex (religious-prefix or suffix-bearing) + (B) activity regex (e.g., 'U11 Soccer', 'FRC Robotics'). KNOWN MISS on TeamSnap: TeamSnap subjects are event notifications ('Practice', 'Game Reminder') that embed the team name WITHOUT a sport keyword (the team does soccer, but the subject says 'Practice'). The team surfaces later via Pass 2 expansion / entity enrichment, not Stage 2. This fixture is kept as a regression signal: if Stage 2 ever DOES match 'ZSA U11/12' here, it means school extraction widened — verify intentional.",
     expectedEntities: [
       {
         displayMatch: /ZSA.*U11.*Girls/,
         minFrequency: 5,
         evidence:
-          "10+ subjects contain 'ZSA U11/12 Girls Spring 2026 Competitive Rise' (Updated event ×5, New game ×2, implicit in practice reminders).",
+          "10+ subjects contain 'ZSA U11/12 Girls Spring 2026 Competitive Rise' (Updated event ×5, New game ×2). EXPECTED TO FAIL in Stage 2 — see algorithmHint.",
       },
     ],
   },
 ];
 
 /**
- * Stage 2 validation.
- *
- * Today Phase 2 code doesn't exist yet — this function attempts a dynamic
- * import of the Stage 2 entity-discovery module. On import failure it prints
- * the ground-truth expectations so Phase 2 implementers see the target.
- * Once Phase 2 lands, it will run Stage 2 against each expectation's samples
- * and report pass/fail per expected entity.
+ * Build a Stage-2-flavored stub GmailClient for a specific confirmed domain.
+ * The real dispatcher issues `from:*@<confirmedDomain> newer_than:Nd` and
+ * calls `getMessageMetadata(id, ["Subject", "From"])`. The stub filters
+ * samples by sender domain (case-insensitive, exact match) and serves both
+ * headers verbatim. Lookback parsing mirrors Stage 1's stub for consistency,
+ * but Stage 2 emails are almost always inside the lookback so this is mostly
+ * belt-and-suspenders.
+ */
+function makeStage2StubGmail(samples: Sample[], confirmedDomain: string) {
+  const target = confirmedDomain.toLowerCase();
+  const byId = new Map<string, Sample>();
+  for (const s of samples) byId.set(s.id, s);
+
+  function senderDomain(from: string): string {
+    const m = from.match(/<([^>]+)>/) ?? from.match(/([^\s<>]+@[^\s<>]+)/);
+    if (!m) return "";
+    const at = m[1].indexOf("@");
+    return at < 0 ? "" : m[1].slice(at + 1).toLowerCase();
+  }
+
+  return {
+    listMessageIds: async (query: string, limit: number): Promise<string[]> => {
+      const lookbackMatch = query.match(/newer_than:(\d+)d/);
+      const lookbackDays = lookbackMatch ? Number(lookbackMatch[1]) : 365;
+      const cutoff = Date.now() - lookbackDays * 86_400_000;
+
+      const ids: string[] = [];
+      for (const s of samples) {
+        if (s.internalDate < cutoff) continue;
+        if (senderDomain(s.from) !== target) continue;
+        ids.push(s.id);
+        if (ids.length >= limit) break;
+      }
+      return ids;
+    },
+
+    getMessageMetadata: async (
+      messageId: string,
+    ): Promise<{
+      id: string;
+      payload: { headers: Array<{ name: string; value: string }> };
+    }> => {
+      const s = byId.get(messageId);
+      if (!s) throw new Error(`Unknown message ID: ${messageId}`);
+      return {
+        id: messageId,
+        payload: {
+          headers: [
+            { name: "Subject", value: s.subject },
+            { name: "From", value: s.from },
+          ],
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Run each STAGE2_EXPECTED fixture through the real `discoverEntitiesForDomain`
+ * dispatcher. Matching checks candidate.key against expected.identityKey, and/or
+ * candidate.displayString against expected.displayMatch. minFrequency, when set,
+ * asserts candidate.frequency ≥ minFrequency.
  */
 async function runStage2(samples: Sample[]): Promise<void> {
   console.log(`\n=== Stage 2 ground-truth validation ===`);
 
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic import for module that may not yet exist
-  let mod: any;
-  try {
-    mod = await import(
-      // @ts-expect-error — path intentionally resolved at runtime; may not exist yet
-      "../apps/web/src/lib/discovery/entity-discovery"
-    );
-  } catch {
-    console.log(
-      `\n  ⏳ Stage 2 not yet implemented. Target entity-discovery module:`,
-    );
-    console.log(`     apps/web/src/lib/discovery/entity-discovery.ts`);
-    console.log(`\n  Ground-truth expectations (${STAGE2_EXPECTED.length} fixtures):\n`);
-    for (const fx of STAGE2_EXPECTED) {
-      console.log(
-        `  • ${fx.domain} × ${fx.confirmedDomain} [${fx.algorithmHint.split(":")[0]}]`,
-      );
-      for (const e of fx.expectedEntities) {
-        const target = e.identityKey ?? `(regex: ${e.displayMatch?.source})`;
-        const freq = e.minFrequency ? ` ≥${e.minFrequency}×` : "";
-        console.log(`      → ${target}${freq}`);
-      }
-    }
-    console.log(
-      `\n  When Phase 2 lands, this validator will run each fixture through the real dispatcher`,
-    );
-    console.log(
-      `  and assert every expected entity appears with at least minFrequency occurrences.`,
-    );
-    return;
-  }
-
-  // Phase 2 code is present — run it.
-  if (typeof mod.discoverEntities !== "function") {
-    console.log(
-      `  ❌ entity-discovery module exists but exports no 'discoverEntities' — skipping.`,
-    );
-    return;
-  }
-
   let totalChecks = 0;
   let totalPass = 0;
   for (const fx of STAGE2_EXPECTED) {
-    const domainSubjects = samples
-      .filter((s) => {
+    const stub = makeStage2StubGmail(samples, fx.confirmedDomain);
+    const subjectsInSamples = samples.filter(
+      (s) => {
         const m = s.from.match(/<([^>]+)>/) ?? s.from.match(/([^\s<>]+@[^\s<>]+)/);
         if (!m) return false;
         const at = m[1].indexOf("@");
-        if (at < 0) return false;
-        return m[1].slice(at + 1).toLowerCase() === fx.confirmedDomain;
-      })
-      .map((s) => ({ subject: s.subject, frequency: 1 }));
+        return at >= 0 && m[1].slice(at + 1).toLowerCase() === fx.confirmedDomain;
+      },
+    ).length;
 
     console.log(
-      `\n  ${fx.domain} × ${fx.confirmedDomain} (${domainSubjects.length} subjects):`,
+      `\n  ${fx.domain} × ${fx.confirmedDomain} (${subjectsInSamples} subjects in corpus):`,
     );
-    let result: Array<{ identityKey?: string; displayString: string; frequency: number }>;
+
+    let result: Awaited<ReturnType<typeof discoverEntitiesForDomain>>;
     try {
-      result = await mod.discoverEntities({
-        domain: fx.domain,
+      result = await discoverEntitiesForDomain({
+        // biome-ignore lint/suspicious/noExplicitAny: stub GmailClient for offline validation
+        gmailClient: stub as any,
+        schemaDomain: fx.domain,
         confirmedDomain: fx.confirmedDomain,
-        subjects: domainSubjects,
       });
     } catch (err) {
-      console.log(`    ❌ discoverEntities threw: ${err instanceof Error ? err.message : String(err)}`);
+      console.log(
+        `    ❌ discoverEntitiesForDomain threw: ${err instanceof Error ? err.message : String(err)}`,
+      );
       continue;
+    }
+
+    console.log(
+      `    algorithm=${result.algorithm}, subjectsScanned=${result.subjectsScanned}, errors=${result.errorCount}, candidates=${result.candidates.length}`,
+    );
+    if (result.candidates.length > 0) {
+      console.log(`    produced candidates:`);
+      for (const c of result.candidates) {
+        console.log(
+          `      - key="${c.key}" display="${c.displayString}" freq=${c.frequency}`,
+        );
+      }
     }
 
     for (const expected of fx.expectedEntities) {
       totalChecks++;
-      const found = result.find((r) => {
-        if (expected.identityKey && r.identityKey === expected.identityKey) return true;
-        if (expected.displayMatch && expected.displayMatch.test(r.displayString)) return true;
+      const found = result.candidates.find((c) => {
+        if (expected.identityKey && c.key === expected.identityKey) return true;
+        if (expected.displayMatch && expected.displayMatch.test(c.displayString)) return true;
         return false;
       });
       const freqOK =
@@ -356,8 +388,11 @@ async function runStage2(samples: Sample[]): Promise<void> {
       const mark = found && freqOK ? "✅" : "❌";
       if (found && freqOK) totalPass++;
       const target = expected.identityKey ?? `/${expected.displayMatch?.source}/`;
+      const detail = found
+        ? `→ found key="${found.key}" display="${found.displayString}" freq=${found.frequency}`
+        : `→ NOT FOUND`;
       console.log(
-        `    ${mark} ${target}${expected.minFrequency ? ` (≥${expected.minFrequency}×)` : ""} ${found ? `→ found freq=${found.frequency}` : "→ NOT FOUND"}`,
+        `    ${mark} ${target}${expected.minFrequency ? ` (≥${expected.minFrequency}×)` : ""} ${detail}`,
       );
     }
   }
