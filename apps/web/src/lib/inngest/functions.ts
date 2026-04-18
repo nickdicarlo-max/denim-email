@@ -1,7 +1,6 @@
 import { AuthError } from "@denim/types";
 import { NonRetriableError } from "inngest";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
-import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -191,9 +190,11 @@ export const extractBatch = inngest.createFunction(
       const { schemaId, scanJobId, emailIds, batchIndex, totalBatches } = original;
 
       const errorMessage = error?.message ?? String(error);
-      const authFailure =
-        error instanceof AuthError ||
-        matchesGmailAuthError(error instanceof Error ? error.message : String(error));
+      // GmailCredentialError extends AuthError, so instanceof AuthError
+      // catches both typed credential failures and any other legacy
+      // AuthError-subclass. String matching is no longer needed after
+      // client.ts moved 401s onto GmailCredentialError (#105 step 7).
+      const authFailure = error instanceof AuthError;
 
       await step.run("record-batch-failure", async () => {
         // Whole-batch failure: processEmailBatch threw before any individual
@@ -285,10 +286,11 @@ export const extractBatch = inngest.createFunction(
       try {
         return await processBatchInner();
       } catch (err) {
-        if (
-          err instanceof AuthError ||
-          matchesGmailAuthError(err instanceof Error ? err.message : String(err))
-        ) {
+        // GmailCredentialError extends AuthError, so this catches both
+        // typed credential failures (from getAccessToken + wrapGmailApiError)
+        // and any other AuthError subclass. String matching removed in
+        // #105 step 7.
+        if (err instanceof AuthError) {
           throw new NonRetriableError(
             `Gmail auth failed: ${err instanceof Error ? err.message : String(err)}`,
             { cause: err },

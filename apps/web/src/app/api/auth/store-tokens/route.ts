@@ -7,10 +7,10 @@
  * `/oauth2/tokeninfo` endpoint and then persists via the shared
  * `storeCredentials` API.
  *
- * Converges onto the single credential-storage path (issue #105 step 5):
- * no more bespoke `storeGmailTokens` call. Scope validation lives inside
- * `storeCredentials`, which throws a typed `GmailCredentialError` mapped
- * by `handleApiError` to 401 if `gmail.readonly` is missing.
+ * Converges onto the single credential-storage path (issue #105 step 5).
+ * Scope validation lives inside `storeCredentials`, which throws a typed
+ * `GmailCredentialError` mapped by `handleApiError` to 401 if
+ * `gmail.readonly` is missing.
  */
 import { ForbiddenError, ValidationError } from "@denim/types";
 import { NextResponse } from "next/server";

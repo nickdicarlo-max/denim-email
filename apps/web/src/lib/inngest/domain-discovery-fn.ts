@@ -9,10 +9,9 @@
  * Gmail 10,000 req/100sec cap. Priority 120 (interactive — user watches spinner).
  */
 
-import { credentialFailure, GmailCredentialError } from "@denim/types";
+import { GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverDomains } from "@/lib/discovery/domain-discovery";
-import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { GmailClient } from "@/lib/gmail/client";
 import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
@@ -104,28 +103,14 @@ export const runDomainDiscovery = inngest.createFunction(
         errorCount: result.errorCount,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // Prefer the typed GmailCredentialError (thrown by getAccessToken).
-      // For legacy Gmail API 401s (thrown as plain Errors from client.ts),
-      // fall back to string matching + synthesize a CredentialFailure with
-      // a conservative "refresh_failed" reason -- the remedy is still
-      // "reconnect" so the UI renders the same screen either way.
-      const typedFailure =
-        err instanceof GmailCredentialError
-          ? err.credentialFailure
-          : matchesGmailAuthError(message)
-            ? credentialFailure("refresh_failed")
-            : null;
+      // Every auth failure path now throws GmailCredentialError -- either
+      // from getAccessToken (credentials module) or from wrapGmailApiError
+      // in lib/gmail/client.ts (wraps 401s from the Gmail API). String
+      // matching is gone; the UI reads the typed credentialFailure column.
+      const typedFailure = err instanceof GmailCredentialError ? err.credentialFailure : undefined;
 
       await step.run("mark-failed", async () => {
-        await markSchemaFailed(
-          schemaId,
-          "DISCOVERING_DOMAINS",
-          // Keep the GMAIL_AUTH: prefix on phaseError for legacy consumers
-          // (deprecated; typed payload below is the source of truth now).
-          typedFailure ? new Error(`GMAIL_AUTH: ${message}`) : err,
-          typedFailure ?? undefined,
-        );
+        await markSchemaFailed(schemaId, "DISCOVERING_DOMAINS", err, typedFailure);
       });
       throw err;
     }

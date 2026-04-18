@@ -1,10 +1,50 @@
-import { ExternalAPIError } from "@denim/types";
+import { credentialFailure, ExternalAPIError, GmailCredentialError } from "@denim/types";
 import { google } from "googleapis";
 import { logger } from "@/lib/logger";
 import type { GmailMessageFull, GmailMessageMeta, ScanDiscovery } from "./types";
 
 const METADATA_HEADERS = ["From", "To", "Cc", "Subject", "Date", "In-Reply-To"];
 const BATCH_SIZE = 50;
+
+/**
+ * Read the HTTP status off a googleapis error. googleapis throws a shape
+ * with either `code` (gaxios style) or `response.status` (axios style).
+ */
+function httpStatusOf(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const e = error as { code?: unknown; response?: { status?: unknown } };
+  if (typeof e.code === "number") return e.code;
+  if (e.response && typeof e.response.status === "number") return e.response.status;
+  return undefined;
+}
+
+/**
+ * Convert a thrown Gmail API error into the right typed error for
+ * downstream consumers. 401s become `GmailCredentialError` with
+ * `reason: "revoked"` — Google told us the access token is dead, the
+ * only remedy is to reconnect. Everything else stays as
+ * `ExternalAPIError`.
+ *
+ * This is the sole classification point for Gmail API 401s post-#105.
+ * Inngest catch blocks check `err instanceof GmailCredentialError` and
+ * don't need to string-match error messages anymore.
+ */
+function wrapGmailApiError(error: unknown, operationLabel: string): Error {
+  const status = httpStatusOf(error);
+  const name = error instanceof Error ? error.name : "Error";
+
+  if (status === 401) {
+    return new GmailCredentialError(
+      `Gmail API ${operationLabel} rejected: 401 (access token revoked or expired)`,
+      credentialFailure("revoked"),
+    );
+  }
+
+  return new ExternalAPIError(
+    `Gmail ${operationLabel} failed: ${name}${status ? `:${status}` : ""}`,
+    "gmail",
+  );
+}
 
 interface ParsedAddress {
   email: string;
@@ -90,11 +130,14 @@ export class GmailClient {
 
       return messages;
     } catch (error) {
-      logger.error({ service: "gmail", operation, error });
-      throw new ExternalAPIError(
-        `Gmail search failed: ${error instanceof Error ? error.message : String(error)}`,
-        "gmail",
-      );
+      // Sanitize: Gmail error bodies can echo the Authorization Bearer
+      // token on some proxies. Don't log `error.message` raw — name +
+      // status only. wrapGmailApiError converts 401s to the typed
+      // GmailCredentialError so Inngest catches don't need string match.
+      const name = error instanceof Error ? error.name : "Error";
+      const status = httpStatusOf(error);
+      logger.error({ service: "gmail", operation, errorName: name, errorStatus: status });
+      throw wrapGmailApiError(error, "search");
     }
   }
 
@@ -134,11 +177,16 @@ export class GmailClient {
         attachmentCount: attachmentIds.length,
       };
     } catch (error) {
-      logger.error({ service: "gmail", operation, messageId, error });
-      throw new ExternalAPIError(
-        `Gmail getEmail failed: ${error instanceof Error ? error.message : String(error)}`,
-        "gmail",
-      );
+      const name = error instanceof Error ? error.name : "Error";
+      const status = httpStatusOf(error);
+      logger.error({
+        service: "gmail",
+        operation,
+        messageId,
+        errorName: name,
+        errorStatus: status,
+      });
+      throw wrapGmailApiError(error, "getEmail");
     }
   }
 
@@ -178,15 +226,11 @@ export class GmailClient {
     } catch (error) {
       // Sanitize: Gmail 401/403 response bodies can echo the Authorization
       // Bearer token on some proxies. Log only error name + HTTP status,
-      // never the raw error.message (same shape as sanitizeError in
-      // gmail-metadata-fetch.ts).
+      // never the raw error.message.
       const name = error instanceof Error ? error.name : "Error";
-      const status = error instanceof Error ? (error.message.match(/\b[45]\d\d\b/)?.[0] ?? "") : "";
+      const status = httpStatusOf(error);
       logger.error({ service: "gmail", operation, errorName: name, errorStatus: status });
-      throw new ExternalAPIError(
-        `Gmail list failed: ${name}${status ? `:${status}` : ""}`,
-        "gmail",
-      );
+      throw wrapGmailApiError(error, "list");
     }
   }
 

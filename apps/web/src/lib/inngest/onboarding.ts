@@ -22,8 +22,9 @@
  * on an already-advanced row) return "skipped" from the helper and we load
  * the persisted state to continue.
  */
-import { NonRetriableError } from "inngest";
+
 import { Prisma } from "@prisma/client";
+import { NonRetriableError } from "inngest";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
@@ -320,11 +321,7 @@ export const runOnboardingPipeline = inngest.createFunction(
           where: { id: schemaId },
           select: { phase: true },
         });
-        await markSchemaFailed(
-          schemaId,
-          current?.phase ?? "AWAITING_ENTITY_CONFIRMATION",
-          error,
-        );
+        await markSchemaFailed(schemaId, current?.phase ?? "AWAITING_ENTITY_CONFIRMATION", error);
         throw error;
       }
 
@@ -338,11 +335,7 @@ export const runOnboardingPipeline = inngest.createFunction(
         where: { id: schemaId },
         select: { phase: true },
       });
-      await markSchemaFailed(
-        schemaId,
-        current?.phase ?? "AWAITING_ENTITY_CONFIRMATION",
-        error,
-      );
+      await markSchemaFailed(schemaId, current?.phase ?? "AWAITING_ENTITY_CONFIRMATION", error);
       throw error;
     }
   },

@@ -13,10 +13,9 @@
  * is watching the spinner).
  */
 
-import { credentialFailure, GmailCredentialError } from "@denim/types";
+import { GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
-import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { GmailClient } from "@/lib/gmail/client";
 import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
@@ -89,7 +88,9 @@ export const runEntityDiscovery = inngest.createFunction(
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
               // Gmail-auth failures are schema-wide, not per-domain — rethrow.
-              if (err instanceof GmailCredentialError || matchesGmailAuthError(message)) {
+              // All auth errors now funnel through GmailCredentialError
+              // (getAccessToken + client.ts wrapGmailApiError).
+              if (err instanceof GmailCredentialError) {
                 throw err;
               }
               logger.warn({
@@ -139,21 +140,10 @@ export const runEntityDiscovery = inngest.createFunction(
         domainsFailed: perDomain.filter((d) => d.failed).length,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const typedFailure =
-        err instanceof GmailCredentialError
-          ? err.credentialFailure
-          : matchesGmailAuthError(message)
-            ? credentialFailure("refresh_failed")
-            : null;
+      const typedFailure = err instanceof GmailCredentialError ? err.credentialFailure : undefined;
 
       await step.run("mark-failed", async () => {
-        await markSchemaFailed(
-          schemaId,
-          "DISCOVERING_ENTITIES",
-          typedFailure ? new Error(`GMAIL_AUTH: ${message}`) : err,
-          typedFailure ?? undefined,
-        );
+        await markSchemaFailed(schemaId, "DISCOVERING_ENTITIES", err, typedFailure);
       });
       throw err;
     }
