@@ -24,10 +24,10 @@
 import type { DiscoveryQuery, EntityGroupInput } from "@denim/types";
 import { NonRetriableError } from "inngest";
 import { GmailClient } from "@/lib/gmail/client";
+import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { runSmartDiscovery } from "@/lib/services/discovery";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { advanceScanPhase, markScanFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
 
@@ -71,7 +71,7 @@ export const runScan = inngest.createFunction(
               },
             });
 
-            const accessToken = await getValidGmailToken(userId);
+            const accessToken = await getAccessToken(userId);
             const gmailClient = new GmailClient(accessToken);
 
             // discoveryQueries is stored as Json; cast through unknown since

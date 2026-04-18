@@ -47,6 +47,7 @@
 import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { getCredentialRecord } from "@/lib/gmail/credentials";
 import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
@@ -105,16 +106,14 @@ export const POST = withAuth(async ({ userId, request }) => {
     const { schemaId, inputs } = body;
 
     // -----------------------------------------------------------------
-    // Pre-flight: verify Gmail tokens exist before creating a schema
-    // stub that will immediately fail. A single DB read — no refresh
-    // attempt, no Gmail API call. Returns 422 so the connect page can
-    // show the "Connect Gmail" button instead of a cryptic pipeline error.
+    // Pre-flight: verify the user has stored Gmail credentials before
+    // creating a schema stub that will immediately fail. Uses the typed
+    // record from the credentials bounded context — no refresh attempt,
+    // no Gmail API call. Returns 422 so the connect page can show the
+    // "Connect Gmail" button instead of a cryptic pipeline error.
     // -----------------------------------------------------------------
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { googleTokens: true },
-    });
-    if (!user?.googleTokens) {
+    const record = await getCredentialRecord(userId);
+    if (record.type === "absent") {
       return gmailNotConnected();
     }
 

@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { GmailClient } from "@/lib/gmail/client";
+import { getAccessToken } from "@/lib/gmail/credentials";
 import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
 import { prisma } from "@/lib/prisma";
 import { runSmartDiscovery } from "@/lib/services/discovery";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 
 const TriggerSchema = z.object({
   schemaId: z.string().min(1),
@@ -55,7 +55,7 @@ export const POST = withAuth(async ({ userId, request }) => {
   }
 
   // Get Gmail token
-  const accessToken = await getValidGmailToken(userId);
+  const accessToken = await getAccessToken(userId);
   const gmailClient = new GmailClient(accessToken);
 
   // Run smart discovery: broad scan → social graph → body sampling → AI queries

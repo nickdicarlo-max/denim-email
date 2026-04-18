@@ -13,13 +13,14 @@
  * is watching the spinner).
  */
 
+import { GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { GmailClient } from "@/lib/gmail/client";
+import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { writeStage2Result } from "@/lib/services/interview";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
@@ -70,7 +71,7 @@ export const runEntityDiscovery = inngest.createFunction(
         confirmed.map((confirmedDomain) =>
           step.run(`discover-${slug(confirmedDomain)}`, async () => {
             try {
-              const accessToken = await getValidGmailToken(userId);
+              const accessToken = await getAccessToken(userId);
               const gmail = new GmailClient(accessToken);
               const r = await discoverEntitiesForDomain({
                 gmailClient: gmail,
@@ -87,7 +88,10 @@ export const runEntityDiscovery = inngest.createFunction(
               };
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
-              if (matchesGmailAuthError(message)) throw err;
+              // Gmail-auth failures are schema-wide, not per-domain — rethrow.
+              if (err instanceof GmailCredentialError || matchesGmailAuthError(message)) {
+                throw err;
+              }
               logger.warn({
                 service: "inngest",
                 operation: "runEntityDiscovery.perDomainFailure",
@@ -136,7 +140,7 @@ export const runEntityDiscovery = inngest.createFunction(
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const authFailed = matchesGmailAuthError(message);
+      const authFailed = err instanceof GmailCredentialError || matchesGmailAuthError(message);
       await step.run("mark-failed", async () => {
         await markSchemaFailed(
           schemaId,

@@ -2,11 +2,11 @@ import { AuthError } from "@denim/types";
 import { NonRetriableError } from "inngest";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
+import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { applyCalibration, coarseCluster, splitCoarseClusters } from "@/lib/services/cluster";
 import { processEmailBatch } from "@/lib/services/extraction";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { advanceScanPhase, markScanFailed } from "@/lib/services/onboarding-state";
 import { computeScanMetrics, computeSchemaMetrics } from "@/lib/services/scan-metrics";
 import { synthesizeCase } from "@/lib/services/synthesis";
@@ -330,7 +330,7 @@ export const extractBatch = inngest.createFunction(
         });
 
         // Get valid Gmail token
-        const accessToken = await getValidGmailToken(userId);
+        const accessToken = await getAccessToken(userId);
 
         // Build contexts
         const schemaContext = {

@@ -9,13 +9,14 @@
  * Gmail 10,000 req/100sec cap. Priority 120 (interactive — user watches spinner).
  */
 
+import { GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverDomains } from "@/lib/discovery/domain-discovery";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { GmailClient } from "@/lib/gmail/client";
+import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { writeStage1Result } from "@/lib/services/interview";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
@@ -52,7 +53,7 @@ export const runDomainDiscovery = inngest.createFunction(
           from: "PENDING",
           to: "DISCOVERING_DOMAINS",
           work: async () => {
-            const accessToken = await getValidGmailToken(userId);
+            const accessToken = await getAccessToken(userId);
             const gmail = new GmailClient(accessToken);
             const inputs = schema.inputs as { userEmail?: string } | null;
             const userDomain = (inputs?.userEmail ?? "").split("@")[1]?.toLowerCase() ?? "";
@@ -104,10 +105,12 @@ export const runDomainDiscovery = inngest.createFunction(
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const authFailed = matchesGmailAuthError(message);
-      // Mark the schema FAILED with a prefix that disambiguates auth vs other
-      // failures — the UI shows `phaseError`, so "GMAIL_AUTH:" lets us route
-      // the user back to reconnect without parsing the tail.
+      // Prefer the typed GmailCredentialError (thrown by getAccessToken);
+      // fall back to the legacy string-match for non-typed errors
+      // (Gmail API 401s from client.ts, etc.). Either way we write the
+      // GMAIL_AUTH: prefix onto phaseError so the UI's detection layer
+      // in step 4 can continue working against either source.
+      const authFailed = err instanceof GmailCredentialError || matchesGmailAuthError(message);
       await step.run("mark-failed", async () => {
         await markSchemaFailed(
           schemaId,
