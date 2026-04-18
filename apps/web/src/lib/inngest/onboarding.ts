@@ -1,321 +1,105 @@
 /**
- * Onboarding Inngest functions — split into two for the review-gate flow.
+ * Onboarding Inngest functions — fast-discovery flow (issue #95).
  *
  * Function A: runOnboarding (triggered by onboarding.session.started)
- *   Drives: PENDING → GENERATING_HYPOTHESIS → AWAITING_REVIEW
- *   Generates and validates the hypothesis, then stops at the review screen.
- *   The user sees Card 4 (review screen) and can confirm/adjust entities.
+ *   Thin Stage-1 trigger. Verifies the schema row exists and has a domain
+ *   set by createSchemaStub, then emits `onboarding.domain-discovery.requested`
+ *   via step.sendEvent for replay-safe dispatch. `runDomainDiscovery`
+ *   (domain-discovery-fn.ts) owns the PENDING → DISCOVERING_DOMAINS →
+ *   AWAITING_DOMAIN_CONFIRMATION transitions from there.
  *
  * Function B: runOnboardingPipeline (triggered by onboarding.review.confirmed)
- *   Drives: AWAITING_REVIEW → PROCESSING_SCAN → COMPLETED (or terminal states)
- *   Creates the ScanJob, emits scan.requested, waits for scan.completed,
- *   then advances to the terminal state.
+ *   Drives: AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN → COMPLETED
+ *   (or terminal states). Creates the ScanJob, emits scan.requested, waits
+ *   for scan.completed, then advances to the terminal state. POST
+ *   /entity-confirm (Task 3.2) owns the AWAITING_ENTITY_CONFIRMATION →
+ *   PROCESSING_SCAN CAS; Function B observes schemas already in
+ *   PROCESSING_SCAN when it picks up the event.
  *
  * Phase transitions use advanceSchemaPhase for CAS-on-phase semantics: if
  * two concurrent invocations raced, only one would advance and the loser
  * would throw NonRetriableError. Idempotent re-runs (Inngest retry landing
  * on an already-advanced row) return "skipped" from the helper and we load
  * the persisted state to continue.
- *
- * This file does NOT call persistSchemaRelations — that is now called by
- * the POST /api/onboarding/:schemaId route (Task 4) when the user confirms.
  */
-import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
-import type { Prisma } from "@prisma/client";
 import { NonRetriableError } from "inngest";
+import { Prisma } from "@prisma/client";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
-import { GmailClient } from "@/lib/gmail/client";
-import { serializeMessageForStep } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { extractExpansionTargets } from "@/lib/services/expansion-targets";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { generateHypothesis, resolveWhoEmails, validateHypothesis } from "@/lib/services/interview";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
 
 const SCAN_WAIT_TIMEOUT = ONBOARDING_TUNABLES.pipeline.scanWaitTimeout;
 
 // ---------------------------------------------------------------------------
-// Function A: runOnboarding
+// Function A: runOnboarding — Stage 1 Trigger (issue #95)
 // Triggered by: onboarding.session.started
-// Exits at: AWAITING_REVIEW (user sees the review screen)
+// Exits at:     onboarding.domain-discovery.requested (fire-and-forget)
+//
+// The old hypothesis-first flow is gone. `runDomainDiscovery` now drives
+// PENDING → DISCOVERING_DOMAINS → AWAITING_DOMAIN_CONFIRMATION; this
+// function is a thin dispatcher that fails fast if the stub is malformed.
 // ---------------------------------------------------------------------------
 
 export const runOnboarding = inngest.createFunction(
   {
     id: "run-onboarding",
+    name: "Onboarding — Stage 1 Trigger",
     triggers: [{ event: "onboarding.session.started" }],
-    // DELETE /api/onboarding/:schemaId emits onboarding.session.cancelled;
-    // Inngest cancels the in-flight run when data.schemaId matches.
+    // Preserve cancel semantics from the old function — DELETE
+    // /api/onboarding/:schemaId emits onboarding.session.cancelled; Inngest
+    // cancels the in-flight run when data.schemaId matches.
     cancelOn: [{ event: "onboarding.session.cancelled", match: "data.schemaId" }],
     concurrency: [
       { key: "event.data.schemaId", limit: 1 },
       { key: "event.data.userId", limit: 3 },
     ],
-    // Failures are explicit via markSchemaFailed in the catch block.
-    // retries bumped 0 → 2 after step-level idempotency audit 2026-04-14 (Phase 1 of perf-quality sprint, #69).
+    // retries bumped 0 → 2 after step-level idempotency audit 2026-04-14 (#69).
     retries: 2,
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
-    // Function-level wall-clock. Logged alongside each step and at the
-    // terminal awaitingReview marker so one grep line tells you where
-    // time went across the whole pre-review pipeline.
     const functionStart = Date.now();
 
     try {
-      // ---- Steps 1 & 1a: parallel sibling fan-out ----------------------
-      //
-      // generate-hypothesis (Claude call, ~15s) and gmail-sample-scan
-      // (Gmail fetch, ~5s) have no data dependency on each other:
-      //   - generate-hypothesis only needs the InterviewInput already on the row
-      //   - gmail-sample-scan only needs the user's access token
-      // Run them as sibling step.run calls inside Promise.all so the Gmail
-      // fetch overlaps with the Claude call. Each step keeps its own
-      // independent retry + Inngest checkpoint. validate-hypothesis (below)
-      // consumes both results.
-      //
-      // Parallelized 2026-04-14 as Task 2.2 of the perf-quality sprint (#80).
-      const [, sampleScanResult] = await Promise.all([
-        // ---- Step 1: PENDING → GENERATING_HYPOTHESIS -------------------
-        //
-        // Load the raw InterviewInput the caller persisted on the stub,
-        // ask Claude for a hypothesis, and write it back to the row.
-        step.run("generate-hypothesis", async () => {
-          const stepStart = Date.now();
-          let dbReadMs = 0;
-          let genMs = 0;
-          let dbWriteMs = 0;
-          const result = await advanceSchemaPhase({
-            schemaId,
-            from: "PENDING",
-            to: "GENERATING_HYPOTHESIS",
-            work: async () => {
-              const t1 = Date.now();
-              const schema = await prisma.caseSchema.findUniqueOrThrow({
-                where: { id: schemaId },
-                select: { inputs: true },
-              });
-              dbReadMs = Date.now() - t1;
-              const inputs = schema.inputs as unknown as InterviewInput | null;
-              if (!inputs) {
-                throw new NonRetriableError(
-                  `runOnboarding: CaseSchema ${schemaId} has no inputs column — stub was created without an InterviewInput`,
-                );
-              }
-              const t2 = Date.now();
-              const hypothesis = await generateHypothesis(inputs, { userId });
-              genMs = Date.now() - t2;
-              const t3 = Date.now();
-              await prisma.caseSchema.update({
-                where: { id: schemaId },
-                data: { hypothesis: hypothesis as unknown as object },
-              });
-              dbWriteMs = Date.now() - t3;
-            },
-          });
-          logger.info({
-            service: "runOnboarding",
-            operation: "generate-hypothesis.complete",
-            schemaId,
-            stepDurationMs: Date.now() - stepStart,
-            dbReadMs,
-            generateHypothesisMs: genMs,
-            dbWriteMs,
-          });
-          return result;
-        }),
-
-        // ---- Step 1a: Gmail sample scan -------------------------------
-        //
-        // Fetch a broad random sample from the last 8 weeks for Pass 1
-        // validation. Independent of hypothesis generation — runs in
-        // parallel. Returns the serialized messages; validate-hypothesis
-        // consumes them below. On Inngest retry, step memoization replays
-        // these without a second Gmail fetch.
-        step.run("gmail-sample-scan", async () => {
-          const stepStart = Date.now();
-          const t1 = Date.now();
-          const accessToken = await getValidGmailToken(userId);
-          const tokenMs = Date.now() - t1;
-          const gmail = new GmailClient(accessToken);
-          const t2 = Date.now();
-          const { messages } = await gmail.sampleScan(
-            ONBOARDING_TUNABLES.pass1.sampleSize,
-            ONBOARDING_TUNABLES.pass1.lookback,
-          );
-          const gmailMs = Date.now() - t2;
-          logger.info({
-            service: "runOnboarding",
-            operation: "gmail-sample-scan.complete",
-            schemaId,
-            sampleSize: ONBOARDING_TUNABLES.pass1.sampleSize,
-            lookback: ONBOARDING_TUNABLES.pass1.lookback,
-            messageCount: messages.length,
-            stepDurationMs: Date.now() - stepStart,
-            gmailTokenMs: tokenMs,
-            gmailSampleScanMs: gmailMs,
-          });
-          return { messages: messages.map(serializeMessageForStep) };
-        }),
-      ]);
-
-      // ---- Step 1b: Pass 1 validation (broad random sample) -------------
-      //
-      // Pre-confirm validation. Takes the sample from gmail-sample-scan
-      // and asks Claude to identify confirmed entities, new discoveries,
-      // and noise. Pass 2 (targeted domain expansion) is deferred until
-      // after the user confirms — see expand-confirmed-domains in
-      // runOnboardingPipeline.
-      //
-      // Runs OUTSIDE an advanceSchemaPhase CAS — stays within the
-      // GENERATING_HYPOTHESIS phase for polling purposes. The phase advance
-      // happens in the next step (advance-to-awaiting-review) after
-      // validation has written its result back.
-      await step.run("validate-hypothesis", async () => {
-        const stepStart = Date.now();
-        let dbReadMs = 0;
-        let validateMs = 0;
-        let dbWriteMs = 0;
-
-        const t0 = Date.now();
-        const schema = await prisma.caseSchema.findUniqueOrThrow({
+      // Load the stub + validate the domain column is populated. Task 4.4
+      // writes `domain` onto the stub via createSchemaStub from
+      // InterviewInput.domain. A schema without a domain cannot drive
+      // Stage 1 (per-domain query + regex config both live under a domain
+      // key), so fail fast instead of silently running an empty discovery.
+      const schema = await step.run("load-schema", async () =>
+        prisma.caseSchema.findUniqueOrThrow({
           where: { id: schemaId },
-          select: { hypothesis: true, validation: true, inputs: true },
-        });
-        dbReadMs = Date.now() - t0;
+          select: { id: true, phase: true, domain: true },
+        }),
+      );
 
-        // Idempotency guard: on Inngest retry, if validation already ran,
-        // skip it rather than spending another Claude call.
-        if (schema.validation) {
-          logger.info({
-            service: "runOnboarding",
-            operation: "validate-hypothesis.skip",
-            schemaId,
-            reason: "already-validated",
-            stepDurationMs: Date.now() - stepStart,
-          });
-          return;
-        }
+      if (!schema.domain) {
+        throw new NonRetriableError(
+          `runOnboarding: CaseSchema ${schemaId} has no domain — stub was created without InterviewInput.domain (see Task 4.4)`,
+        );
+      }
 
-        const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
-        if (!hypothesis) {
-          throw new NonRetriableError(
-            `runOnboarding: CaseSchema ${schemaId} has no hypothesis after GENERATING_HYPOTHESIS`,
-          );
-        }
-
-        // Messages come from the sibling gmail-sample-scan step above
-        // (memoized by Inngest, so retries of this step don't re-fetch).
-        const { messages } = sampleScanResult;
-
-        // Enrich hypothesis WHO aliases with resolved sender email
-        // addresses (mutates the hypothesis object in place). Pass 2
-        // (post-confirm) reads these enriched aliases via
-        // extractExpansionTargets.
-        resolveWhoEmails(hypothesis, messages);
-
-        const pass1Samples = messages.map((m) => ({
-          subject: m.subject,
-          senderDomain: m.senderDomain,
-          senderName: m.senderDisplayName || m.senderEmail,
-          snippet: m.snippet,
-        }));
-
-        // entityGroups come from the raw InterviewInput (user's original
-        // topic groupings), not from the AI-generated hypothesis. Map to
-        // the EntityGroupContext shape validateHypothesis expects.
-        const inputs = schema.inputs as unknown as InterviewInput | null;
-        const entityGroups = inputs?.groups?.map((g, idx) => ({
-          index: idx,
-          primaryNames: g.whats,
-          secondaryNames: g.whos,
-        }));
-
-        // userThings = the user's raw WHATs (e.g., ["soccer","dance",...]).
-        // We give these to Claude so it can fill relatedUserThing on each
-        // discovered entity. Prefer the flat `whats` if present; fall back
-        // to flattening the groups.
-        const userThings = inputs?.whats ?? inputs?.groups?.flatMap((g) => g.whats) ?? [];
-
-        const t3 = Date.now();
-        const pass1 = await validateHypothesis(hypothesis, pass1Samples, {
-          userId,
-          entityGroups,
-          userThings,
-        });
-        validateMs = Date.now() - t3;
-
-        const t4 = Date.now();
-        await prisma.caseSchema.update({
-          where: { id: schemaId },
-          data: {
-            // Write back the (possibly mutated) hypothesis with enriched
-            // WHO aliases so Pass 2 and persistSchemaRelations see the
-            // resolved email addresses.
-            hypothesis: hypothesis as unknown as Prisma.InputJsonValue,
-            validation: pass1 as unknown as Prisma.InputJsonValue,
-          },
-        });
-        dbWriteMs = Date.now() - t4;
-
-        logger.info({
-          service: "runOnboarding",
-          operation: "validate-hypothesis.complete",
-          schemaId,
-          sampleSize: ONBOARDING_TUNABLES.pass1.sampleSize,
-          lookback: ONBOARDING_TUNABLES.pass1.lookback,
-          discovered: pass1.discoveredEntities.length,
-          confidenceScore: pass1.confidenceScore,
-          stepDurationMs: Date.now() - stepStart,
-          dbReadMs,
-          // gmailTokenMs + gmailSampleScanMs now logged by the sibling
-          // gmail-sample-scan step (Task 2.2, #80).
-          validateHypothesisMs: validateMs,
-          dbWriteMs,
-        });
-      });
-
-      // ---- Step 2: GENERATING_HYPOTHESIS → AWAITING_REVIEW ---------------
-      //
-      // Hypothesis generation and validation are done. Advance to
-      // AWAITING_REVIEW so the UI shows Card 4 (the review screen).
-      // persistSchemaRelations is NOT called here — the confirm route
-      // (POST /api/onboarding/:schemaId) calls it after the user confirms.
-      await step.run("advance-to-awaiting-review", async () => {
-        const stepStart = Date.now();
-        const result = await advanceSchemaPhase({
-          schemaId,
-          from: "GENERATING_HYPOTHESIS",
-          to: "AWAITING_REVIEW",
-          work: async () => {
-            // No additional work needed: hypothesis and validation are already
-            // written to the schema row. The CAS just flips the phase.
-          },
-        });
-        logger.info({
-          service: "runOnboarding",
-          operation: "advance-to-awaiting-review.complete",
-          schemaId,
-          stepDurationMs: Date.now() - stepStart,
-        });
-        return result;
+      // step.sendEvent memoizes the dispatch across Inngest replays so a
+      // retry after the event was accepted doesn't double-fire. Using
+      // inngest.send (non-step) here would lose that guarantee.
+      await step.sendEvent("emit-domain-discovery", {
+        name: "onboarding.domain-discovery.requested",
+        data: { schemaId, userId },
       });
 
       logger.info({
         service: "runOnboarding",
-        operation: "runOnboarding.awaitingReview",
+        operation: "runOnboarding.stage1Emitted",
         schemaId,
-        // Total wall clock from event receipt to phase=AWAITING_REVIEW.
-        // This is the "time the user waits on Card 3" metric — subtract
-        // polling overhead on the client to get the true server cost.
+        domain: schema.domain,
         totalDurationMs: Date.now() - functionStart,
       });
+
+      return { emitted: true };
     } catch (error) {
       if (error instanceof NonRetriableError) {
-        // Re-read the current phase so markSchemaFailed records exactly
-        // where we died (the catch block can't assume anything).
         const current = await prisma.caseSchema.findUnique({
           where: { id: schemaId },
           select: { phase: true },
@@ -323,27 +107,31 @@ export const runOnboarding = inngest.createFunction(
         await markSchemaFailed(schemaId, current?.phase ?? "PENDING", error);
         throw error;
       }
-
       logger.error({
         service: "runOnboarding",
         operation: "runOnboarding.caught",
         schemaId,
         error: error instanceof Error ? error.message : String(error),
       });
-      const current = await prisma.caseSchema.findUnique({
-        where: { id: schemaId },
-        select: { phase: true },
-      });
-      await markSchemaFailed(schemaId, current?.phase ?? "PENDING", error);
       throw error;
     }
   },
 );
 
 // ---------------------------------------------------------------------------
-// Function B: runOnboardingPipeline
-// Triggered by: onboarding.review.confirmed (emitted by the confirm route)
-// Drives: AWAITING_REVIEW → PROCESSING_SCAN → COMPLETED (or terminal state)
+// Function B: runOnboardingPipeline (issue #95 Task 4.2)
+// Triggered by: onboarding.review.confirmed (emitted by /entity-confirm)
+// Drives:       PROCESSING_SCAN → COMPLETED (or terminal state)
+//
+// The `/entity-confirm` route (Task 3.2) CAS-advances AWAITING_ENTITY_CONFIRMATION
+// → PROCESSING_SCAN before emitting the event, so this function observes
+// schemas already in PROCESSING_SCAN. Function B's own `create-scan-job`
+// step's advanceSchemaPhase call therefore guards from="AWAITING_ENTITY_CONFIRMATION"
+// to respect the Bug 3 rule (one CAS owner per transition) — which is the
+// phase the schema sits in when the route started its transaction.
+//
+// The old `expand-confirmed-domains` step (Pass 2 targeted domain expansion)
+// has been removed — Stage 2 now produces confirmed entities in one shot.
 // ---------------------------------------------------------------------------
 
 export const runOnboardingPipeline = inngest.createFunction(
@@ -355,245 +143,50 @@ export const runOnboardingPipeline = inngest.createFunction(
       { key: "event.data.schemaId", limit: 1 },
       { key: "event.data.userId", limit: 3 },
     ],
-    // retries bumped 0 → 2 after step-level idempotency audit 2026-04-14 (Phase 1 of perf-quality sprint, #69).
+    // retries bumped 0 → 2 after step-level idempotency audit 2026-04-14 (#69).
     retries: 2,
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
 
     try {
-      // ---- Step 0: Pass 2 — targeted domain expansion ------------------
+      // ---- Step 0: Verify confirmed entities exist ----------------------
       //
-      // The user has confirmed which entities they care about. Expand
-      // Gmail coverage for those entities ONLY: for each confirmed
-      // SECONDARY entity's alias addresses, emit an expansion target
-      // (domain for corporate senders, full sender address for generic
-      // providers like @gmail.com). Query Gmail for each target, run a
-      // second validateHypothesis pass on those samples, and write any
-      // newly discovered entities as Entity rows so the downstream scan
-      // picks them up via normal entity reads.
-      //
-      // This step is best-effort: failure here should NOT block the
-      // pipeline. If Gmail quota or an expansion call fails, log and
-      // continue so the user still gets their scan.
-      await step.run("expand-confirmed-domains", async () => {
-        try {
-          const schema = await prisma.caseSchema.findUniqueOrThrow({
-            where: { id: schemaId },
-            select: { hypothesis: true, inputs: true },
-          });
-          const hypothesis = schema.hypothesis as unknown as SchemaHypothesis | null;
-          if (!hypothesis) {
-            logger.warn({
-              service: "runOnboardingPipeline",
-              operation: "expand-confirmed-domains.skip",
-              schemaId,
-              reason: "no-hypothesis",
-            });
-            return;
-          }
-
-          // Only expand for entities the user kept (isActive=true). A
-          // rejected entity means the user doesn't want its domain
-          // crawled.
-          const activeEntities = await prisma.entity.findMany({
-            where: { schemaId, isActive: true, type: "SECONDARY" },
-            select: { name: true, aliases: true },
-          });
-          if (activeEntities.length === 0) {
-            logger.info({
-              service: "runOnboardingPipeline",
-              operation: "expand-confirmed-domains.skip",
-              schemaId,
-              reason: "no-active-secondary-entities",
-            });
-            return;
-          }
-
-          // Build a hypothesis-shaped view restricted to active SECONDARY
-          // entities with their DB-resolved aliases. extractExpansionTargets
-          // walks aliases, so this narrows the inputs correctly without
-          // touching the helper.
-          const narrowed: SchemaHypothesis = {
-            ...hypothesis,
-            entities: activeEntities.map((e) => ({
-              name: e.name,
-              type: "SECONDARY",
-              secondaryTypeName: null,
-              aliases: Array.isArray(e.aliases) ? (e.aliases as string[]) : [],
-              confidence: 1,
-              source: "user_input",
-            })),
-          };
-
-          const targets = extractExpansionTargets(narrowed).slice(
-            0,
-            ONBOARDING_TUNABLES.pass2.maxTargetsToExpand,
+      // Stage 2 + /entity-confirm already persisted the user's confirmed
+      // entities via persistConfirmedEntities. This step is a thin
+      // pre-scan sanity check — if no confirmed entities exist on the
+      // schema, the scan has nothing to do and we fail loudly rather than
+      // running an empty pipeline.
+      await step.run("verify-confirmed-entities", async () => {
+        const count = await prisma.entity.count({
+          where: { schemaId, isActive: true, autoDetected: false },
+        });
+        if (count === 0) {
+          throw new NonRetriableError(
+            `runOnboardingPipeline: schema ${schemaId} has no confirmed entities (autoDetected=false, isActive=true)`,
           );
-          if (targets.length === 0) {
-            logger.info({
-              service: "runOnboardingPipeline",
-              operation: "expand-confirmed-domains.skip",
-              schemaId,
-              reason: "no-targets",
-            });
-            return;
-          }
-
-          const accessToken = await getValidGmailToken(userId);
-          const gmail = new GmailClient(accessToken);
-          const inputs = schema.inputs as unknown as InterviewInput | null;
-          const entityGroups = inputs?.groups?.map((g, idx) => ({
-            index: idx,
-            primaryNames: g.whats,
-            secondaryNames: g.whos,
-          }));
-          const userThings = inputs?.whats ?? inputs?.groups?.flatMap((g) => g.whats) ?? [];
-
-          // Accumulate discoveries across targets, deduped by entity name
-          // against existing DB entities AND across targets in this pass.
-          const existingNames = new Set(activeEntities.map((e) => e.name.toLowerCase()));
-          const allPrimaryNames = await prisma.entity.findMany({
-            where: { schemaId, type: "PRIMARY" },
-            select: { name: true },
-          });
-          for (const p of allPrimaryNames) existingNames.add(p.name.toLowerCase());
-
-          const newDiscoveries: HypothesisValidation["discoveredEntities"] = [];
-
-          for (const target of targets) {
-            try {
-              const query = `from:${target.value} newer_than:${ONBOARDING_TUNABLES.pass2.lookback}`;
-              const targetMessages = await gmail.searchEmails(
-                query,
-                ONBOARDING_TUNABLES.pass2.emailsPerTarget,
-              );
-              if (targetMessages.length === 0) continue;
-
-              const samples = targetMessages.map((m) => ({
-                subject: m.subject,
-                senderDomain: m.senderDomain,
-                senderName: m.senderDisplayName || m.senderEmail,
-                snippet: m.snippet,
-              }));
-
-              const pass2 = await validateHypothesis(narrowed, samples, {
-                userId,
-                entityGroups,
-                userThings,
-              });
-
-              for (const discovered of pass2.discoveredEntities) {
-                const key = discovered.name.toLowerCase();
-                if (existingNames.has(key)) continue;
-                if (newDiscoveries.some((e) => e.name.toLowerCase() === key)) continue;
-                newDiscoveries.push(discovered);
-                existingNames.add(key);
-              }
-
-              logger.info({
-                service: "runOnboardingPipeline",
-                operation: "expand-confirmed-domains.target",
-                schemaId,
-                targetType: target.type,
-                targetValue: target.value,
-                emailsFetched: targetMessages.length,
-                newFromTarget: pass2.discoveredEntities.length,
-              });
-            } catch (err) {
-              logger.warn({
-                service: "runOnboardingPipeline",
-                operation: "expand-confirmed-domains.target.failed",
-                schemaId,
-                targetType: target.type,
-                targetValue: target.value,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            }
-          }
-
-          if (newDiscoveries.length === 0) {
-            logger.info({
-              service: "runOnboardingPipeline",
-              operation: "expand-confirmed-domains.complete",
-              schemaId,
-              newDiscoveries: 0,
-            });
-            return;
-          }
-
-          // Persist new discoveries as Entity rows so the downstream scan
-          // reads them when building discovery queries. These are written
-          // as isActive=true with autoDetected=true — the user didn't
-          // get to toggle them because they were discovered AFTER confirm.
-          // If that turns out to surface too many off-topic entities, we
-          // can gate on relatedUserThing !== null in a future pass.
-          await prisma.$transaction(
-            newDiscoveries.map((d) =>
-              prisma.entity.upsert({
-                where: {
-                  schemaId_identityKey_type: {
-                    schemaId,
-                    identityKey: d.name,
-                    type: d.type,
-                  },
-                },
-                create: {
-                  schemaId,
-                  name: d.name,
-                  identityKey: d.name,
-                  type: d.type,
-                  secondaryTypeName: d.secondaryTypeName,
-                  aliases: [],
-                  autoDetected: true,
-                  confidence: d.confidence,
-                  isActive: true,
-                },
-                // Idempotent retry: if this step runs again after a
-                // previous transaction already wrote the row, do nothing.
-                // The existing row is whatever the earlier run wrote.
-                update: {},
-              }),
-            ),
-          );
-
-          logger.info({
-            service: "runOnboardingPipeline",
-            operation: "expand-confirmed-domains.complete",
-            schemaId,
-            targetCount: targets.length,
-            newDiscoveries: newDiscoveries.length,
-          });
-        } catch (err) {
-          // Outer catch: swallow so pipeline continues. Domain expansion
-          // is best-effort; its value is more discoveries, not
-          // correctness.
-          logger.warn({
-            service: "runOnboardingPipeline",
-            operation: "expand-confirmed-domains.failed",
-            schemaId,
-            error: err instanceof Error ? err.message : String(err),
-          });
         }
       });
 
-      // ---- Step 1: AWAITING_REVIEW → PROCESSING_SCAN --------------------
+      // ---- Step 1: AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN --------
       //
-      // Create the onboarding ScanJob row in the same CAS so the scan id
-      // and the schema-phase advance commit atomically. Return the scan
-      // id through the helper; on "skipped" (re-entry) look it up.
+      // /entity-confirm already flipped the phase. advanceSchemaPhase's
+      // CAS gate will return "skipped" on its first real invocation (phase
+      // is already PROCESSING_SCAN). We still enter the step to commit the
+      // ScanJob row idempotently — the phase transition ownership remains
+      // the route's, but scan-row creation lives here so Function B stays
+      // self-sufficient for retry.
       const createdScanId = await step.run("create-scan-job", async () => {
         return advanceSchemaPhase({
           schemaId,
-          from: "AWAITING_REVIEW",
+          from: "AWAITING_ENTITY_CONFIRMATION",
           to: "PROCESSING_SCAN",
           work: async () => {
-            // Idempotency guard (Phase 1 audit, #69): advanceSchemaPhase runs
-            // work() before the CAS commit. If scanJob.create succeeded but
-            // the subsequent CAS updateMany failed (or the process died
-            // between them), an Inngest retry would re-enter this step with
-            // phase still AWAITING_REVIEW and create a second ONBOARDING
-            // scan. Check for an existing onboarding scan first and reuse it.
+            // Idempotency guard (#69): advanceSchemaPhase runs work() before
+            // the CAS commit. If scanJob.create succeeded but the subsequent
+            // CAS updateMany failed, an Inngest retry would re-enter this
+            // step and create a second ONBOARDING scan. Check for an
+            // existing onboarding scan first and reuse it.
             const existing = await prisma.scanJob.findFirst({
               where: { schemaId, triggeredBy: "ONBOARDING" },
               orderBy: { createdAt: "desc" },
@@ -618,8 +211,8 @@ export const runOnboardingPipeline = inngest.createFunction(
 
       // ---- Step 2: resolve scan job id ----------------------------------
       //
-      // On "skipped" re-entry (Inngest retry after create-scan-job already
-      // advanced the phase), look up the most recent onboarding scan.
+      // On "skipped" (Inngest retry OR the route already flipped the phase
+      // before this function fired), look up the most recent onboarding scan.
       const scanJobId: string = await step.run("resolve-scan-job", async () => {
         if (createdScanId !== "skipped") return createdScanId as string;
         const existing = await prisma.scanJob.findFirst({
@@ -629,7 +222,7 @@ export const runOnboardingPipeline = inngest.createFunction(
         });
         if (!existing) {
           throw new NonRetriableError(
-            `runOnboardingPipeline: schema ${schemaId} is past AWAITING_REVIEW but has no onboarding ScanJob`,
+            `runOnboardingPipeline: schema ${schemaId} is past AWAITING_ENTITY_CONFIRMATION but has no onboarding ScanJob`,
           );
         }
         return existing.id;
@@ -644,13 +237,6 @@ export const runOnboardingPipeline = inngest.createFunction(
       });
 
       // ---- Step 4: wait for scan.completed ------------------------------
-      //
-      // Inngest waitForEvent returns null on timeout. The `match` clause
-      // filters to the specific schemaId so a parallel scan for another
-      // schema doesn't unblock this workflow. We match on schemaId (not
-      // scanJobId) because the trigger event (onboarding.review.confirmed)
-      // has schemaId but not scanJobId — matching on a field absent from
-      // the trigger always fails (see docs/01_denim_lessons_learned.md).
       const completion = await step.waitForEvent("wait-for-scan", {
         event: "scan.completed",
         timeout: SCAN_WAIT_TIMEOUT,
@@ -664,14 +250,7 @@ export const runOnboardingPipeline = inngest.createFunction(
       }
 
       // ---- Step 5: advance to terminal state ----------------------------
-      //
-      // Three outcomes from the scan:
-      //   - reason="failed"          → FAILED (scan died, surface the error)
-      //   - reason="no-emails-found" → NO_EMAILS_FOUND (terminal, no content)
-      //   - happy path               → COMPLETED with status ACTIVE
       const reason = completion.data.reason;
-      // "failed" reason + errorMessage are set at runtime by handleDownstreamScanFailure
-      // even though the typed union only declares "no-emails-found".
       const completionData = completion.data as typeof completion.data & {
         reason?: string;
         errorMessage?: string;
@@ -703,7 +282,12 @@ export const runOnboardingPipeline = inngest.createFunction(
         return;
       }
 
-      // Happy path: advance to COMPLETED and mark schema ACTIVE.
+      // Happy path: advance to COMPLETED and mark schema ACTIVE. Null out
+      // the Stage 1/Stage 2 candidate JSON — these columns contained sender
+      // domains + subject strings (PII) that were only needed to drive the
+      // review screens. Keep `stage2ConfirmedDomains` as debugging history;
+      // drop the bulky candidate payloads. Data-lifecycle obligation, not
+      // optimization.
       await step.run("advance-to-completed", async () => {
         await advanceSchemaPhase({
           schemaId,
@@ -712,7 +296,11 @@ export const runOnboardingPipeline = inngest.createFunction(
           work: async () => {
             await prisma.caseSchema.update({
               where: { id: schemaId },
-              data: { status: "ACTIVE" },
+              data: {
+                status: "ACTIVE",
+                stage1Candidates: Prisma.DbNull,
+                stage2Candidates: Prisma.DbNull,
+              },
             });
           },
         });
@@ -732,7 +320,11 @@ export const runOnboardingPipeline = inngest.createFunction(
           where: { id: schemaId },
           select: { phase: true },
         });
-        await markSchemaFailed(schemaId, current?.phase ?? "AWAITING_REVIEW", error);
+        await markSchemaFailed(
+          schemaId,
+          current?.phase ?? "AWAITING_ENTITY_CONFIRMATION",
+          error,
+        );
         throw error;
       }
 
@@ -746,7 +338,11 @@ export const runOnboardingPipeline = inngest.createFunction(
         where: { id: schemaId },
         select: { phase: true },
       });
-      await markSchemaFailed(schemaId, current?.phase ?? "AWAITING_REVIEW", error);
+      await markSchemaFailed(
+        schemaId,
+        current?.phase ?? "AWAITING_ENTITY_CONFIRMATION",
+        error,
+      );
       throw error;
     }
   },
