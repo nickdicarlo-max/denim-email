@@ -11,7 +11,7 @@ import { PrismaClient } from "@prisma/client";
 
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
-const log = (s: string) => process.stderr.write(s + "\n");
+const log = (s: string) => process.stderr.write(`${s}\n`);
 
 import { clusterEmails } from "@denim/engine/src/clustering/gravity-model";
 import type { ClusterEmailInput, ClusteringConfig } from "@denim/types";
@@ -134,10 +134,10 @@ async function main() {
   // Also verify alternativeCaseId resolution
   const altCaseIds = merges.map((d) => d.alternativeCaseId).filter(Boolean);
   const altResolved = altCaseIds.filter(
-    (id) => !id!.startsWith("new-case-") || syntheticToReal.has(id!),
+    (id) => !id?.startsWith("new-case-") || syntheticToReal.has(id!),
   );
   const altUnresolved = altCaseIds.filter(
-    (id) => id!.startsWith("new-case-") && !syntheticToReal.has(id!),
+    (id) => id?.startsWith("new-case-") && !syntheticToReal.has(id!),
   );
   log(`\n--- ALTERNATIVE CASE ID RESOLUTION ---`);
   log(`Total with alternativeCaseId: ${altCaseIds.length}`);
@@ -147,6 +147,6 @@ async function main() {
   await p.$disconnect();
 }
 main().catch((e) => {
-  log("FAIL: " + e.message);
+  log(`FAIL: ${e.message}`);
   process.exit(1);
 });

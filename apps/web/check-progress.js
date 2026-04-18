@@ -1,5 +1,5 @@
 const { PrismaClient } = require("@prisma/client");
-const fs = require("fs");
+const fs = require("node:fs");
 
 // Load .env.local manually
 const envContent = fs.readFileSync(".env.local", "utf8");
@@ -36,8 +36,10 @@ async function main() {
   const q = s?.discoveryQueries;
   console.log("Schema:", s?.id, "emailCount:", s?.emailCount);
   if (Array.isArray(q)) {
-    console.log("Discovery queries (" + q.length + "):");
-    q.forEach((x) => console.log("  -", x.query));
+    console.log(`Discovery queries (${q.length}):`);
+    q.forEach((x) => {
+      console.log("  -", x.query);
+    });
   }
 
   const emailCount = await p.email.count({ where: { schemaId: s?.id } });

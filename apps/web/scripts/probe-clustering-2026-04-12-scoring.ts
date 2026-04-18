@@ -7,18 +7,10 @@ import { PrismaClient } from "@prisma/client";
 
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
-const log = (s: string) => process.stderr.write(s + "\n");
+const log = (s: string) => process.stderr.write(`${s}\n`);
 
 import { clusterEmails } from "@denim/engine/src/clustering/gravity-model";
-// Import the actual scoring functions to simulate
-import {
-  actorScore,
-  subjectScore,
-  tagScore,
-  threadScore,
-  timeDecayMultiplier,
-} from "@denim/engine/src/clustering/scoring";
-import type { ClusterCaseInput, ClusterEmailInput, ClusteringConfig } from "@denim/types";
+import type { ClusterEmailInput, ClusteringConfig } from "@denim/types";
 
 async function main() {
   log("=".repeat(70));
@@ -177,6 +169,6 @@ async function main() {
   await p.$disconnect();
 }
 main().catch((e) => {
-  log("FAIL: " + e.message + "\n" + e.stack);
+  log(`FAIL: ${e.message}\n${e.stack}`);
   process.exit(1);
 });

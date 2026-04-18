@@ -5,9 +5,10 @@ dotenv.config({ path: ".env.local" });
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
+// biome-ignore lint/style/noNonNullAssertion: dev script; env validated by tsx dotenv/config at import time
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
-const log = (s: string) => process.stderr.write(s + "\n");
+const log = (s: string) => process.stderr.write(`${s}\n`);
 
 async function main() {
   log("=".repeat(70));
@@ -28,7 +29,7 @@ async function main() {
   });
 
   for (const s of gaSchemas) {
-    log("\n" + "-".repeat(70));
+    log(`\n${"-".repeat(70)}`);
     log(`SCHEMA: ${s.name} (${s.id})`);
     log("-".repeat(70));
     log(`domain: ${s.domain}`);
@@ -188,6 +189,6 @@ async function main() {
   await p.$disconnect();
 }
 main().catch((e) => {
-  log("FAIL: " + e.message);
+  log(`FAIL: ${e.message}`);
   process.exit(1);
 });

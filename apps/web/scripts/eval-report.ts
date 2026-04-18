@@ -41,7 +41,7 @@ const outputDir = resolve(process.cwd(), "../../docs/test-results");
 // Helpers
 // ---------------------------------------------------------------------------
 
-const log = (s: string) => process.stderr.write(s + "\n");
+const log = (s: string) => process.stderr.write(`${s}\n`);
 
 function pct(n: number, total: number): string {
   if (total === 0) return "0%";
@@ -118,7 +118,7 @@ async function reportSchema(schemaId: string) {
   const config = schema.clusteringConfig as Record<string, unknown> | null;
   const schemaLabel = `${schema.name} (${schema.domain ?? "unknown"})`;
 
-  log("\n" + "=".repeat(72));
+  log(`\n${"=".repeat(72)}`);
   log(`EVAL REPORT: ${schemaLabel}`);
   log(`Schema ID: ${schema.id}`);
   log(`Created: ${schema.createdAt.toISOString()}`);
@@ -301,7 +301,7 @@ async function reportSchema(schemaId: string) {
   if (scanJob) {
     const duration =
       scanJob.startedAt && scanJob.completedAt
-        ? ((scanJob.completedAt.getTime() - scanJob.startedAt.getTime()) / 1000).toFixed(1) + "s"
+        ? `${((scanJob.completedAt.getTime() - scanJob.startedAt.getTime()) / 1000).toFixed(1)}s`
         : "N/A";
     log("\n--- SCAN JOB ---");
     log(`  Status: ${scanJob.status} | Phase: ${scanJob.phase}`);

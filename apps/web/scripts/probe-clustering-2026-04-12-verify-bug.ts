@@ -7,7 +7,7 @@ import { PrismaClient } from "@prisma/client";
 
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
-const log = (s: string) => process.stderr.write(s + "\n");
+const log = (s: string) => process.stderr.write(`${s}\n`);
 
 async function main() {
   log("=".repeat(70));
@@ -45,7 +45,7 @@ async function main() {
 
   // 2. Check if any cluster has a synthetic targetCaseId
   for (const c of clusters) {
-    if (c.targetCaseId && c.targetCaseId.startsWith("new-case-")) {
+    if (c.targetCaseId?.startsWith("new-case-")) {
       log(`  WARNING: cluster ${c.id} has synthetic targetCaseId: ${c.targetCaseId}`);
     }
   }
@@ -112,6 +112,6 @@ async function main() {
   await p.$disconnect();
 }
 main().catch((e) => {
-  log("FAIL: " + e.message);
+  log(`FAIL: ${e.message}`);
   process.exit(1);
 });

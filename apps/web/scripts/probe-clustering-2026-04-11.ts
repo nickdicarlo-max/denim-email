@@ -7,10 +7,11 @@ dotenv.config({ path: ".env.local" });
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
+// biome-ignore lint/style/noNonNullAssertion: dev script; env validated by tsx dotenv/config at import time
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
 
-const log = (s: string) => process.stderr.write(s + "\n");
+const log = (s: string) => process.stderr.write(`${s}\n`);
 
 async function main() {
   log("=".repeat(70));
@@ -130,7 +131,7 @@ async function main() {
     }
   }
 
-  log("\n" + "=".repeat(70));
+  log(`\n${"=".repeat(70)}`);
   log("PROBE 2: 2919 SUNSET POINT — SHOWING CONFIRMED FRAGMENTATION");
   log("=".repeat(70));
 
@@ -229,7 +230,7 @@ async function main() {
     for (const [k, v] of Object.entries(grid)) log(`  ${k}: ${v}`);
   }
 
-  log("\n" + "=".repeat(70));
+  log(`\n${"=".repeat(70)}`);
   log("PROBE 3: PIPELINE INTELLIGENCE RECORDS");
   log("=".repeat(70));
 
@@ -262,6 +263,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  log("FAIL: " + (e instanceof Error ? e.message : String(e)));
+  log(`FAIL: ${e instanceof Error ? e.message : String(e)}`);
   process.exit(1);
 });

@@ -16,11 +16,7 @@ import type { GmailMessageFull } from "../src/lib/gmail/types";
 import { prisma } from "../src/lib/prisma";
 import { coarseCluster, splitCoarseClusters } from "../src/lib/services/cluster";
 import { runSmartDiscovery } from "../src/lib/services/discovery";
-import {
-  buildSchemaContext,
-  extractEmail,
-  processEmailBatch,
-} from "../src/lib/services/extraction";
+import { buildSchemaContext, processEmailBatch } from "../src/lib/services/extraction";
 import {
   createSchemaStub,
   generateHypothesis,

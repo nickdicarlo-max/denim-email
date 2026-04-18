@@ -12,6 +12,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
 const adapter = new PrismaPg({
+  // biome-ignore lint/style/noNonNullAssertion: dev script; env validated by tsx dotenv/config at import time
   connectionString: process.env.DATABASE_URL!,
 });
 const prisma = new PrismaClient({ adapter });
