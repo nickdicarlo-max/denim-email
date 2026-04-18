@@ -17,7 +17,8 @@
  * never write `phase` directly.
  */
 
-import type { ScanPhase, SchemaPhase } from "@prisma/client";
+import type { CredentialFailure } from "@denim/types";
+import { Prisma, type ScanPhase, type SchemaPhase } from "@prisma/client";
 import { NonRetriableError } from "inngest";
 import { prisma } from "@/lib/prisma";
 
@@ -139,11 +140,16 @@ export async function advanceSchemaPhase<T>(
 /**
  * Mark a schema as FAILED with the phase where it died and an error message.
  * Always succeeds regardless of current phase — terminal error state.
+ *
+ * When `credentialFailure` is provided, its typed payload is persisted on the
+ * `phaseCredentialFailure` JSONB column so the UI can branch on
+ * reason/remedy without string-matching `phaseError`. Issue #105 step 4.
  */
 export async function markSchemaFailed(
   schemaId: string,
   phaseAtFailure: SchemaPhase,
   error: unknown,
+  credentialFailure?: CredentialFailure,
 ): Promise<void> {
   const message = error instanceof Error ? error.message : String(error);
   await prisma.caseSchema.update({
@@ -153,6 +159,9 @@ export async function markSchemaFailed(
       phaseError: `[${phaseAtFailure}] ${message}`,
       phaseErrorAt: new Date(),
       phaseUpdatedAt: new Date(),
+      phaseCredentialFailure: credentialFailure
+        ? (credentialFailure as unknown as Prisma.InputJsonValue)
+        : Prisma.DbNull,
     },
   });
 }

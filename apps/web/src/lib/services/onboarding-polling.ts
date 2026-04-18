@@ -8,6 +8,7 @@
  * diagram forward. Every branch is exercised by a test — if you add a new
  * state, add a test first or the merge will silently map it to PENDING.
  */
+import type { CredentialFailure } from "@denim/types";
 import type { CaseSchema, ScanJob, ScanPhase } from "@prisma/client";
 import { logger } from "@/lib/logger";
 import { computeScanMetrics } from "./scan-metrics";
@@ -73,6 +74,13 @@ export interface OnboardingPollingResponse {
   phase: OnboardingPhase;
   progress: OnboardingProgress;
   error?: OnboardingError;
+  /**
+   * Typed credential-failure payload. Present when the schema failed with
+   * a Gmail-auth-related cause; carries `{ reason, remedy }` so the UI can
+   * branch on `remedy === "reconnect"` without string-matching `error.message`.
+   * Issue #105 step 4.
+   */
+  credentialFailure?: CredentialFailure;
   nextHref?: string;
   updatedAt: string;
   // Present during DISCOVERING_DOMAINS / AWAITING_DOMAIN_CONFIRMATION.
@@ -136,6 +144,7 @@ export async function derivePollingResponse(
 
   // Terminal: schema-level failure (takes precedence over everything else).
   if (schema.phase === "FAILED") {
+    const cf = schema.phaseCredentialFailure as CredentialFailure | null;
     return {
       ...base,
       phase: "FAILED",
@@ -144,6 +153,7 @@ export async function derivePollingResponse(
         message: schema.phaseError ?? "Unknown error",
         retryable: true,
       },
+      ...(cf ? { credentialFailure: cf } : {}),
     };
   }
 

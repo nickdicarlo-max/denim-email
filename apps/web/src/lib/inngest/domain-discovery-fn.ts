@@ -9,7 +9,7 @@
  * Gmail 10,000 req/100sec cap. Priority 120 (interactive — user watches spinner).
  */
 
-import { GmailCredentialError } from "@denim/types";
+import { credentialFailure, GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverDomains } from "@/lib/discovery/domain-discovery";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
@@ -105,17 +105,26 @@ export const runDomainDiscovery = inngest.createFunction(
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // Prefer the typed GmailCredentialError (thrown by getAccessToken);
-      // fall back to the legacy string-match for non-typed errors
-      // (Gmail API 401s from client.ts, etc.). Either way we write the
-      // GMAIL_AUTH: prefix onto phaseError so the UI's detection layer
-      // in step 4 can continue working against either source.
-      const authFailed = err instanceof GmailCredentialError || matchesGmailAuthError(message);
+      // Prefer the typed GmailCredentialError (thrown by getAccessToken).
+      // For legacy Gmail API 401s (thrown as plain Errors from client.ts),
+      // fall back to string matching + synthesize a CredentialFailure with
+      // a conservative "refresh_failed" reason -- the remedy is still
+      // "reconnect" so the UI renders the same screen either way.
+      const typedFailure =
+        err instanceof GmailCredentialError
+          ? err.credentialFailure
+          : matchesGmailAuthError(message)
+            ? credentialFailure("refresh_failed")
+            : null;
+
       await step.run("mark-failed", async () => {
         await markSchemaFailed(
           schemaId,
           "DISCOVERING_DOMAINS",
-          authFailed ? new Error(`GMAIL_AUTH: ${message}`) : err,
+          // Keep the GMAIL_AUTH: prefix on phaseError for legacy consumers
+          // (deprecated; typed payload below is the source of truth now).
+          typedFailure ? new Error(`GMAIL_AUTH: ${message}`) : err,
+          typedFailure ?? undefined,
         );
       });
       throw err;

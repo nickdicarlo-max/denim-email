@@ -13,7 +13,7 @@
  * is watching the spinner).
  */
 
-import { GmailCredentialError } from "@denim/types";
+import { credentialFailure, GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
@@ -140,12 +140,19 @@ export const runEntityDiscovery = inngest.createFunction(
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const authFailed = err instanceof GmailCredentialError || matchesGmailAuthError(message);
+      const typedFailure =
+        err instanceof GmailCredentialError
+          ? err.credentialFailure
+          : matchesGmailAuthError(message)
+            ? credentialFailure("refresh_failed")
+            : null;
+
       await step.run("mark-failed", async () => {
         await markSchemaFailed(
           schemaId,
           "DISCOVERING_ENTITIES",
-          authFailed ? new Error(`GMAIL_AUTH: ${message}`) : err,
+          typedFailure ? new Error(`GMAIL_AUTH: ${message}`) : err,
+          typedFailure ?? undefined,
         );
       });
       throw err;

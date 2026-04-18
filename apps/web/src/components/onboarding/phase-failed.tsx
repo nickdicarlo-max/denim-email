@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { signInWithGmail } from "@/lib/gmail/oauth-config";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
@@ -16,10 +15,13 @@ import { createBrowserClient } from "@/lib/supabase/client";
  * onboarding.session.started. The observer page's next poll tick will
  * pick up the new non-FAILED phase and swap the rendered component.
  *
- * Auth errors (expired/revoked Google tokens) get special treatment:
- * instead of "Try again" (which would fail identically), the user sees
- * a "Reconnect Google" button that re-triggers the OAuth flow. After
- * re-auth, they land back here and can retry with a fresh token.
+ * Credential failures (expired/revoked Google tokens, missing scope) get
+ * special treatment: instead of "Try again" (which would fail identically),
+ * the user sees a "Reconnect Google" button that re-triggers the OAuth flow.
+ * We branch on the TYPED `response.credentialFailure.remedy` field now —
+ * previously this was a string-match against `error.message`, which silently
+ * broke whenever the server-side error message text changed (see #105 Bug 2
+ * class).
  *
  * Users can also start over, which clears the sessionStorage draft so
  * the category page doesn't resume against a dead schemaId. The failed
@@ -33,7 +35,10 @@ export function PhaseFailed({ response }: { response: OnboardingPollingResponse 
 
   const errorPhase = response.error?.phase ?? "UNKNOWN";
   const errorMessage = response.error?.message ?? "Something went wrong during setup.";
-  const authError = matchesGmailAuthError(errorMessage);
+  // Typed field -- present when server classified this as a credential
+  // failure. remedy === "reconnect" means OAuth is the only way forward.
+  const credentialFailure = response.credentialFailure;
+  const authError = credentialFailure?.remedy === "reconnect";
 
   const handleReconnect = useCallback(() => {
     const supabase = createBrowserClient();

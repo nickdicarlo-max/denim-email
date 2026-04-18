@@ -148,6 +148,12 @@ model CaseSchema {
   phaseErrorAt    DateTime?
   phaseUpdatedAt  DateTime?
 
+  // Typed credential-failure payload when phase=FAILED and the cause is
+  // Gmail-auth related. Written alongside phaseError by markSchemaFailed;
+  // polling surfaces it as `credentialFailure` so the UI branches on
+  // remedy/reason instead of string-matching phaseError. Issue #105 step 4.
+  phaseCredentialFailure Json?
+
   // Raw onboarding inputs + intermediate hypothesis + validation (only meaningful
   // during onboarding). Note: distinct from interviewResponses/rawHypothesis above —
   // those are kept for debugging/analytics; these are the workflow handles read by
