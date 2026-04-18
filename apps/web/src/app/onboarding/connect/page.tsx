@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ulid } from "ulid";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import { Button } from "@/components/ui/button";
-import { signInWithGmail } from "@/lib/gmail/oauth-config";
+import { signInWithGmail } from "@/lib/gmail/client/oauth-config";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import { createBrowserClient } from "@/lib/supabase/client";
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { signInWithGmail } from "@/lib/gmail/oauth-config";
+import { signInWithGmail } from "@/lib/gmail/client/oauth-config";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { Button } from "../ui/button";
 

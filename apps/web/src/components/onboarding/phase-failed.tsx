@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { signInWithGmail } from "@/lib/gmail/oauth-config";
+import { signInWithGmail } from "@/lib/gmail/client/oauth-config";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
 import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";

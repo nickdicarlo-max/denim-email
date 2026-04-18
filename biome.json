@@ -46,5 +46,35 @@
       "!**/next-env.d.ts",
       "!**/generated"
     ]
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "apps/web/src/lib/gmail/credentials/**",
+        "apps/web/src/lib/gmail/shared/**",
+        "apps/web/src/lib/gmail/tokens.ts",
+        "apps/web/src/lib/gmail/auth-errors.ts",
+        "apps/web/src/lib/gmail/client.ts",
+        "apps/web/src/lib/inngest/**",
+        "apps/web/src/lib/services/**",
+        "apps/web/src/lib/middleware/**",
+        "apps/web/src/app/api/**",
+        "apps/web/src/app/auth/**/route.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "@/lib/gmail/client/oauth-config": "Server-only modules must not import from lib/gmail/client/. Next.js wraps \"use client\" exports into Client Reference objects, which silently breaks value operations (see 2026-04-18 TypeError bug, issue #105). Shared constants live in lib/gmail/shared/."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
