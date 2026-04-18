@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-17 PM (Issue #95 fast-discovery rebuild: **Phase 2 code-complete**. +11 commits today on `feature/perf-quality-sprint` landing plan corrections + all 5 Phase 2 tasks (2.1–2.5) + a running deviations log. Phase 3 (review-screen routes/UI) queued.)
+Last updated: 2026-04-17 Evening (Issue #95 fast-discovery rebuild: **Phases 2 + 3 + 4 code-complete**. +10 more commits this evening on `feature/perf-quality-sprint`: Phase 3 review-screen routes + UI (Tasks 3.1–3.6, 6 commits) and Phase 4 pipeline cutover (Tasks 4.1–4.4, 3 commits + 1 baseline capture). Deviations log extended through Phase 4. Phase 5 (spec-as-config) next, with Phase 6 (cleanup) + Phase 7 differential eval gated behind 4.4b/4.4c + integration-test rewrite.)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -728,13 +728,102 @@ Three untracked scripts in the working tree (all dependent on gitignored `Denim_
 
 Plus an untracked `docs/superpowers/baselines/` directory that surfaced mid-session — not touched this session, left as-is.
 
+## 2026-04-17 Evening Session — Issue #95 Phases 3 + 4 Code-Complete
+
+Single session shipped all 6 Phase 3 tasks (review-screen routes + UI) and all 4 Phase 4 tasks (pipeline cutover). The deviations log now covers Phases 2, 3, and 4. Despite the filename still reading `phase2-deviations.md`, it's the canonical record for the whole rebuild-in-progress.
+
+### Phase 3 commits (6 tasks on `feature/perf-quality-sprint`)
+
+| Commit | Task | Summary |
+|---|---|---|
+| `8482ed2` | 3.1 | POST `/api/onboarding/[schemaId]/domain-confirm` — Zod + CAS `updateMany` `AWAITING_DOMAIN_CONFIRMATION → DISCOVERING_ENTITIES`; writes `stage2ConfirmedDomains` via `writeStage2ConfirmedDomains`; outbox row + optimistic `inngest.send(…).then(EMITTED)` chain |
+| `534681f` | 3.2 | POST `/api/onboarding/[schemaId]/entity-confirm` — Zod with `@`-prefix refine + `persistConfirmedEntities` using `(schemaId, identityKey, type)` unique; CAS `AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN` with `phaseUpdatedAt` bump; same outbox pattern |
+| `c678d8d` | 3.3 | Polling extension — `Stage1CandidateDTO`, `Stage2DomainCandidateDTO`, `Stage2PerDomainDTO` exported; `AWAITING_DOMAIN/ENTITY_CONFIRMATION` branches slotted before `PROCESSING_SCAN` so the no-DB path short-circuits |
+| `a9a8b51` | 3.4 | `PhaseDomainConfirmation` — `{ response }` signature, design-system tokens, `authenticatedFetch`, `SubmitStatus` union with error/empty-state rendering |
+| `9df6aa2` | 3.5 | `PhaseEntityConfirmation` — `identityKey = candidate.key` (correctness — plan's version would have 400'd every agency confirm), `autoFixed` merged badge, `aria-label` on rename input |
+| `334cfaf` | 3.6 | `flow.tsx` routing — explicit single-case branches for `DISCOVERING_DOMAINS`/`DISCOVERING_ENTITIES` (Biome `noFallthroughSwitchCase`), import order respects `biome check --apply` |
+
+### Phase 4 commits (3 bundled, breaking cutover)
+
+| Commit | Task(s) | Summary |
+|---|---|---|
+| `882ba20` | 4.4 | `createSchemaStub` writes `domain` from `InterviewInput` — **shipped first** so 4.1's `!schema.domain` guard never trips mid-cutover |
+| `6339780` | 4.1 + 4.2 | Thin `runOnboarding` (emits `onboarding.domain-discovery.requested`, throws `NonRetriableError` on missing domain, preserves two-tier catch) + trimmed `runOnboardingPipeline` (CAS `AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN`, nulls `stage1Candidates`/`stage2Candidates` on `COMPLETED`) |
+| `2c13672` | 4.3 | Deprecated POST `/api/onboarding/:schemaId` — route gutted to ownership check + phase-based 200/410 dispatch; expanded "already-confirmed" list to include `DISCOVERING_ENTITIES` + `NO_EMAILS_FOUND`; 180-line handler → ~40 lines |
+
+Plus `b204eb5` — extended Stage 2 ground-truth validator + captured pre-Phase-2 baseline.
+
+### Verification
+
+- **Typecheck:** clean across all workspaces at every commit
+- **Unit tests:** 97/97 web tests passing after Phase 4; packages unchanged from earlier today
+- **Known breakage (expected):** `onboarding-happy-path.test.ts` and `onboarding-concurrent-start.test.ts` reference `generateHypothesis` / `validateHypothesis` / the hypothesis-first `runOnboarding` shape directly. Task 6.1 owns the rewrite.
+
+### Deviations captured this session (15+ new entries)
+
+Full rationale in `docs/superpowers/plans/2026-04-17-issue-95-phase2-deviations.md`. Highlights:
+
+**Phase 3 correctness fixes** (the plan's literal code would have shipped bugs):
+- **D3.1-1 / D3.2-1** — Outbox row must flip to `EMITTED` on successful `inngest.send`. Plan's "best-effort emit, drain cron handles it" would have re-emitted Stage 1/Stage 2 events every minute on the happy path (`nextAttemptAt @default(now())` means the row is drain-eligible immediately).
+- **D3.1-2 / D3.2-4** — `vi.hoisted` mocks replacing `(global as any).__X`. Correctness: `inngest.send` must return a thenable for the `.then()` chain; plan's mock returned `undefined` and threw synchronously.
+- **D3.4-3** — Raw `fetch` → `authenticatedFetch`. Every `/api/onboarding/*` route wraps in `withAuth`; plan's sample would have 401'd silently and still called `onConfirmed()`.
+- **D3.5-1** — `identityKey = candidate.key` (producer's canonical key), NOT `\`@${domain}\``. Server Zod refine rejects `{identityKey.startsWith("@"), kind: "PRIMARY"}` as reserved for SECONDARY. Plan's agency branch would have 400'd every confirm.
+
+**Phase 4 atomic cutover protections:**
+- **D4.4-1** — Task 4.4 shipped BEFORE 4.1 (plan numbering reversed) so repo stays functional at every commit boundary during the breaking cutover.
+- **D4.1-1** — `NonRetriableError` for missing-domain (not plain `Error`). Prevents Inngest from burning three retries on a deterministic state error.
+- **D4.2-1** — 4.1+4.2 bundled into one commit. Splitting them created an intermediate state where `runOnboarding` emits Stage 1 but `runOnboardingPipeline` still expects hypothesis JSON via `expand-confirmed-domains` — would P0-break any in-flight schema hitting the mid-cutover commit.
+- **D4.3-2** — Deprecated route gutted to pure stub (ownership check + phase dispatch). Retaining old Zod/outbox/persistSchemaRelations plumbing "just in case" would bitrot; clean deletion is safer than 180 lines of unreachable code.
+
+**Phase 3 additive polish (plan-friendly):**
+- **D3.3-1** — Typed DTOs at JSON boundary (vs plan's `as any` casts). Biome `noExplicitAny` clean + shared types for 3.4/3.5 components.
+- **D3.4-2 / D3.5-2** — Design-system adoption (plan sample was `bg-black` placeholder).
+- **D3.4-4 / D3.5-5** — Error handling + empty states + `autoFixed` badge + `aria-label`. Additive to the happy path.
+- **D3.6-1** — Explicit single-case branches for `DISCOVERING_DOMAINS`/`DISCOVERING_ENTITIES` (Biome `noFallthroughSwitchCase`).
+
+### Gaps / open items flagged in the log
+
+1. **No DOM tests for `PhaseDomainConfirmation` / `PhaseEntityConfirmation`** (D3.4-5, D3.5-4). Repo has no `@testing-library/react` / jsdom / happy-dom; vitest env is `node` with no `.tsx` glob. Deferred to Phase 7 Playwright e2e. **Decision needed:** retrofit jsdom + testing-library for ~4 component smoke tests, or leave to Playwright.
+2. **Task 4.4b** — test-helper audit: grep for direct `entity.create` / `entity.upsert` calls in test setup that should route through `persistConfirmedEntities`.
+3. **Task 4.4c** — verify `INNGEST_SIGNING_KEY` is set so `/api/inngest` rejects unsigned events. Security hardening.
+4. **Integration-test regressions** — `onboarding-happy-path.test.ts` + `onboarding-concurrent-start.test.ts` broken by Phase 4 cutover; Task 6.1 owns the rewrite against Stage 1/Stage 2 flow.
+
+### Risk assessment (mine, not the plan's)
+
+- **Low risk — the deviations are high-quality.** Four of the Phase 3/4 deviations are actual correctness fixes that the plan's literal code would have shipped as bugs (outbox double-emit, auth 401s, agency-confirm 400, Inngest retry burn on missing domain). The log catches them with rationale + trade-offs instead of silently patching over them.
+- **Medium risk — agency entity algorithm drift (D2.4-1 → D2.4-2 → D2.5-1).** Final shape (whole-display tokenization, ≥80% fraction, ≥2 count minimum) is three shifts away from the plan that went through the 3-pass review. Defensible per-step, but Phase 7 differential eval (Task 7.4) is the first real quantitative check. Log itself flags false-positive risk from shared first names across agency senders.
+- **Medium risk — no end-to-end manual run yet.** Phases 1–4 landed event wiring across three separate commits (`runDomainDiscovery` unit-tested, `runEntityDiscovery` unit-tested, `/domain-confirm` + `/entity-confirm` unit-tested, `runOnboarding` now emits Stage 1) without a composed live run against Gmail + Inngest dev server. Unit test pass ≠ E2E pass.
+- **Medium risk — integration tests are red on main the moment this branch merges.** Task 6.1 must rewrite `onboarding-happy-path.test.ts` + `onboarding-concurrent-start.test.ts` BEFORE any merge-to-main, or the CI gate breaks. Flag this explicitly in the merge plan.
+- **Low risk — hypothesis-first code still live.** Phase 4.3 gutted the route but `generateHypothesis` / `validateHypothesis` services remain. Intentional — Task 7.4 differential eval needs both flows alive before Phase 6 deletes the old path. Just don't forget to delete.
+- **Low risk — deviations file scope creep.** Named `phase2-deviations.md` but covers Phases 2–4. Cosmetic; consider renaming to `issue-95-deviations.md` post-rebuild.
+
+### Next action on resume — ordered checklist
+
+Decided 2026-04-17 evening. Task 4.4c is **done** (local verification complete; Step 3 curl against Vercel is post-merge only). Everything else stays open and should be executed in this order next session:
+
+1. **Run the Stage 1/2 validator** (~2 min) — `cd apps/web && npx tsx ../../scripts/validate-stage1-real-samples.ts`. Expected: Stage 1 3/3 + Stage 2 7/8 (issues #101/#102/#103 tracked as known). Cheap regression check before we touch anything — Phase 3/4 didn't modify discovery code, so a fresh baseline is free insurance.
+2. **Task 6.1 — rewrite the two broken integration tests** against the Stage 1/Stage 2 flow:
+   - `apps/web/tests/integration/onboarding-happy-path.test.ts`
+   - `apps/web/tests/integration/onboarding-concurrent-start.test.ts`
+   Both currently import `generateHypothesis` / `validateHypothesis` / the old `runOnboarding` shape. Rewrite to drive: `POST /onboarding/start` → `runDomainDiscovery` → `POST /domain-confirm` → `runEntityDiscovery` → `POST /entity-confirm` → `runOnboarding` → scan pipeline. Hard pre-merge blocker for this branch.
+3. **Commit the test rewrites** + this status update as one or two clean commits.
+4. **Task 4.5 — first live manual E2E** with dev stack + Inngest dev server + live Gmail OAuth. Walk a fresh schema through Stage 1 confirm → Stage 2 confirm → scan complete. This is the first composed run of the wiring landed across Phases 1–4. Capture telemetry via `/onboarding-timing`. Runtime-only; nothing to commit unless we find + fix bugs.
+5. **Decide Phase 5 entry point** based on E2E findings — spec-as-config (Task 5.0 YAML loader) if the flow is clean, or hotfix commits if not.
+
+Still pending from Phase 4 (not blocking next session):
+- **Task 4.4b** — test-helper audit (grep for direct `entity.create` / `entity.upsert` in `apps/web/tests/**` that should route through `persistConfirmedEntities`). Low-priority; fold into Task 6.1 if the rewrites touch test setup.
+- **Task 4.4c Step 3** — post-merge curl against Vercel (`curl -X POST https://<prod>/api/inngest -d '{}'` → expect 401/403). Only runs after merge to main; not a pre-merge gate.
+
+**Key gotcha:** the legacy `GENERATING_HYPOTHESIS → AWAITING_REVIEW` path in `runOnboardingPipeline` is now dead but `generateHypothesis` / `validateHypothesis` services still compile and are imported by the broken integration tests. Task 6.1 rewrites should **stop importing them entirely** — that locks in the deprecation. Final deletion stays blocked until Phase 7 Task 7.4 differential eval runs (needs both flows alive).
+
 ---
 
 ## What's Next
 
 ### Immediate
-- **Issue #95 — Fast-discovery onboarding rebuild:** Phase 0 ✅ + Phase 1 ✅ + Phase 2 ✅ (2026-04-17 AM `0f3e991`..`96ff38d` + PM `d0d7b34`..`9db4364`). **Resume at Phase 3 Task 3.1** (POST `/domain-confirm` route — the first route that wires Stage-1→Stage-2). See 2026-04-17 PM session block for deviations log + Phase 3 specifics.
-- **Running deviations log:** `docs/superpowers/plans/2026-04-17-issue-95-phase2-deviations.md` — append a new section every time implementation diverges from the plan's code sample.
+- **Issue #95 — Fast-discovery onboarding rebuild:** Phase 0 ✅ + Phase 1 ✅ + Phase 2 ✅ + Phase 3 ✅ + Phase 4 ✅ (all through `2c13672`); Task 4.4c local verification ✅. **Resume next session** at the 5-step ordered checklist in the 2026-04-17 Evening session block (validator → Task 6.1 → commit → Task 4.5 live E2E → Phase 5 entry).
+- **Pre-merge blocker:** integration tests (`onboarding-happy-path.test.ts`, `onboarding-concurrent-start.test.ts`) are red after Phase 4 cutover and must be rewritten (Task 6.1) before this branch can merge to main.
+- **Running deviations log:** `docs/superpowers/plans/2026-04-17-issue-95-phase2-deviations.md` — append a new section every time implementation diverges from the plan's code sample. Filename still says "phase2" but now covers Phases 2–4; consider renaming post-rebuild.
 - **Issue #99 — Plan/reality API-signature gaps** (filed 2026-04-17): partially addressed by the `d0d7b34` corrections commit; stays open for Phase 3+ vigilance. Still the rule: cross-check every plan import against real code.
 - **Issue #100 — Stage 1 agency newsletter noise** (filed 2026-04-17): deferred to Phase 7 quantitative measurement; not blocking.
 - ~~Full E2E on `feature/perf-quality-sprint` after Phase 2~~ ✅ done 2026-04-15 early AM (3 runs, all GOOD post-#85)
