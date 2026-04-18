@@ -520,10 +520,109 @@ Both branches still render the same `PhasePending` today, matching the plan's in
 
 ---
 
+## Phase 4 — Pipeline Cutover (bundled session)
+
+Phase 4 is a breaking change by design: once Task 4.1 lands, the legacy
+hypothesis-first onboarding is gone. Tasks 4.1–4.4 must ship together so
+the repo never sits in a half-migrated state. Verification done at the
+end: 97/97 unit tests pass, typecheck clean.
+
+### Task 4.4 — `createSchemaStub` writes `domain` from `InterviewInput` (commit TBD)
+
+#### D4.4-1 — Reordered from last to first in the session
+
+**Plan said:** Task 4.4 comes after 4.1/4.2/4.3 in the plan's task numbering.
+
+**Shipped first.** Reason: Task 4.1's `runOnboarding` throws `NonRetriableError` when `!schema.domain`, and without 4.4 landed first, *every* new onboarding would fail at that guard. Landing 4.4 ahead of 4.1 keeps the repo functional at every commit boundary during the cutover. Zero-risk change (extra write on a nullable column) — fine to ship in isolation before 4.1.
+
+### Task 4.1 — Thin `runOnboarding` (commit TBD)
+
+#### D4.1-1 — `NonRetriableError` on missing domain, not generic `Error`
+
+**Plan said:** `throw new Error(\`Schema ${schemaId} missing domain\`)`.
+
+**Shipped:** `throw new NonRetriableError(\`runOnboarding: CaseSchema ${schemaId} has no domain — stub was created without InterviewInput.domain (see Task 4.4)\`)`.
+
+**Why:** A missing domain is a deterministic state error — no Inngest retry will ever make it appear. Plain `Error` would burn the function's configured `retries: 2` doing three identical failing loads before finally failing. `NonRetriableError` short-circuits to the catch block immediately, marks the schema FAILED via `markSchemaFailed`, and surfaces the error to the UI on the next poll tick. Matches the pattern already used by `runDomainDiscovery` and `runEntityDiscovery`.
+
+#### D4.1-2 — Catch block mirrors the existing two-tier pattern (NonRetriable → markSchemaFailed)
+
+**Plan said:** No catch block in the sample.
+
+**Shipped:** Same two-tier catch as the old `runOnboarding` — `NonRetriableError` → re-read phase + `markSchemaFailed` + rethrow; unknown errors → log + rethrow (no markSchemaFailed since retries may still recover).
+
+**Why:** The plan's "just emit the event" shape is too thin — if the `load-schema` step throws for any reason (DB hiccup, schema deleted mid-flight), the function fails silently and the schema sits in `PENDING` forever with no user feedback. Keeping the catch preserves the visibility contract.
+
+### Task 4.2 — Trim `runOnboardingPipeline` (same commit as 4.1)
+
+#### D4.2-1 — Bundled with Task 4.1 in one commit
+
+**Plan said:** Separate commits for 4.1 and 4.2.
+
+**Shipped:** One commit. Reason: the two changes are in the same file (`onboarding.ts`) and both participate in the same breaking cutover. Splitting them created an intermediate state where `runOnboarding` emits Stage 1 but `runOnboardingPipeline` still expects hypothesis JSON via the `expand-confirmed-domains` step — which would P0-break any in-flight schema that hit the mid-cutover commit. One atomic commit covers both.
+
+#### D4.2-2 — `create-scan-job`'s CAS guard uses `from: "AWAITING_ENTITY_CONFIRMATION"`
+
+**Plan said:** Change the CAS from `AWAITING_REVIEW` to `AWAITING_ENTITY_CONFIRMATION`.
+
+**Shipped:** As specified.
+
+Noting here because this is the Bug 3 rule in action (one CAS owner per transition). Even though `/entity-confirm` has already flipped the phase to `PROCESSING_SCAN` by the time Function B fires, `advanceSchemaPhase` returns `"skipped"` cleanly when the schema is already past `from`. The explicit `from` value is what documents intent + prevents future drift if someone reintroduces a two-owner transition.
+
+#### D4.2-3 — Null out `stage1Candidates` and `stage2Candidates` on terminal COMPLETED
+
+**Plan said:** Same as shipped — `Prisma.DbNull` on both columns in the advance-to-completed step.
+
+**Shipped:** As specified, inside the `advanceSchemaPhase` `work()` callback (same `caseSchema.update` that sets `status: "ACTIVE"`).
+
+#### D4.2-4 — Simplified catch block, dropped dead logging
+
+**Plan said:** No specific change to catch block.
+
+**Shipped:** Catch block's `markSchemaFailed` default phase changed `"AWAITING_REVIEW"` → `"AWAITING_ENTITY_CONFIRMATION"` to match the new upstream phase. Long parallel catch blocks (separate paths for `NonRetriableError` vs other) retained.
+
+**Why:** Mechanical consistency with the new CAS ownership; if the catch recorded `AWAITING_REVIEW` the error dashboard would still blame the old flow.
+
+### Task 4.3 — Deprecate POST `/api/onboarding/:schemaId` confirm (commit TBD)
+
+#### D4.3-1 — Expanded "already-confirmed" phase list beyond the plan's four
+
+**Plan said:** `PROCESSING_SCAN`, `COMPLETED`, `AWAITING_ENTITY_CONFIRMATION`, `AWAITING_DOMAIN_CONFIRMATION`.
+
+**Shipped:** Those four plus `DISCOVERING_ENTITIES` and `NO_EMAILS_FOUND`.
+
+**Why:**
+
+1. **`DISCOVERING_ENTITIES`** — a stale old-client retry arriving while Stage 2 is mid-flight should not 410. The schema has moved past the old flow's decision boundary; "already-confirmed" is honest.
+2. **`NO_EMAILS_FOUND`** — terminal scan state where the schema is past confirmation and won't re-enter the pipeline. 410 would be misleading (there's no new confirm route to redirect to); 200 idempotent is consistent with how `COMPLETED` is handled.
+
+Old-flow phases genuinely stuck waiting for the deleted single-screen confirm (`PENDING`, `GENERATING_HYPOTHESIS`, `AWAITING_REVIEW`, `FAILED`, `FINALIZING_SCHEMA`) still get 410 so the client surfaces the "use /entity-confirm" message.
+
+#### D4.3-2 — Removed all persistSchemaRelations / outbox plumbing — route is a pure idempotent stub
+
+**Plan said:** Keep `withAuth` and the #33 already-confirmed semantics.
+
+**Shipped:** Both preserved. Everything else — `ConfirmSchema` Zod, `persistSchemaRelations`, outbox write, optimistic `inngest.send`, `isOutboxRaceViolation` helper — deleted. The route now does ownership check + phase-based 200/410 dispatch. Nothing else.
+
+**Why:** The old logic only made sense when the route was actually confirming. Retaining "just in case" would drift bitrot — future reviewers would have to prove the dead branches were unreachable every time the surrounding code changed. Clean deletion with a deprecation comment is safer than keeping a 180-line handler that 0% of new traffic exercises. Imports trimmed accordingly (`z`, `persistSchemaRelations`, `SchemaHypothesis`, `InterviewInput`, etc. all removed).
+
+### Verification
+
+- `npx tsc --noEmit` in `apps/web`: clean.
+- `pnpm test --run` in `apps/web`: 18 files / 97 tests passing.
+- Integration tests in `apps/web/tests/integration/` — `onboarding-happy-path` and `onboarding-concurrent-start` reference `generateHypothesis` / `validateHypothesis` / `runOnboarding` directly. These are expected to break after this cutover; Task 6.1 owns the rewrite. Flagged as open item below.
+
+---
+
 ## Open items / future tasks
 
-**Phase 3 complete.** Tasks 3.1 + 3.2 + 3.3 + 3.3b (no-op) + 3.4 + 3.5 + 3.6 all shipped. The review-screen UX layer is now wired end-to-end: POST routes → polling shape → review components → `flow.tsx`.
+**Phase 4 Tasks 4.1 + 4.2 + 4.3 + 4.4 shipped in this session.**
 
-Phase 4 (pipeline cutover — rewrite `runOnboarding` to emit Stage 1, remove the legacy extract/cluster path from the original onboarding function) is next. Phase 4 is a breaking change — existing onboarding stops working until Task 4.x completes — so it should be bundled in one session with end-to-end verification before Phase 5.
+Still pending in Phase 4:
+- **Task 4.4b** — test-helper audit (direct `entity.create` / `entity.upsert` calls in test setup should route through `persistConfirmedEntities`). Grep check + targeted fixes.
+- **Task 4.4c** — verify `INNGEST_SIGNING_KEY` is set so `/api/inngest` rejects unsigned events. Security hardening, not functionality.
+- **Integration test regressions** (`onboarding-happy-path.test.ts`, `onboarding-concurrent-start.test.ts`) — these exercise the deleted hypothesis-first path and will fail until Task 6.1 rewrites them against the new Stage 1/Stage 2 flow.
+
+Phase 5+ follows after Phase 4 completes.
 
 Append new sections here as tasks land.
