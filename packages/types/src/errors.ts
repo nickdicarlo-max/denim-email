@@ -54,3 +54,24 @@ export class ExternalAPIError extends AppError {
     this.name = "ExternalAPIError";
   }
 }
+
+/**
+ * Credential-lifecycle failures for the Gmail OAuth integration.
+ *
+ * Always fatal at the boundary that catches it — never `warn` + continue.
+ * Carries a typed `CredentialFailure` so downstream (API responses, UI,
+ * Inngest phase rows) can classify the remedy without string-matching on
+ * message text. See `packages/types/src/gmail-credentials.ts` for the
+ * failure shape.
+ */
+import type { CredentialFailure } from "./gmail-credentials";
+
+export class GmailCredentialError extends AppError {
+  constructor(
+    message: string,
+    public readonly credentialFailure: CredentialFailure,
+  ) {
+    super(message, 401, "GMAIL_CREDENTIAL_ERROR");
+    this.name = "GmailCredentialError";
+  }
+}

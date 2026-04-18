@@ -4,11 +4,22 @@ export {
   AuthError,
   ExternalAPIError,
   ForbiddenError,
+  GmailCredentialError,
   NotFoundError,
   RateLimitError,
   ValidationError,
 } from "./errors";
 export type { DenimEvents } from "./events";
+export type {
+  CredentialFailure,
+  CredentialFailureReason,
+  CredentialRecord,
+  CredentialRemedy,
+} from "./gmail-credentials";
+export {
+  credentialFailure,
+  remedyFor,
+} from "./gmail-credentials";
 export type {
   CaseActionForUI,
   CaseForUI,
