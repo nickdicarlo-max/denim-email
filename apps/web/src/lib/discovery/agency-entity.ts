@@ -55,7 +55,7 @@ function deriveFromDomain(domain: string): {
  * stays well inside the Stage 2 per-domain budget.
  */
 function tokenize(name: string): string[] {
-  return name.split(/[\s|,@.\-]+/).filter((t) => t.length >= 2);
+  return name.split(/[\s|,@.-]+/).filter((t) => t.length >= 2);
 }
 
 /**

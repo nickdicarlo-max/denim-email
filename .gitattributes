@@ -1,0 +1,18 @@
+# Force LF line endings for all text files regardless of contributor platform.
+# Without this, core.autocrlf=true on Windows stores CRLF in working tree,
+# which biome flags as format errors even after `biome check --write`.
+# With this, text files land in the index as LF and stay LF in working tree on
+# every platform, so biome's LF expectation matches reality.
+* text=auto eol=lf
+
+# Common binary types — never line-normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

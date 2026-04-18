@@ -11,12 +11,12 @@
  * whole pass) but not rethrown. Top-level failures (Gmail auth, whole
  * search failing) surface to the caller.
  */
-import { getDomainShape, type DomainName } from "@/lib/config/domain-shapes";
+import { type DomainName, getDomainShape } from "@/lib/config/domain-shapes";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import type { GmailClient } from "@/lib/gmail/client";
+import { deriveAgencyEntity } from "./agency-entity";
 import { extractPropertyCandidates } from "./property-entity";
 import { extractSchoolCandidates } from "./school-entity";
-import { deriveAgencyEntity } from "./agency-entity";
 
 export interface DiscoverEntitiesInput {
   gmailClient: GmailClient;

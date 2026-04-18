@@ -1,7 +1,10 @@
 import * as dotenv from "dotenv";
+
 dotenv.config({ path: ".env.local" });
-import { PrismaClient } from "@prisma/client";
+
 import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
 const log = (s: string) => process.stderr.write(s + "\n");
@@ -15,15 +18,22 @@ async function main() {
     where: { name: "April 11 Test Girls Activities" },
     select: { id: true, name: true },
   });
-  if (!ga11) { log("Schema not found"); return; }
+  if (!ga11) {
+    log("Schema not found");
+    return;
+  }
   log(`\nSchema: ${ga11.name} (${ga11.id})`);
 
   // 1. Total email distribution for this schema
   const total = await p.email.count({ where: { schemaId: ga11.id } });
   const excluded = await p.email.count({ where: { schemaId: ga11.id, isExcluded: true } });
   const notExcluded = await p.email.count({ where: { schemaId: ga11.id, isExcluded: false } });
-  const withEntity = await p.email.count({ where: { schemaId: ga11.id, isExcluded: false, entityId: { not: null } } });
-  const withoutEntity = await p.email.count({ where: { schemaId: ga11.id, isExcluded: false, entityId: null } });
+  const withEntity = await p.email.count({
+    where: { schemaId: ga11.id, isExcluded: false, entityId: { not: null } },
+  });
+  const withoutEntity = await p.email.count({
+    where: { schemaId: ga11.id, isExcluded: false, entityId: null },
+  });
   const inCases = await p.caseEmail.count({ where: { case: { schemaId: ga11.id } } });
 
   log(`\n--- FULL EMAIL DISTRIBUTION ---`);
@@ -37,12 +47,21 @@ async function main() {
   // 2. How many scan jobs for this schema?
   const scanJobs = await p.scanJob.findMany({
     where: { schemaId: ga11.id },
-    select: { id: true, status: true, phase: true, totalEmails: true, createdAt: true, completedAt: true },
+    select: {
+      id: true,
+      status: true,
+      phase: true,
+      totalEmails: true,
+      createdAt: true,
+      completedAt: true,
+    },
     orderBy: { createdAt: "asc" },
   });
   log(`\n--- SCAN JOBS ---`);
   for (const sj of scanJobs) {
-    log(`  ${sj.id} | status=${sj.status} | phase=${sj.phase} | total=${sj.totalEmails} | created=${sj.createdAt.toISOString()}`);
+    log(
+      `  ${sj.id} | status=${sj.status} | phase=${sj.phase} | total=${sj.totalEmails} | created=${sj.createdAt.toISOString()}`,
+    );
   }
 
   // 3. Check the 6 orphans with updatedAt > createdAt
@@ -65,11 +84,15 @@ async function main() {
     orderBy: { updatedAt: "desc" },
   });
 
-  const updated = orphansUpdated.filter(e => Math.abs(e.updatedAt.getTime() - e.createdAt.getTime()) > 1000);
+  const updated = orphansUpdated.filter(
+    (e) => Math.abs(e.updatedAt.getTime() - e.createdAt.getTime()) > 1000,
+  );
   log(`\n--- ORPHANS WITH updatedAt ≠ createdAt (${updated.length}) ---`);
   for (const e of updated) {
     const diff = e.updatedAt.getTime() - e.createdAt.getTime();
-    log(`  id=${e.id} | updatedAt-createdAt=${diff}ms | altCase=${e.alternativeCaseId ?? "null"} | disc=${JSON.stringify(e.discriminators)}`);
+    log(
+      `  id=${e.id} | updatedAt-createdAt=${diff}ms | altCase=${e.alternativeCaseId ?? "null"} | disc=${JSON.stringify(e.discriminators)}`,
+    );
     log(`    subject: ${e.subject.slice(0, 60)}`);
   }
 
@@ -80,12 +103,19 @@ async function main() {
     where: { schemaId: ga11.id, isExcluded: false, caseEmails: { none: {} } },
   });
   const unclusteredWithEntity = await p.email.count({
-    where: { schemaId: ga11.id, isExcluded: false, entityId: { not: null }, caseEmails: { none: {} } },
+    where: {
+      schemaId: ga11.id,
+      isExcluded: false,
+      entityId: { not: null },
+      caseEmails: { none: {} },
+    },
   });
   log(`\n--- SIMULATED UNCLUSTERED QUERY (NOW) ---`);
   log(`  Unclustered (all):        ${unclusteredNow}`);
   log(`  Unclustered + entityId:   ${unclusteredWithEntity}`);
-  log(`  (At clustering time, caseEmails: { none: {} } would have returned ALL not-excluded emails)`);
+  log(
+    `  (At clustering time, caseEmails: { none: {} } would have returned ALL not-excluded emails)`,
+  );
 
   // 5. What would the query have returned at clustering time?
   // At that point, NO CaseEmail records existed. So:
@@ -113,8 +143,8 @@ async function main() {
   log(`  Unique email IDs in clusters: ${clusterEmailIds.size}`);
 
   // 7. Are the orphan email IDs present in ANY cluster record?
-  const orphanIds = orphansUpdated.map(e => e.id);
-  const orphansInClusters = orphanIds.filter(id => clusterEmailIds.has(id));
+  const orphanIds = orphansUpdated.map((e) => e.id);
+  const orphansInClusters = orphanIds.filter((id) => clusterEmailIds.has(id));
   log(`  Orphan IDs found in cluster records: ${orphansInClusters.length} of ${orphanIds.length}`);
 
   // 8. Entity breakdown
@@ -134,4 +164,7 @@ async function main() {
 
   await p.$disconnect();
 }
-main().catch((e) => { log("FAIL: " + e.message); process.exit(1); });
+main().catch((e) => {
+  log("FAIL: " + e.message);
+  process.exit(1);
+});

@@ -260,11 +260,13 @@ async function persistExtractedEmail(
     threadHasKnownEntity = priorKnown !== null;
   }
 
-  const relevanceBypass =
-    senderIsKnownEntity || subjectNamesKnownEntity || threadHasKnownEntity;
+  const relevanceBypass = senderIsKnownEntity || subjectNamesKnownEntity || threadHasKnownEntity;
 
   // 3b. Log bypasses when they happen on low-relevance emails
-  if (relevanceBypass && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
+  if (
+    relevanceBypass &&
+    parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold
+  ) {
     const bypassReason = senderIsKnownEntity
       ? "sender"
       : subjectNamesKnownEntity
@@ -286,7 +288,10 @@ async function persistExtractedEmail(
   //   All three bypasses are deterministic — no Gemini output is trusted here,
   //   since batch-context contamination has been observed to produce a wrong
   //   relevanceEntity for emails whose subject unambiguously names a PRIMARY.
-  if (!relevanceBypass && parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold) {
+  if (
+    !relevanceBypass &&
+    parsed.relevanceScore < ONBOARDING_TUNABLES.extraction.relevanceThreshold
+  ) {
     const email = await prisma.email.upsert({
       where: {
         schemaId_gmailMessageId: { schemaId, gmailMessageId: gmailMessage.id },
@@ -553,9 +558,7 @@ async function persistExtractedEmail(
       const nameLC = detected.name.toLowerCase().trim();
       if (!nameLC) continue;
       const alreadyKnown = entities.some(
-        (e) =>
-          e.name.toLowerCase() === nameLC ||
-          e.aliases.some((a) => a.toLowerCase() === nameLC),
+        (e) => e.name.toLowerCase() === nameLC || e.aliases.some((a) => a.toLowerCase() === nameLC),
       );
       if (alreadyKnown) continue;
 
@@ -961,13 +964,7 @@ export async function processEmailBatch(
         const msg = chunk[i];
         const parsed = parsedResults[i];
         try {
-          const result = await persistExtractedEmail(
-            msg,
-            parsed,
-            entities,
-            options,
-            perEmailCost,
-          );
+          const result = await persistExtractedEmail(msg, parsed, entities, options, perEmailCost);
           if (result.excluded) excluded++;
           else processed++;
         } catch (error) {
@@ -981,13 +978,7 @@ export async function processEmailBatch(
     // `extractEmail` path so one bad apple doesn't poison the whole chunk.
     for (const msg of chunk) {
       try {
-        const result = await extractEmail(
-          msg,
-          schemaContext,
-          entities,
-          exclusionRules,
-          options,
-        );
+        const result = await extractEmail(msg, schemaContext, entities, exclusionRules, options);
         if (result.excluded) excluded++;
         else processed++;
       } catch (error) {

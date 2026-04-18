@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { jaro, jaroWinkler, fuzzyMatch, resolveEntity } from "../entity/matching";
+import { describe, expect, it } from "vitest";
+import { fuzzyMatch, jaro, jaroWinkler, resolveEntity } from "../entity/matching";
 
 describe("Jaro-Winkler entity matching", () => {
   // Test fixtures

@@ -13,10 +13,10 @@ import { synthesizeCase } from "@/lib/services/synthesis";
 import { inngest } from "./client";
 import { cronDailyScans } from "./cron";
 import { dailyStatusDecay } from "./daily-status-decay";
-import { runOnboarding, runOnboardingPipeline } from "./onboarding";
-import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runDomainDiscovery } from "./domain-discovery-fn";
 import { runEntityDiscovery } from "./entity-discovery-fn";
+import { runOnboarding, runOnboardingPipeline } from "./onboarding";
+import { drainOnboardingOutbox } from "./onboarding-outbox-drain";
 import { runScan } from "./scan";
 
 const BATCH_SIZE = ONBOARDING_TUNABLES.extraction.fanOutBatchSize;

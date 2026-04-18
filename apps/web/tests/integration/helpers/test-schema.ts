@@ -39,9 +39,7 @@ export async function createTestSchema(userId: string): Promise<TestSchemaResult
           affinityScore: 30,
         },
       ],
-      discoveryQueries: [
-        { query: "from:vms.edu OR from:evsc.org", label: "School emails" },
-      ],
+      discoveryQueries: [{ query: "from:vms.edu OR from:evsc.org", label: "School emails" }],
       summaryLabels: {
         beginning: "Issue",
         middle: "Activity",

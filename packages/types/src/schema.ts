@@ -4,17 +4,17 @@
  */
 
 export interface EntityGroupInput {
-  whats: string[];   // PRIMARY entity names in this sub-group
-  whos: string[];    // SECONDARY entity names in this sub-group
+  whats: string[]; // PRIMARY entity names in this sub-group
+  whos: string[]; // SECONDARY entity names in this sub-group
 }
 
 export interface InterviewInput {
   role: string;
   domain: string;
-  whats: string[];             // Flattened from groups (backward compat)
-  whos: string[];              // Flattened from groups (backward compat)
-  groups: EntityGroupInput[];  // The paired structure — source of truth
-  sharedWhos?: string[];       // Ungrouped WHOs — discovery senders, not routing targets
+  whats: string[]; // Flattened from groups (backward compat)
+  whos: string[]; // Flattened from groups (backward compat)
+  groups: EntityGroupInput[]; // The paired structure — source of truth
+  sharedWhos?: string[]; // Ungrouped WHOs — discovery senders, not routing targets
   goals: string[];
 }
 
@@ -110,7 +110,12 @@ export interface ExtractionInput {
 export interface ExtractionSchemaContext {
   domain: string;
   tags: { name: string; description: string }[];
-  entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[]; isUserInput: boolean }[];
+  entities: {
+    name: string;
+    type: "PRIMARY" | "SECONDARY";
+    aliases: string[];
+    isUserInput: boolean;
+  }[];
   extractedFields: { name: string; type: string; description: string; source: string }[];
   exclusionPatterns: string[];
   entityGroups?: EntityGroupInput[];
@@ -210,10 +215,10 @@ export interface TagFrequencyMap {
 /** Word frequency entry for a single cluster. */
 export interface FrequencyWord {
   word: string;
-  frequency: number;       // 0.0-1.0 within cluster
-  weightedScore: number;   // frequency adjusted by source weight + cross-entity penalty
-  emailIds: string[];      // which emails contain this word
-  coOccursWith: string[];  // words that frequently appear alongside this one
+  frequency: number; // 0.0-1.0 within cluster
+  weightedScore: number; // frequency adjusted by source weight + cross-entity penalty
+  emailIds: string[]; // which emails contain this word
+  coOccursWith: string[]; // words that frequently appear alongside this one
 }
 
 /** Frequency table for one coarse cluster. */
@@ -227,15 +232,15 @@ export interface FrequencyTable {
 /** A case definition output from AI case splitting. */
 export interface CaseSplitDefinition {
   caseTitle: string;
-  discriminators: string[];   // words that identify this case
-  emailIds: string[];         // emails assigned to this case
+  discriminators: string[]; // words that identify this case
+  emailIds: string[]; // emails assigned to this case
   reasoning: string;
 }
 
 /** Result of case splitting (AI or deterministic). */
 export interface CaseSplitResult {
   cases: CaseSplitDefinition[];
-  catchAllEmailIds: string[];   // emails with no discriminator match
+  catchAllEmailIds: string[]; // emails with no discriminator match
   reasoning: string;
 }
 
@@ -266,10 +271,13 @@ export interface CalibrationResult {
     tagMatchScore: number;
     timeDecayFreshDays: number;
   };
-  discriminatorVocabulary: Record<string, {
-    words: Record<string, number>;   // word → confidence score
-    mergedAway: string[];            // words that should NOT discriminate
-  }>;
+  discriminatorVocabulary: Record<
+    string,
+    {
+      words: Record<string, number>; // word → confidence score
+      mergedAway: string[]; // words that should NOT discriminate
+    }
+  >;
   reasoning: string;
 }
 

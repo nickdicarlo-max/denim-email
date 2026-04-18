@@ -20,12 +20,12 @@ describe("aggregateDomains", () => {
 
   it("drops generic providers", () => {
     const result = aggregateDomains(sample, { userDomain: "thecontrolsurface.com", topN: 5 });
-    expect(result.find(r => r.domain === "gmail.com")).toBeUndefined();
+    expect(result.find((r) => r.domain === "gmail.com")).toBeUndefined();
   });
 
   it("drops the user's own domain", () => {
     const result = aggregateDomains(sample, { userDomain: "thecontrolsurface.com", topN: 5 });
-    expect(result.find(r => r.domain === "thecontrolsurface.com")).toBeUndefined();
+    expect(result.find((r) => r.domain === "thecontrolsurface.com")).toBeUndefined();
   });
 
   it("respects topN", () => {
@@ -36,15 +36,15 @@ describe("aggregateDomains", () => {
 
   it("handles malformed headers without crashing", () => {
     expect(() =>
-      aggregateDomains(sample, { userDomain: "thecontrolsurface.com", topN: 5 })
+      aggregateDomains(sample, { userDomain: "thecontrolsurface.com", topN: 5 }),
     ).not.toThrow();
   });
 
   it("case-insensitive domain matching (treats GMAIL.COM and gmail.com as same generic)", () => {
-    const result = aggregateDomains(
-      [{ messageId: "1", fromHeader: "<a@GMAIL.COM>" }],
-      { userDomain: "x.com", topN: 5 },
-    );
+    const result = aggregateDomains([{ messageId: "1", fromHeader: "<a@GMAIL.COM>" }], {
+      userDomain: "x.com",
+      topN: 5,
+    });
     expect(result).toHaveLength(0);
   });
 });

@@ -1,7 +1,10 @@
 import * as dotenv from "dotenv";
+
 dotenv.config({ path: ".env.local" });
-import { PrismaClient } from "@prisma/client";
+
 import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
 const log = (s: string) => process.stderr.write(s + "\n");
@@ -15,14 +18,21 @@ async function main() {
     where: { name: "April 11 Test Girls Activities" },
     select: { id: true, name: true },
   });
-  if (!ga11) { log("not found"); return; }
+  if (!ga11) {
+    log("not found");
+    return;
+  }
 
   // Scan job phase transitions
   const scan = await p.scanJob.findFirst({
     where: { schemaId: ga11.id },
     select: {
-      id: true, status: true, phase: true,
-      createdAt: true, startedAt: true, completedAt: true,
+      id: true,
+      status: true,
+      phase: true,
+      createdAt: true,
+      startedAt: true,
+      completedAt: true,
       totalEmails: true,
     },
   });
@@ -48,17 +58,23 @@ async function main() {
   const all = await p.email.findMany({
     where: { schemaId: ga11.id, isExcluded: false, entityId: { not: null } },
     select: {
-      id: true, subject: true, createdAt: true, updatedAt: true, date: true,
+      id: true,
+      subject: true,
+      createdAt: true,
+      updatedAt: true,
+      date: true,
       caseEmails: { select: { id: true } },
-      senderDisplayName: true, senderEmail: true, threadId: true,
+      senderDisplayName: true,
+      senderEmail: true,
+      threadId: true,
       tags: true,
     },
     orderBy: { createdAt: "asc" },
   });
   log(`\nEmails with entitySet+notExcl: ${all.length}`);
 
-  const inCase = all.filter(e => e.caseEmails.length > 0);
-  const orphan = all.filter(e => e.caseEmails.length === 0);
+  const inCase = all.filter((e) => e.caseEmails.length > 0);
+  const orphan = all.filter((e) => e.caseEmails.length === 0);
   log(`  in case: ${inCase.length}`);
   log(`  orphan:  ${orphan.length}`);
 
@@ -80,20 +96,20 @@ async function main() {
   // should have been picked up.
   if (clusters.length > 0 && orphan.length > 0) {
     const firstClusterTs = clusters[0].createdAt.getTime();
-    const beforeClustering = orphan.filter(e => e.createdAt.getTime() < firstClusterTs);
-    const afterClustering = orphan.filter(e => e.createdAt.getTime() >= firstClusterTs);
+    const beforeClustering = orphan.filter((e) => e.createdAt.getTime() < firstClusterTs);
+    const afterClustering = orphan.filter((e) => e.createdAt.getTime() >= firstClusterTs);
     log(`\n  Orphans CREATED BEFORE first cluster row: ${beforeClustering.length}`);
     log(`  Orphans CREATED AFTER first cluster row:  ${afterClustering.length}`);
   }
 
   // Are orphans grouped by threadId — i.e., do orphans share threadIds with in-case emails?
-  const inCaseThreads = new Set(inCase.map(e => e.threadId));
-  const orphanThreads = new Set(orphan.map(e => e.threadId));
-  const sharedThreads = [...orphanThreads].filter(t => inCaseThreads.has(t));
+  const inCaseThreads = new Set(inCase.map((e) => e.threadId));
+  const orphanThreads = new Set(orphan.map((e) => e.threadId));
+  const sharedThreads = [...orphanThreads].filter((t) => inCaseThreads.has(t));
   log(`\n  Unique threadIds: in-case=${inCaseThreads.size}, orphan=${orphanThreads.size}`);
   log(`  Threads shared between in-case and orphan groups: ${sharedThreads.length}`);
 
-  // Look at threadId of in-case soccer emails vs orphans -- maybe they're 
+  // Look at threadId of in-case soccer emails vs orphans -- maybe they're
   // different patterns
   log(`\n  IN-CASE email threadIds (first 10):`);
   for (const e of inCase.slice(0, 10)) {
@@ -106,4 +122,7 @@ async function main() {
 
   await p.$disconnect();
 }
-main().catch((e) => { log("FAIL: " + e.message); process.exit(1); });
+main().catch((e) => {
+  log("FAIL: " + e.message);
+  process.exit(1);
+});

@@ -78,7 +78,10 @@ export async function proxy(request: NextRequest) {
 
     if (isAllowed && origin) {
       supabaseResponse.headers.set("Access-Control-Allow-Origin", origin);
-      supabaseResponse.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      supabaseResponse.headers.set(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, DELETE, OPTIONS",
+      );
       supabaseResponse.headers.set(
         "Access-Control-Allow-Headers",
         "Content-Type, Authorization, X-Requested-With",

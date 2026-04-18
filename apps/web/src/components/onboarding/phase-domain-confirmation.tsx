@@ -22,11 +22,7 @@ import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 
 type SubmitStatus = "idle" | "submitting" | "error";
 
-export function PhaseDomainConfirmation({
-  response,
-}: {
-  response: OnboardingPollingResponse;
-}) {
+export function PhaseDomainConfirmation({ response }: { response: OnboardingPollingResponse }) {
   const candidates = response.stage1Candidates ?? [];
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -47,14 +43,11 @@ export function PhaseDomainConfirmation({
     setStatus("submitting");
     setErrorMessage("");
     try {
-      const res = await authenticatedFetch(
-        `/api/onboarding/${response.schemaId}/domain-confirm`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmedDomains: [...selected] }),
-        },
-      );
+      const res = await authenticatedFetch(`/api/onboarding/${response.schemaId}/domain-confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmedDomains: [...selected] }),
+      });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `Confirm failed (${res.status})`);
@@ -74,24 +67,16 @@ export function PhaseDomainConfirmation({
         <span className="material-symbols-outlined text-[40px] text-accent animate-spin">
           progress_activity
         </span>
-        <h1 className="font-serif text-2xl text-primary">
-          Finding your senders
-        </h1>
-        <p className="text-sm text-muted">
-          Scanning for sender domains in your inbox…
-        </p>
+        <h1 className="font-serif text-2xl text-primary">Finding your senders</h1>
+        <p className="text-sm text-muted">Scanning for sender domains in your inbox…</p>
       </div>
     );
   }
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <h1 className="font-serif text-2xl text-primary">
-        We found these senders in your inbox
-      </h1>
-      <p className="text-muted text-sm mt-1">
-        Check the ones relevant to this topic.
-      </p>
+      <h1 className="font-serif text-2xl text-primary">We found these senders in your inbox</h1>
+      <p className="text-muted text-sm mt-1">Check the ones relevant to this topic.</p>
 
       <ul className="mt-6 flex flex-col gap-2">
         {candidates.map((c) => {
@@ -129,10 +114,7 @@ export function PhaseDomainConfirmation({
       )}
 
       <div className="mt-8">
-        <Button
-          onClick={submit}
-          disabled={selected.size === 0 || status === "submitting"}
-        >
+        <Button onClick={submit} disabled={selected.size === 0 || status === "submitting"}>
           {status === "submitting"
             ? "Confirming…"
             : `Confirm ${selected.size} domain${selected.size === 1 ? "" : "s"}`}

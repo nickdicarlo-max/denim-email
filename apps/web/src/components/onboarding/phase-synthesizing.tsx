@@ -13,8 +13,7 @@ export function PhaseSynthesizing({ response }: { response: OnboardingPollingRes
   const totalCasesToSynthesize = response.progress.totalCasesToSynthesize ?? 0;
   // Live "N of M" counter (#82): prefer the ticking counter when present,
   // fall back to a static "Summarizing N cases" string for older scans.
-  const showLiveCounter =
-    synthesizedCases !== undefined && totalCasesToSynthesize > 0;
+  const showLiveCounter = synthesizedCases !== undefined && totalCasesToSynthesize > 0;
 
   return (
     <div className="flex flex-col items-center gap-4 text-center">

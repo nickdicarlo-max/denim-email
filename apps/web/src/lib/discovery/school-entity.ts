@@ -18,8 +18,9 @@
  * ReDoS safety: fixed-length literal alternations, no nested quantifiers,
  * 200-char subject cap.
  */
-import { dedupByLevenshtein } from "./levenshtein-dedup";
+
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
+import { dedupByLevenshtein } from "./levenshtein-dedup";
 import type { SubjectInput } from "./property-entity";
 
 const INSTITUTION_SUFFIX_ALT = [
@@ -146,15 +147,15 @@ function normalizeKey(display: string): string {
     .trim();
 }
 
-export function extractSchoolCandidates(
-  subjects: SubjectInput[],
-): SchoolCandidate[] {
-  type Raw = { input: { key: string; displayString: string; frequency: number }; pattern: "A" | "B" };
+export function extractSchoolCandidates(subjects: SubjectInput[]): SchoolCandidate[] {
+  type Raw = {
+    input: { key: string; displayString: string; frequency: number };
+    pattern: "A" | "B";
+  };
   const rawByPattern: Raw[] = [];
 
   for (const { subject, frequency } of subjects) {
-    const capped =
-      subject.length > MAX_SUBJECT_LEN ? subject.slice(0, MAX_SUBJECT_LEN) : subject;
+    const capped = subject.length > MAX_SUBJECT_LEN ? subject.slice(0, MAX_SUBJECT_LEN) : subject;
 
     for (const m of capped.matchAll(INSTITUTION_RE)) {
       const display = m[0].trim();
@@ -175,9 +176,7 @@ export function extractSchoolCandidates(
   // Dedup per pattern so an institution and a same-named activity don't collapse.
   const output: SchoolCandidate[] = [];
   for (const pattern of ["A", "B"] as const) {
-    const forPattern = rawByPattern
-      .filter((r) => r.pattern === pattern)
-      .map((r) => r.input);
+    const forPattern = rawByPattern.filter((r) => r.pattern === pattern).map((r) => r.input);
     const deduped = dedupByLevenshtein(forPattern);
     for (const d of deduped) output.push({ ...d, pattern });
   }

@@ -1,5 +1,6 @@
 "use client";
 
+import type { HypothesisValidation, SchemaHypothesis } from "@denim/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type EntityData, ReviewEntities } from "@/components/onboarding/review-entities";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { onboardingStorage } from "@/lib/onboarding-storage";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
 import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
-import type { SchemaHypothesis, HypothesisValidation } from "@denim/types";
 
 /**
  * AWAITING_REVIEW — the human checkpoint. Lifted from the previous
@@ -107,7 +107,7 @@ export function PhaseReview({ response }: { response: OnboardingPollingResponse 
           // Hypothesis entities (user-entered WHATs and WHOs)
           for (const e of hypothesis.entities) {
             entityList.push({
-              id: e.name,   // use name as key — no DB id yet
+              id: e.name, // use name as key — no DB id yet
               name: e.name,
               type: e.type as "PRIMARY" | "SECONDARY",
               autoDetected: e.source === "email_scan",

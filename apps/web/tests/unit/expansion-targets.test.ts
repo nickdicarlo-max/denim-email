@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { extractExpansionTargets } from "@/lib/services/expansion-targets";
 import type { SchemaHypothesis } from "@denim/types";
+import { describe, expect, it } from "vitest";
+import { extractExpansionTargets } from "@/lib/services/expansion-targets";
 
 const baseHypothesis = (entities: SchemaHypothesis["entities"]): SchemaHypothesis => ({
   domain: "school_parent",
@@ -76,9 +76,7 @@ describe("extractExpansionTargets", () => {
       },
     ]);
 
-    expect(extractExpansionTargets(hypothesis)).toEqual([
-      { type: "domain", value: "acme.com" },
-    ]);
+    expect(extractExpansionTargets(hypothesis)).toEqual([{ type: "domain", value: "acme.com" }]);
   });
 
   it("handles mixed generic and corporate aliases on the same entity", () => {

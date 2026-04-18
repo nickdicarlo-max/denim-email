@@ -23,11 +23,14 @@ describe("parseCaseSplittingResponse: happy path", () => {
   });
 
   it("strips code fences before parsing", () => {
-    const raw = "```json\n" + JSON.stringify({
-      cases: [validCase()],
-      catchAllEmailIds: [],
-      reasoning: "ok",
-    }) + "\n```";
+    const raw =
+      "```json\n" +
+      JSON.stringify({
+        cases: [validCase()],
+        catchAllEmailIds: [],
+        reasoning: "ok",
+      }) +
+      "\n```";
     const result = parseCaseSplittingResponse(raw);
     expect(result.cases).toHaveLength(1);
   });

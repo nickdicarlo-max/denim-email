@@ -39,7 +39,9 @@ const synthesisResultSchema = z.object({
     .nullable(),
   actions: z.array(synthesisActionSchema),
   status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED"]),
-  urgency: z.enum(["IMMINENT", "THIS_WEEK", "UPCOMING", "NO_ACTION", "IRRELEVANT"]).default("UPCOMING"),
+  urgency: z
+    .enum(["IMMINENT", "THIS_WEEK", "UPCOMING", "NO_ACTION", "IRRELEVANT"])
+    .default("UPCOMING"),
 });
 
 /**
@@ -54,16 +56,12 @@ export function parseSynthesisResponse(raw: string): SynthesisResult {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error(
-      `Failed to parse synthesis response as JSON: ${cleaned.slice(0, 200)}...`,
-    );
+    throw new Error(`Failed to parse synthesis response as JSON: ${cleaned.slice(0, 200)}...`);
   }
 
   const result = synthesisResultSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid synthesis response:\n${issues}`);
   }
 

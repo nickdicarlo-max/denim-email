@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { deriveAgencyEntity } from "../agency-entity";
 
 describe("deriveAgencyEntity — domain-only derivation", () => {

@@ -1,7 +1,10 @@
 import * as dotenv from "dotenv";
+
 dotenv.config({ path: ".env.local" });
-import { PrismaClient } from "@prisma/client";
+
 import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
 const log = (s: string) => process.stderr.write(s + "\n");
@@ -14,7 +17,14 @@ async function main() {
   const gaSchemas = await p.caseSchema.findMany({
     where: { OR: [{ name: { contains: "Girls Activities" } }, { name: { contains: "April 10" } }] },
     orderBy: { createdAt: "asc" },
-    select: { id: true, name: true, domain: true, clusteringConfig: true, qualityPhase: true, discriminatorVocabulary: true },
+    select: {
+      id: true,
+      name: true,
+      domain: true,
+      clusteringConfig: true,
+      qualityPhase: true,
+      discriminatorVocabulary: true,
+    },
   });
 
   for (const s of gaSchemas) {
@@ -29,7 +39,15 @@ async function main() {
     // Cluster records for this schema
     const clusters = await p.cluster.findMany({
       where: { schemaId: s.id },
-      select: { id: true, action: true, clusterPass: true, emailIds: true, score: true, resultCaseId: true, scoreBreakdown: true },
+      select: {
+        id: true,
+        action: true,
+        clusterPass: true,
+        emailIds: true,
+        score: true,
+        resultCaseId: true,
+        scoreBreakdown: true,
+      },
       orderBy: { createdAt: "asc" },
     });
     const grid: Record<string, number> = {};
@@ -50,7 +68,10 @@ async function main() {
       where: { schemaId: s.id, name: { contains: "soccer", mode: "insensitive" }, type: "PRIMARY" },
       select: { id: true, name: true, emailCount: true },
     });
-    if (!soccer) { log("\n(no soccer entity)"); continue; }
+    if (!soccer) {
+      log("\n(no soccer entity)");
+      continue;
+    }
 
     log(`\nSoccer entity ${soccer.id}, emailCount=${soccer.emailCount}`);
     // How many soccer emails appear in Cluster.emailIds?
@@ -63,19 +84,33 @@ async function main() {
     log(`  Total soccer emails: ${soccerEmails.length}`);
     log(`  Soccer emails referenced in Cluster.emailIds JSON: ${inCluster}`);
     log(`  Orphan (no CaseEmail): ${orphan.length}`);
-    log(`  Orphans that ARE in Cluster.emailIds: ${orphan.filter((e) => emailsInClusters.has(e.id)).length}`);
-    log(`  Orphans NOT in Cluster.emailIds: ${orphan.filter((e) => !emailsInClusters.has(e.id)).length}`);
+    log(
+      `  Orphans that ARE in Cluster.emailIds: ${orphan.filter((e) => emailsInClusters.has(e.id)).length}`,
+    );
+    log(
+      `  Orphans NOT in Cluster.emailIds: ${orphan.filter((e) => !emailsInClusters.has(e.id)).length}`,
+    );
 
     // Sample 3 orphans with full routing detail
     const orphanDetail = await p.email.findMany({
       where: { id: { in: orphan.slice(0, 3).map((e) => e.id) } },
       select: {
-        id: true, subject: true, date: true, threadId: true,
-        senderEmail: true, senderDisplayName: true, senderEntityId: true,
-        tags: true, detectedEntities: true, routingDecision: true,
-        clusteringConfidence: true, alternativeCaseId: true,
-        isExcluded: true, excludeReason: true,
-        firstScanJobId: true, lastScanJobId: true,
+        id: true,
+        subject: true,
+        date: true,
+        threadId: true,
+        senderEmail: true,
+        senderDisplayName: true,
+        senderEntityId: true,
+        tags: true,
+        detectedEntities: true,
+        routingDecision: true,
+        clusteringConfidence: true,
+        alternativeCaseId: true,
+        isExcluded: true,
+        excludeReason: true,
+        firstScanJobId: true,
+        lastScanJobId: true,
       },
     });
     log(`\n3 ORPHAN soccer emails with full detail:`);
@@ -102,9 +137,16 @@ async function main() {
       const inCaseDetail = await p.email.findMany({
         where: { id: { in: inCase.map((e) => e.id) } },
         select: {
-          id: true, subject: true, date: true, threadId: true,
-          senderEmail: true, senderDisplayName: true, senderEntityId: true,
-          tags: true, firstScanJobId: true, caseEmails: { select: { case: { select: { title: true } } } },
+          id: true,
+          subject: true,
+          date: true,
+          threadId: true,
+          senderEmail: true,
+          senderDisplayName: true,
+          senderEntityId: true,
+          tags: true,
+          firstScanJobId: true,
+          caseEmails: { select: { case: { select: { title: true } } } },
         },
       });
       log(`\n2 IN-CASE soccer emails (for comparison):`);
@@ -124,15 +166,28 @@ async function main() {
     // Check scan jobs for this schema — are there multiple?
     const scans = await p.scanJob.findMany({
       where: { schemaId: s.id },
-      select: { id: true, phase: true, status: true, triggeredBy: true, totalEmails: true, createdAt: true, completedAt: true },
+      select: {
+        id: true,
+        phase: true,
+        status: true,
+        triggeredBy: true,
+        totalEmails: true,
+        createdAt: true,
+        completedAt: true,
+      },
       orderBy: { createdAt: "asc" },
     });
     log(`\nScan jobs: ${scans.length}`);
     for (const sj of scans) {
-      log(`  ${sj.id} | ${sj.triggeredBy} | ${sj.status}/${sj.phase} | total=${sj.totalEmails} | ${sj.createdAt.toISOString()}`);
+      log(
+        `  ${sj.id} | ${sj.triggeredBy} | ${sj.status}/${sj.phase} | total=${sj.totalEmails} | ${sj.createdAt.toISOString()}`,
+      );
     }
   }
 
   await p.$disconnect();
 }
-main().catch((e) => { log("FAIL: " + e.message); process.exit(1); });
+main().catch((e) => {
+  log("FAIL: " + e.message);
+  process.exit(1);
+});

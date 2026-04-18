@@ -430,10 +430,7 @@ const DOMAIN_CONTENT: Record<string, DomainContent> = {
   },
 };
 
-function resolveDomainConfig(
-  domain: string,
-  tunables: ClusteringTunables,
-): ResolvedDomainConfig {
+function resolveDomainConfig(domain: string, tunables: ClusteringTunables): ResolvedDomainConfig {
   const content = DOMAIN_CONTENT[domain] ?? DOMAIN_CONTENT.general;
   const numerics = tunables.domainDefaults[domain] ?? tunables.domainDefaults.general;
   return { ...content, ...numerics };
@@ -596,11 +593,15 @@ ${goalAdjustments}
 Requirements:
 - Every WHAT in the groups MUST appear as a PRIMARY entity with type "PRIMARY", secondaryTypeName null, source "user_input", confidence 1.0, and at least one alias.
 - Every WHO in the groups MUST appear as a SECONDARY entity with type "SECONDARY", an appropriate secondaryTypeName from the domain types (${config.secondaryEntityTypes.join(", ")}), source "user_input", and confidence 1.0.
-${hasGroups ? `- Discovery queries per group:
+${
+  hasGroups
+    ? `- Discovery queries per group:
   - Full-text query for each WHAT (searches subject+body+sender)
   - "from:" query for each WHO (trusted sender — all their emails are relevant)
   - Compound WHAT+WHO query for groups with both (high-precision match)
-  - Tag each query with its groupIndex (0-based)` : `- Generate discovery queries for Gmail search. Use FULL-TEXT search (no prefix) for things/organizations/activities. Use "from:" for people. Do NOT use "subject:" prefix. Do NOT generate broad domain-level queries.`}
+  - Tag each query with its groupIndex (0-based)`
+    : `- Generate discovery queries for Gmail search. Use FULL-TEXT search (no prefix) for things/organizations/activities. Use "from:" for people. Do NOT use "subject:" prefix. Do NOT generate broad domain-level queries.`
+}
 - Use summary labels: "${config.summaryLabels.beginning}" / "${config.summaryLabels.middle}" / "${config.summaryLabels.end}"
 - Generate exclusion patterns for noise senders (e.g., "${config.exclusionHints[0]}").
 

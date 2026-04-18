@@ -11,13 +11,13 @@
  *
  * Run: pnpm --filter web test:integration
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { createTestUser, cleanupTestUser, type TestUser } from "../helpers/test-user";
-import { createTestSchema, type TestSchemaResult } from "../helpers/test-schema";
-import { seedTestEmails } from "../helpers/test-emails";
 import { clusterNewEmails } from "@/lib/services/cluster";
 import { synthesizeCase } from "@/lib/services/synthesis";
+import { seedTestEmails } from "../helpers/test-emails";
+import { createTestSchema, type TestSchemaResult } from "../helpers/test-schema";
+import { cleanupTestUser, createTestUser, type TestUser } from "../helpers/test-user";
 
 let testUser: TestUser;
 let testSchema: TestSchemaResult;
@@ -150,9 +150,7 @@ describe("Full Pipeline: Emails -> Clustering -> Synthesis", () => {
     expect(permissionCase!.actions.length).toBeGreaterThanOrEqual(1);
 
     // At least one action should be PENDING with a title and fingerprint
-    const pendingActions = permissionCase!.actions.filter(
-      (a) => a.status === "PENDING",
-    );
+    const pendingActions = permissionCase!.actions.filter((a) => a.status === "PENDING");
     expect(pendingActions.length).toBeGreaterThanOrEqual(1);
 
     for (const action of pendingActions) {

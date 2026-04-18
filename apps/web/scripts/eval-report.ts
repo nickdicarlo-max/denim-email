@@ -12,8 +12,8 @@
  *   npx tsx scripts/eval-report.ts --latest           # most recently created schema
  */
 
-import { resolve, join } from "node:path";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 import { config as loadEnv } from "dotenv";
@@ -33,9 +33,7 @@ const prisma = new PrismaClient({ adapter });
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
-const schemaIdArg = args.includes("--schema-id")
-  ? args[args.indexOf("--schema-id") + 1]
-  : null;
+const schemaIdArg = args.includes("--schema-id") ? args[args.indexOf("--schema-id") + 1] : null;
 const latestArg = args.includes("--latest");
 const outputDir = resolve(process.cwd(), "../../docs/test-results");
 
@@ -77,7 +75,11 @@ const THRESHOLDS = {
 };
 
 type Grade = "PASS" | "WARN" | "FAIL";
-function grade(value: number, threshold: { warn: number; fail: number }, lowerIsBetter = true): Grade {
+function grade(
+  value: number,
+  threshold: { warn: number; fail: number },
+  lowerIsBetter = true,
+): Grade {
   if (lowerIsBetter) {
     if (value > threshold.fail && threshold.fail >= 0) return "FAIL";
     if (value > threshold.warn) return "WARN";
@@ -121,7 +123,9 @@ async function reportSchema(schemaId: string) {
   log(`Schema ID: ${schema.id}`);
   log(`Created: ${schema.createdAt.toISOString()}`);
   if (config) {
-    log(`Clustering config: mergeThreshold=${config.mergeThreshold}, reminderCollapse=${config.reminderCollapseEnabled}`);
+    log(
+      `Clustering config: mergeThreshold=${config.mergeThreshold}, reminderCollapse=${config.reminderCollapseEnabled}`,
+    );
   }
   log("=".repeat(72));
 
@@ -130,8 +134,12 @@ async function reportSchema(schemaId: string) {
   const totalEmails = await prisma.email.count({ where: { schemaId } });
   const excludedEmails = await prisma.email.count({ where: { schemaId, isExcluded: true } });
   const includedEmails = await prisma.email.count({ where: { schemaId, isExcluded: false } });
-  const withEntity = await prisma.email.count({ where: { schemaId, isExcluded: false, entityId: { not: null } } });
-  const withoutEntity = await prisma.email.count({ where: { schemaId, isExcluded: false, entityId: null } });
+  const withEntity = await prisma.email.count({
+    where: { schemaId, isExcluded: false, entityId: { not: null } },
+  });
+  const withoutEntity = await prisma.email.count({
+    where: { schemaId, isExcluded: false, entityId: null },
+  });
 
   log("\n--- EMAIL DISTRIBUTION ---");
   log(`  Total discovered:    ${totalEmails}`);
@@ -141,7 +149,9 @@ async function reportSchema(schemaId: string) {
   log(`  Without entity:      ${withoutEntity}`);
 
   const exclusionGrade = grade(excludedEmails / Math.max(totalEmails, 1), THRESHOLDS.exclusionRate);
-  log(`  ${gradeEmoji(exclusionGrade)} ${THRESHOLDS.exclusionRate.label}: ${pct(excludedEmails, totalEmails)}`);
+  log(
+    `  ${gradeEmoji(exclusionGrade)} ${THRESHOLDS.exclusionRate.label}: ${pct(excludedEmails, totalEmails)}`,
+  );
 
   // Exclusion reason breakdown
   const exclusionReasons = await prisma.email.groupBy({
@@ -213,8 +223,12 @@ async function reportSchema(schemaId: string) {
   const tagGrade = grade(tagCoverage, THRESHOLDS.tagCoverage, false);
 
   log(`  ${gradeEmoji(orphanGrade)} ${THRESHOLDS.orphanRate.label}: ${pct(orphans, withEntity)}`);
-  log(`  ${gradeEmoji(singletonGrade)} ${THRESHOLDS.singletonRate.label}: ${pct(singletons, totalCases)}`);
-  log(`  ${gradeEmoji(tagGrade)} ${THRESHOLDS.tagCoverage.label}: ${pct(casesWithTags, totalCases)}`);
+  log(
+    `  ${gradeEmoji(singletonGrade)} ${THRESHOLDS.singletonRate.label}: ${pct(singletons, totalCases)}`,
+  );
+  log(
+    `  ${gradeEmoji(tagGrade)} ${THRESHOLDS.tagCoverage.label}: ${pct(casesWithTags, totalCases)}`,
+  );
 
   // Emails-per-case distribution
   const emailCounts = cases.map((c) => c._count.caseEmails).sort((a, b) => b - a);
@@ -233,15 +247,19 @@ async function reportSchema(schemaId: string) {
 
   log("\n--- CLUSTERING ---");
   log(`  Total cluster records: ${clusterRecords.length}`);
-  log(`  COARSE: ${coarse.length} (CREATE: ${creates.filter((c) => coarse.some((co) => co === c)).length}, MERGE: ${merges.filter((c) => coarse.some((co) => co === c)).length})`);
+  log(
+    `  COARSE: ${coarse.length} (CREATE: ${creates.filter((c) => coarse.some((co) => co === c)).length}, MERGE: ${merges.filter((c) => coarse.some((co) => co === c)).length})`,
+  );
   log(`  SPLIT:  ${splits.length}`);
 
-  const mergeGrade = merges.length > 0 ? "PASS" as Grade : "WARN" as Grade;
+  const mergeGrade = merges.length > 0 ? ("PASS" as Grade) : ("WARN" as Grade);
   log(`  ${gradeEmoji(mergeGrade)} ${THRESHOLDS.mergeRate.label}: ${merges.length}`);
 
   if (merges.length > 0) {
     const mergeScores = merges.map((m) => m.score ?? 0).sort((a, b) => b - a);
-    log(`  Merge scores: min=${mergeScores[mergeScores.length - 1]?.toFixed(1)}, max=${mergeScores[0]?.toFixed(1)}, median=${mergeScores[Math.floor(mergeScores.length / 2)]?.toFixed(1)}`);
+    log(
+      `  Merge scores: min=${mergeScores[mergeScores.length - 1]?.toFixed(1)}, max=${mergeScores[0]?.toFixed(1)}, median=${mergeScores[Math.floor(mergeScores.length / 2)]?.toFixed(1)}`,
+    );
   }
 
   // ---- 5. Case-splitting visibility ----
@@ -249,7 +267,7 @@ async function reportSchema(schemaId: string) {
   const splitIntel = await prisma.pipelineIntelligence.count({
     where: { schemaId, stage: "case-splitting" },
   });
-  const splitGrade = splitIntel > 0 ? "PASS" as Grade : "WARN" as Grade;
+  const splitGrade = splitIntel > 0 ? ("PASS" as Grade) : ("WARN" as Grade);
   log("\n--- CASE SPLITTING ---");
   log(`  ${gradeEmoji(splitGrade)} ${THRESHOLDS.caseSplitVisibility.label}: ${splitIntel}`);
 
@@ -281,9 +299,10 @@ async function reportSchema(schemaId: string) {
     orderBy: { createdAt: "desc" },
   });
   if (scanJob) {
-    const duration = scanJob.startedAt && scanJob.completedAt
-      ? ((scanJob.completedAt.getTime() - scanJob.startedAt.getTime()) / 1000).toFixed(1) + "s"
-      : "N/A";
+    const duration =
+      scanJob.startedAt && scanJob.completedAt
+        ? ((scanJob.completedAt.getTime() - scanJob.startedAt.getTime()) / 1000).toFixed(1) + "s"
+        : "N/A";
     log("\n--- SCAN JOB ---");
     log(`  Status: ${scanJob.status} | Phase: ${scanJob.phase}`);
     log(`  Total emails: ${scanJob.totalEmails} | Duration: ${duration}`);
@@ -362,15 +381,30 @@ async function exportCSVs(schemaId: string, schemaName: string) {
 
   // CSV headers
   const headers = [
-    "emailId", "gmailMessageId", "threadId", "date", "subject",
-    "senderEmail", "senderDisplayName", "senderDomain",
-    "summary", "tags",
-    "entityName", "entityType", "entityId",
+    "emailId",
+    "gmailMessageId",
+    "threadId",
+    "date",
+    "subject",
+    "senderEmail",
+    "senderDisplayName",
+    "senderDomain",
+    "summary",
+    "tags",
+    "entityName",
+    "entityType",
+    "entityId",
     "senderEntityName",
-    "isExcluded", "excludeReason",
-    "routeMethod", "routeDetail",
-    "caseId", "caseTitle", "caseUrgency", "caseTags",
-    "clusteringScore", "assignedBy",
+    "isExcluded",
+    "excludeReason",
+    "routeMethod",
+    "routeDetail",
+    "caseId",
+    "caseTitle",
+    "caseUrgency",
+    "caseTags",
+    "clusteringScore",
+    "assignedBy",
     "status",
   ];
 

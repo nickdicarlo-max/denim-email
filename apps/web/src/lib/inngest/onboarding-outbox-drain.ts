@@ -173,9 +173,8 @@ export const drainOnboardingOutbox = inngest.createFunction(
     let deadLetter = 0;
 
     for (const row of rows) {
-      const outcome = await step.run(
-        `emit-${row.schemaId}-${row.eventName}`,
-        () => drainOutboxRow(row),
+      const outcome = await step.run(`emit-${row.schemaId}-${row.eventName}`, () =>
+        drainOutboxRow(row),
       );
       if (outcome === "emitted") emitted++;
       else if (outcome === "retry") retry++;

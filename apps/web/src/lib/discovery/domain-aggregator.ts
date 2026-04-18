@@ -1,5 +1,5 @@
-import { isPublicProvider } from "./public-providers";
 import type { FromHeaderResult } from "./gmail-metadata-fetch";
+import { isPublicProvider } from "./public-providers";
 
 export interface DomainCandidate {
   domain: string;
@@ -15,7 +15,10 @@ function extractDomain(fromHeader: string): string {
   const addr = fromHeader.match(/<([^>]+)>/)?.[1] ?? fromHeader;
   const at = addr.indexOf("@");
   if (at < 0) return "";
-  return addr.slice(at + 1).trim().toLowerCase();
+  return addr
+    .slice(at + 1)
+    .trim()
+    .toLowerCase();
 }
 
 export function aggregateDomains(

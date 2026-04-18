@@ -39,9 +39,7 @@ export function parseDiscoveryIntelligenceResponse(raw: string): DiscoveryIntell
 
   const result = discoveryIntelligenceResultSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid discovery intelligence response:\n${issues}`);
   }
 

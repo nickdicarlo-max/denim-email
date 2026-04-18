@@ -47,9 +47,7 @@ export function jaro(s1: string, s2: string): number {
     k++;
   }
 
-  return (
-    (matches / a.length + matches / b.length + (matches - transpositions / 2) / matches) / 3
-  );
+  return (matches / a.length + matches / b.length + (matches - transpositions / 2) / matches) / 3;
 }
 
 /**
@@ -81,9 +79,29 @@ export function jaroWinkler(s1: string, s2: string): number {
 // Generic words that inflate JW scores when they appear in both candidate
 // and target (e.g., "Claude Team" vs "dance team" → 0.87 from "team" alone).
 const GENERIC_TOKENS = new Set([
-  "team", "class", "school", "club", "group", "org", "inc", "llc",
-  "academy", "studio", "center", "lesson", "practice", "program",
-  "mr", "mrs", "ms", "dr", "the", "a", "an", "of", "for",
+  "team",
+  "class",
+  "school",
+  "club",
+  "group",
+  "org",
+  "inc",
+  "llc",
+  "academy",
+  "studio",
+  "center",
+  "lesson",
+  "practice",
+  "program",
+  "mr",
+  "mrs",
+  "ms",
+  "dr",
+  "the",
+  "a",
+  "an",
+  "of",
+  "for",
 ]);
 
 /**
@@ -93,8 +111,14 @@ const GENERIC_TOKENS = new Set([
  * or when one side has no significant tokens (e.g., pure name like "Ziad").
  */
 function hasSignificantTokenOverlap(candidate: string, target: string): boolean {
-  const candTokens = candidate.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
-  const targetTokens = target.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+  const candTokens = candidate
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
+  const targetTokens = target
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
 
   // Single-word on both sides — JW score alone is sufficient
   if (candTokens.length <= 1 && targetTokens.length <= 1) return true;

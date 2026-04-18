@@ -62,9 +62,7 @@ describe("discoverDomains (integration)", () => {
     expect(result.candidates[1]).toEqual({ domain: "zephyrpm.com", count: 12 });
     expect(result.candidates[2]).toEqual({ domain: "teamsnap.com", count: 8 });
     expect(result.candidates.find((c) => c.domain === "gmail.com")).toBeUndefined();
-    expect(
-      result.candidates.find((c) => c.domain === "thecontrolsurface.com"),
-    ).toBeUndefined();
+    expect(result.candidates.find((c) => c.domain === "thecontrolsurface.com")).toBeUndefined();
 
     // Chain wiring: both primitives got called, metadata fetched for every ID.
     expect(gmail.listMessageIds).toHaveBeenCalledOnce();

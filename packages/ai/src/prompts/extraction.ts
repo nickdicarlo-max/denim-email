@@ -24,7 +24,12 @@ function buildEntityList(schema: ExtractionSchemaContext): string {
   }
   return schema.entities
     .map(
-      (e: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[]; isUserInput: boolean }) =>
+      (e: {
+        name: string;
+        type: "PRIMARY" | "SECONDARY";
+        aliases: string[];
+        isUserInput: boolean;
+      }) =>
         `  - "${e.name}" (${e.type}) [${e.isUserInput ? "USER-INPUT" : "DISCOVERED"}]${e.aliases.length > 0 ? ` — aliases: ${e.aliases.join(", ")}` : ""}`,
     )
     .join("\n");
@@ -69,7 +74,10 @@ function buildFieldDefinitions(schema: ExtractionSchemaContext): string {
     return "No extracted fields defined.";
   }
   return schema.extractedFields
-    .map((f: { name: string; type: string; description: string; source: string }) => `  - "${f.name}" (${f.type}): ${f.description} [source: ${f.source}]`)
+    .map(
+      (f: { name: string; type: string; description: string; source: string }) =>
+        `  - "${f.name}" (${f.type}): ${f.description} [source: ${f.source}]`,
+    )
     .join("\n");
 }
 
@@ -135,9 +143,10 @@ Required JSON shape:
 }
 
 function buildUserPrompt(email: ExtractionInput): string {
-  const attachmentSection = email.attachments && email.attachments.length > 0
-    ? `\n--- ATTACHMENTS ---\n${email.attachments.map((a: { filename: string; mimeType: string; sizeBytes: number; extractionSummary?: string }, i: number) => `${i + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}\n--- END ATTACHMENTS ---`
-    : "";
+  const attachmentSection =
+    email.attachments && email.attachments.length > 0
+      ? `\n--- ATTACHMENTS ---\n${email.attachments.map((a: { filename: string; mimeType: string; sizeBytes: number; extractionSummary?: string }, i: number) => `${i + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}\n--- END ATTACHMENTS ---`
+      : "";
 
   return `Extract structured data from this email:
 
@@ -201,9 +210,10 @@ CRITICAL BATCH RULES:
 
 function buildBatchUserPrompt(emails: ExtractionInput[]): string {
   const blocks = emails.map((email, i) => {
-    const attachmentSection = email.attachments && email.attachments.length > 0
-      ? `\n  ATTACHMENTS:\n${email.attachments.map((a: { filename: string; mimeType: string; sizeBytes: number; extractionSummary?: string }, j: number) => `    ${j + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}`
-      : "";
+    const attachmentSection =
+      email.attachments && email.attachments.length > 0
+        ? `\n  ATTACHMENTS:\n${email.attachments.map((a: { filename: string; mimeType: string; sizeBytes: number; extractionSummary?: string }, j: number) => `    ${j + 1}. ${a.filename} (${a.mimeType}, ${Math.round(a.sizeBytes / 1024)}KB)${a.extractionSummary ? ": " + a.extractionSummary : ""}`).join("\n")}`
+        : "";
 
     const truncatedBody = `${email.body.slice(0, 8000)}${email.body.length > 8000 ? "\n[...truncated, " + email.body.length + " chars total]" : ""}`;
 

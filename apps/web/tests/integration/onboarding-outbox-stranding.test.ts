@@ -105,7 +105,9 @@ describe("OnboardingOutbox drain — Inngest-outage stranding recovery (#33)", (
     expect(preOutbox.emittedAt).toBeNull();
 
     // Load the row shape the drain works with and run a single pass.
-    const row = await prisma.onboardingOutbox.findUniqueOrThrow({ where: { schemaId_eventName: { schemaId, eventName: "onboarding.session.started" } } });
+    const row = await prisma.onboardingOutbox.findUniqueOrThrow({
+      where: { schemaId_eventName: { schemaId, eventName: "onboarding.session.started" } },
+    });
     const outcome = await drainOutboxRow(row);
 
     // Happy path: Inngest is healthy, the event is accepted, the row
@@ -149,7 +151,9 @@ describe("OnboardingOutbox drain — Inngest-outage stranding recovery (#33)", (
     const sendSpy = vi.spyOn(inngest, "send").mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
     try {
-      const row = await prisma.onboardingOutbox.findUniqueOrThrow({ where: { schemaId_eventName: { schemaId, eventName: "onboarding.session.started" } } });
+      const row = await prisma.onboardingOutbox.findUniqueOrThrow({
+        where: { schemaId_eventName: { schemaId, eventName: "onboarding.session.started" } },
+      });
       const outcome = await drainOutboxRow(row);
       expect(outcome).toBe("retry");
     } finally {

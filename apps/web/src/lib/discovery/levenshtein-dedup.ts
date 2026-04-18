@@ -53,9 +53,7 @@ export function dedupByLevenshtein(items: DedupInput[]): DedupOutput[] {
     type MergeRow = DedupOutput & { topFrequency: number };
     const merged: MergeRow[] = [];
     for (const item of bucket) {
-      const existing = merged.find((m) =>
-        withinThreshold(m.displayString, item.displayString),
-      );
+      const existing = merged.find((m) => withinThreshold(m.displayString, item.displayString));
       if (existing) {
         existing.frequency += item.frequency;
         if (item.frequency > existing.topFrequency) {

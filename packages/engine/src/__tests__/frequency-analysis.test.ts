@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { analyzeWordFrequencies } from "../clustering/frequency-analysis";
 import type { CoarseClusterInput } from "../clustering/frequency-analysis";
+import { analyzeWordFrequencies } from "../clustering/frequency-analysis";
 
-function makeCluster(overrides: Partial<CoarseClusterInput> & { clusterId: string }): CoarseClusterInput {
+function makeCluster(
+  overrides: Partial<CoarseClusterInput> & { clusterId: string },
+): CoarseClusterInput {
   return {
     entityName: "Soccer",
     emails: [],
@@ -48,7 +50,11 @@ describe("analyzeWordFrequencies", () => {
       makeCluster({
         clusterId: "c1",
         emails: [
-          { id: "e1", subject: "The practice is at the field", summary: "It will be a good practice" },
+          {
+            id: "e1",
+            subject: "The practice is at the field",
+            summary: "It will be a good practice",
+          },
           { id: "e2", subject: "The game is on Saturday", summary: "We have a game" },
         ],
       }),
@@ -216,9 +222,7 @@ describe("analyzeWordFrequencies", () => {
       summary: `word${i}e word${i}f word${i}g word${i}h`,
     }));
 
-    const clusters: CoarseClusterInput[] = [
-      makeCluster({ clusterId: "c1", emails }),
-    ];
+    const clusters: CoarseClusterInput[] = [makeCluster({ clusterId: "c1", emails })];
 
     const result = analyzeWordFrequencies(clusters);
     expect(result[0].words.length).toBeLessThanOrEqual(30);

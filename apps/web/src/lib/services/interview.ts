@@ -994,10 +994,7 @@ export interface Stage1Result {
   errorCount: number;
 }
 
-export async function writeStage1Result(
-  schemaId: string,
-  result: Stage1Result,
-): Promise<void> {
+export async function writeStage1Result(schemaId: string, result: Stage1Result): Promise<void> {
   await prisma.caseSchema.update({
     where: { id: schemaId },
     data: {
@@ -1023,10 +1020,7 @@ export interface Stage2Result {
   }>;
 }
 
-export async function writeStage2Result(
-  schemaId: string,
-  result: Stage2Result,
-): Promise<void> {
+export async function writeStage2Result(schemaId: string, result: Stage2Result): Promise<void> {
   await prisma.caseSchema.update({
     where: { id: schemaId },
     data: {

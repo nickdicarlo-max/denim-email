@@ -83,9 +83,7 @@ export function actorScore(
   config: ClusteringConfig,
 ): number {
   if (!emailSenderEntityId) return 0;
-  return caseSenderEntityIds.includes(emailSenderEntityId)
-    ? config.actorAffinityScore
-    : 0;
+  return caseSenderEntityIds.includes(emailSenderEntityId) ? config.actorAffinityScore : 0;
 }
 
 /**
@@ -93,15 +91,12 @@ export function actorScore(
  * Within fresh days: 1.0
  * Beyond fresh: linearly decays to 0.2 at 365 days.
  */
-export function timeDecayMultiplier(
-  emailDate: Date,
-  now: Date,
-  config: ClusteringConfig,
-): number {
+export function timeDecayMultiplier(emailDate: Date, now: Date, config: ClusteringConfig): number {
   const daysSince = (now.getTime() - emailDate.getTime()) / 86_400_000;
 
   if (daysSince <= config.timeDecayDays.fresh) return 1.0;
 
-  const decay = 1.0 - (0.8 * (daysSince - config.timeDecayDays.fresh)) / (365 - config.timeDecayDays.fresh);
+  const decay =
+    1.0 - (0.8 * (daysSince - config.timeDecayDays.fresh)) / (365 - config.timeDecayDays.fresh);
   return Math.max(decay, 0.2);
 }

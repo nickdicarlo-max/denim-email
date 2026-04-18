@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { extractPropertyCandidates, normalizeAddressKey } from "../property-entity";
 
 describe("extractPropertyCandidates", () => {
@@ -84,8 +84,6 @@ describe("extractPropertyCandidates", () => {
   });
 
   it("regex v2: normalizeAddressKey collapses Dr and Drive to same key", () => {
-    expect(normalizeAddressKey("2310 Healey Drive")).toBe(
-      normalizeAddressKey("2310 Healey Dr"),
-    );
+    expect(normalizeAddressKey("2310 Healey Drive")).toBe(normalizeAddressKey("2310 Healey Dr"));
   });
 });

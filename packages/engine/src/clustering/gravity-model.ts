@@ -12,13 +12,7 @@ import type {
   ScoreBreakdown,
   ScoringResult,
 } from "@denim/types";
-import {
-  actorScore,
-  subjectScore,
-  tagScore,
-  threadScore,
-  timeDecayMultiplier,
-} from "./scoring";
+import { actorScore, subjectScore, tagScore, threadScore, timeDecayMultiplier } from "./scoring";
 
 /** Score a single email against a single case. */
 export function scoreEmailAgainstCase(
@@ -187,10 +181,7 @@ export function clusterEmails(
         tags: collectTags(group),
         subject: representative.subject,
         emailCount: group.length,
-        lastEmailDate: group.reduce(
-          (max, e) => (e.date > max ? e.date : max),
-          group[0].date,
-        ),
+        lastEmailDate: group.reduce((max, e) => (e.date > max ? e.date : max), group[0].date),
       });
     }
   }

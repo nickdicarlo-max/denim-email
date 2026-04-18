@@ -70,16 +70,16 @@ export class FixtureGmailClient {
       const unit = newerMatch[2].toLowerCase();
       const now = new Date();
       const ms =
-        unit === "d" ? amount * 86400000 :
-        unit === "w" ? amount * 7 * 86400000 :
-        amount * 30 * 86400000; // approximate month
+        unit === "d"
+          ? amount * 86400000
+          : unit === "w"
+            ? amount * 7 * 86400000
+            : amount * 30 * 86400000; // approximate month
       minDate = new Date(now.getTime() - ms);
       query = query.replace(/newer_than:\d+[dwm]/i, "").trim();
     }
 
-    let candidates = minDate
-      ? this.fixtures.filter((f) => f.date >= minDate!)
-      : [...this.fixtures];
+    let candidates = minDate ? this.fixtures.filter((f) => f.date >= minDate!) : [...this.fixtures];
 
     if (!query) return candidates;
 

@@ -13,8 +13,9 @@
  * ReDoS safety: no nested quantifiers, fixed-length literal alternations,
  * and a 200-char cap on input subjects (see MAX_SUBJECT_LEN below).
  */
-import { dedupByLevenshtein } from "./levenshtein-dedup";
+
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
+import { dedupByLevenshtein } from "./levenshtein-dedup";
 
 export const STREET_TYPE_NORMALIZE: Record<string, string> = {
   street: "St",
@@ -91,13 +92,10 @@ function isYearLike(n: number): boolean {
   return n >= 2000 && n <= 2030;
 }
 
-export function extractPropertyCandidates(
-  subjects: SubjectInput[],
-): PropertyCandidate[] {
+export function extractPropertyCandidates(subjects: SubjectInput[]): PropertyCandidate[] {
   const raw: { key: string; displayString: string; frequency: number }[] = [];
   for (const { subject, frequency } of subjects) {
-    const capped =
-      subject.length > MAX_SUBJECT_LEN ? subject.slice(0, MAX_SUBJECT_LEN) : subject;
+    const capped = subject.length > MAX_SUBJECT_LEN ? subject.slice(0, MAX_SUBJECT_LEN) : subject;
     for (const m of capped.matchAll(ADDRESS_REGEX)) {
       const num = parseInt(m[1], 10);
       if (isYearLike(num)) continue;

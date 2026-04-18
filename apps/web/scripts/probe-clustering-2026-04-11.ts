@@ -1,9 +1,11 @@
 // SCRATCH diagnostic for 2026-04-11 plan session. Read-only.
 // Delete after the clustering analysis is written up.
 import * as dotenv from "dotenv";
+
 dotenv.config({ path: ".env.local" });
-import { PrismaClient } from "@prisma/client";
+
 import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
 
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
@@ -17,10 +19,7 @@ async function main() {
 
   const gaSchemas = await p.caseSchema.findMany({
     where: {
-      OR: [
-        { name: { contains: "Girls Activities" } },
-        { name: { contains: "April 10" } },
-      ],
+      OR: [{ name: { contains: "Girls Activities" } }, { name: { contains: "April 10" } }],
     },
     orderBy: { createdAt: "asc" },
     select: {
@@ -34,9 +33,7 @@ async function main() {
 
   log(`\nGA-like schemas (${gaSchemas.length}):`);
   for (const s of gaSchemas) {
-    log(
-      `  ${s.id} | ${s.name} | ${s.status} | ${s.createdAt.toISOString().slice(0, 10)}`,
-    );
+    log(`  ${s.id} | ${s.name} | ${s.status} | ${s.createdAt.toISOString().slice(0, 10)}`);
   }
 
   for (const s of gaSchemas) {

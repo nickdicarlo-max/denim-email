@@ -35,7 +35,13 @@ import { writeStage2ConfirmedDomains } from "@/lib/services/interview";
 const BodySchema = z.object({
   // DNS label charset + length; rejects spaces, @-prefixes, control chars.
   confirmedDomains: z
-    .array(z.string().min(1).max(253).regex(/^[a-z0-9.\-]+$/i))
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(253)
+        .regex(/^[a-z0-9.-]+$/i),
+    )
     .min(1)
     .max(20),
 });

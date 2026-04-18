@@ -24,14 +24,10 @@ export function isReminder(
   for (const existing of existingEmails) {
     if (existing.threadId !== email.threadId) continue;
 
-    const daysBetween =
-      Math.abs(email.date.getTime() - existing.date.getTime()) / 86_400_000;
+    const daysBetween = Math.abs(email.date.getTime() - existing.date.getTime()) / 86_400_000;
     if (daysBetween > config.reminderMaxAge) continue;
 
-    const similarity = jaroWinkler(
-      normalizedSubject,
-      normalizeSubject(existing.subject),
-    );
+    const similarity = jaroWinkler(normalizedSubject, normalizeSubject(existing.subject));
     if (similarity >= config.reminderSubjectSimilarity) return true;
   }
 

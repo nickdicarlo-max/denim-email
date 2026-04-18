@@ -23,8 +23,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/middleware/auth", () => ({
-  withAuth: (handler: any) => async (request: any) =>
-    handler({ userId: "user-1", request }),
+  withAuth: (handler: any) => async (request: any) => handler({ userId: "user-1", request }),
 }));
 
 vi.mock("@/lib/middleware/ownership", () => ({
@@ -56,10 +55,10 @@ vi.mock("@/lib/inngest/client", () => ({
 import { POST } from "../route";
 
 function makeRequest(schemaId: string, body: unknown) {
-  return new Request(
-    `http://localhost/api/onboarding/${schemaId}/domain-confirm`,
-    { method: "POST", body: JSON.stringify(body) },
-  ) as any;
+  return new Request(`http://localhost/api/onboarding/${schemaId}/domain-confirm`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }) as any;
 }
 
 describe("POST /onboarding/:schemaId/domain-confirm", () => {
@@ -85,9 +84,7 @@ describe("POST /onboarding/:schemaId/domain-confirm", () => {
 
   it("returns 409 when CAS count=0 (wrong phase or concurrent click)", async () => {
     mocks.writeStage2ConfirmedDomains.mockResolvedValueOnce(0);
-    const res = await POST(
-      makeRequest("s1", { confirmedDomains: ["portfolioproadvisors.com"] }),
-    );
+    const res = await POST(makeRequest("s1", { confirmedDomains: ["portfolioproadvisors.com"] }));
     expect(res.status).toBe(409);
     expect(mocks.outboxCreate).not.toHaveBeenCalled();
     expect(mocks.inngestSend).not.toHaveBeenCalled();
@@ -102,11 +99,10 @@ describe("POST /onboarding/:schemaId/domain-confirm", () => {
     );
     expect(res.status).toBe(200);
 
-    expect(mocks.writeStage2ConfirmedDomains).toHaveBeenCalledWith(
-      expect.anything(),
-      "s1",
-      ["portfolioproadvisors.com", "stallionis.com"],
-    );
+    expect(mocks.writeStage2ConfirmedDomains).toHaveBeenCalledWith(expect.anything(), "s1", [
+      "portfolioproadvisors.com",
+      "stallionis.com",
+    ]);
     expect(mocks.outboxCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         schemaId: "s1",

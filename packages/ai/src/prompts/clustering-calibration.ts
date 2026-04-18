@@ -35,10 +35,7 @@ export interface CalibrationPromptInput {
 
 function buildSystemPrompt(input: CalibrationPromptInput): string {
   const clusterSummary = input.coarseClusters
-    .map(
-      (c) =>
-        `  - ${c.entityName}: ${c.emailCount} emails, split into ${c.casesSplit} cases`,
-    )
+    .map((c) => `  - ${c.entityName}: ${c.emailCount} emails, split into ${c.casesSplit} cases`)
     .join("\n");
 
   const correctionLines = input.corrections
@@ -62,7 +59,10 @@ function buildSystemPrompt(input: CalibrationPromptInput): string {
     .map(([entity, words]) => {
       const wordLines = words
         .slice(0, 20)
-        .map((w) => `    "${w.word}" — ${(w.pct * 100).toFixed(0)}% of emails, assigned to: ${w.caseAssignment}`)
+        .map(
+          (w) =>
+            `    "${w.word}" — ${(w.pct * 100).toFixed(0)}% of emails, assigned to: ${w.caseAssignment}`,
+        )
         .join("\n");
       return `  ${entity}:\n${wordLines}`;
     })
@@ -103,14 +103,18 @@ CURRENT CLUSTER STATE:
 ${clusterSummary}
 
 USER CORRECTIONS:
-${correctionLines.length > 0 ? correctionLines : `  (none — no corrections yet)
+${
+  correctionLines.length > 0
+    ? correctionLines
+    : `  (none — no corrections yet)
 
 FIRST CALIBRATION GUIDANCE:
 When no corrections exist, do NOT change gravity model parameters. Return current values unchanged.
 Focus instead on building initial discriminator vocabulary from the frequency data.
 Identify words that clearly separate different cases within each entity and assign
 confidence scores based on how cleanly they discriminate.
-Parameter changes require correction signals. No corrections = no parameter changes.`}
+Parameter changes require correction signals. No corrections = no parameter changes.`
+}
 
 HOW TO INTERPRET CORRECTIONS:
 - EMAIL_MOVED: The discriminator words assigned this email to the wrong case. Adjust the

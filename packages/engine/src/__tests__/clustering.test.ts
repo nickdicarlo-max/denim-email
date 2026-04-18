@@ -1,14 +1,6 @@
+import type { ClusterCaseInput, ClusterEmailInput, ClusteringConfig } from "@denim/types";
 import { describe, expect, it } from "vitest";
-import type {
-  ClusterCaseInput,
-  ClusterEmailInput,
-  ClusteringConfig,
-} from "@denim/types";
-import {
-  clusterEmails,
-  scoreEmailAgainstCase,
-  findBestCase,
-} from "../clustering/gravity-model";
+import { clusterEmails, findBestCase, scoreEmailAgainstCase } from "../clustering/gravity-model";
 import { isReminder } from "../clustering/reminder-detection";
 
 const defaultConfig: ClusteringConfig = {
@@ -160,9 +152,7 @@ describe("clusterEmails", () => {
     const emails: ClusterEmailInput[] = [
       makeEmail({ id: "e1", threadId: "t1", entityId: "entity-1" }),
     ];
-    const existingCases: ClusterCaseInput[] = [
-      makeCase({ id: "c1", threadIds: ["t1"] }),
-    ];
+    const existingCases: ClusterCaseInput[] = [makeCase({ id: "c1", threadIds: ["t1"] })];
 
     const decisions = clusterEmails(emails, existingCases, defaultConfig, now);
     expect(decisions).toHaveLength(1);
@@ -310,9 +300,7 @@ describe("isReminder", () => {
 
   it("returns false for different threads", () => {
     const email = makeEmail({ id: "e2", threadId: "t2", subject: "Permission Slip" });
-    const existing = [
-      makeEmail({ id: "e1", threadId: "t1", subject: "Permission Slip" }),
-    ];
+    const existing = [makeEmail({ id: "e1", threadId: "t1", subject: "Permission Slip" })];
 
     expect(isReminder(email, existing, defaultConfig, now)).toBe(false);
   });
@@ -320,9 +308,7 @@ describe("isReminder", () => {
   it("returns false when disabled", () => {
     const config = { ...defaultConfig, reminderCollapseEnabled: false };
     const email = makeEmail({ id: "e2", threadId: "t1", subject: "RE: Permission Slip" });
-    const existing = [
-      makeEmail({ id: "e1", threadId: "t1", subject: "Permission Slip" }),
-    ];
+    const existing = [makeEmail({ id: "e1", threadId: "t1", subject: "Permission Slip" })];
 
     expect(isReminder(email, existing, config, now)).toBe(false);
   });

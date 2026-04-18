@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { matchesExclusionRule } from "../exclusion";
 
 const email = {
@@ -84,10 +84,7 @@ describe("matchesExclusionRule", () => {
   });
 
   it("matches case-insensitively for DOMAIN", () => {
-    const result = matchesExclusionRule(
-      { ...email, senderDomain: "SCHWAB.COM" },
-      rules,
-    );
+    const result = matchesExclusionRule({ ...email, senderDomain: "SCHWAB.COM" }, rules);
     expect(result.matched).toBe(true);
   });
 });

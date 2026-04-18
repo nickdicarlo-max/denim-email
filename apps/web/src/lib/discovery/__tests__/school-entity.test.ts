@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { extractSchoolCandidates } from "../school-entity";
 
 const subject = (s: string) => ({ subject: s, frequency: 1 });

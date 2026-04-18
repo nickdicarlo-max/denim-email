@@ -111,9 +111,7 @@ function buildUserPrompt(input: DiscoveryIntelligenceInput): string {
     )
     .join("\n");
 
-  const existingLines = input.existingQueries
-    .map((q) => `  "${q.query}" (${q.label})`)
-    .join("\n");
+  const existingLines = input.existingQueries.map((q) => `  "${q.query}" (${q.label})`).join("\n");
 
   return `Analyze these email patterns and generate discovery queries:
 

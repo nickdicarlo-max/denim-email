@@ -35,20 +35,22 @@ ${Object.entries(input.learnedVocabulary)
     const words = Object.entries(vocab.words)
       .map(([w, score]) => `    "${w}" (confidence: ${score})`)
       .join("\n");
-    const merged = vocab.mergedAway.length > 0
-      ? `  Merged away (do NOT use as discriminators): ${vocab.mergedAway.map((w) => `"${w}"`).join(", ")}`
-      : "";
+    const merged =
+      vocab.mergedAway.length > 0
+        ? `  Merged away (do NOT use as discriminators): ${vocab.mergedAway.map((w) => `"${w}"`).join(", ")}`
+        : "";
     return `  ${entity}:\n${words}${merged ? `\n${merged}` : ""}`;
   })
   .join("\n")}\n`
     : "";
 
-  const correctionSection = input.correctionHistory && input.correctionHistory.length > 0
-    ? `\nCORRECTION HISTORY (user feedback on previous splits):
+  const correctionSection =
+    input.correctionHistory && input.correctionHistory.length > 0
+      ? `\nCORRECTION HISTORY (user feedback on previous splits):
 ${input.correctionHistory.map((c) => `  - ${c.type}: ${c.details}`).join("\n")}
 
 Use these corrections to avoid repeating the same mistakes.\n`
-    : "";
+      : "";
 
   const todayStr = input.today ?? new Date().toISOString().slice(0, 10);
 
@@ -145,9 +147,7 @@ Return ONLY the JSON object. No other text.`;
  * using discriminator words from frequency analysis.
  * Pure function, no I/O.
  */
-export function buildCaseSplittingPrompt(
-  input: CaseSplittingInput,
-): CaseSplittingPromptResult {
+export function buildCaseSplittingPrompt(input: CaseSplittingInput): CaseSplittingPromptResult {
   return {
     system: buildSystemPrompt(input),
     user: buildUserPrompt(input),

@@ -1,10 +1,10 @@
+import { ForbiddenError, ValidationError } from "@denim/types";
+import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
 import { handleApiError } from "@/lib/middleware/error-handler";
 import { storeGmailTokens } from "@/lib/services/gmail-tokens";
 import { storeTokensSchema } from "@/lib/validation/auth";
-import { ForbiddenError, ValidationError } from "@denim/types";
-import { NextResponse } from "next/server";
 
 export const POST = withAuth(async ({ userId, request }) => {
   try {

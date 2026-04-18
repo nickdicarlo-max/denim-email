@@ -3,10 +3,10 @@
  * All AI calls go through these wrappers for retry, backoff, and cost logging.
  */
 
-import { logger } from "@/lib/logger";
 import Anthropic from "@anthropic-ai/sdk";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ExternalAPIError } from "@denim/types";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { logger } from "@/lib/logger";
 import { callWithRetry } from "./retry";
 
 // Module-level singleton: reads ANTHROPIC_API_KEY from env automatically

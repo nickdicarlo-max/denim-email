@@ -21,10 +21,11 @@
  *          binding tears down any in-flight workflow, then marks the
  *          schema ARCHIVED so it falls out of active-schema lists.
  */
+
+import type { HypothesisValidation, InterviewInput, SchemaHypothesis } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import type { SchemaHypothesis, HypothesisValidation, InterviewInput } from "@denim/types";
 import { inngest } from "@/lib/inngest/client";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/middleware/auth";
@@ -171,20 +172,18 @@ export const POST = withAuth(async ({ userId, request }) => {
     }
 
     // Names, not DB ids — Entity rows don't exist yet at review time.
-    const acceptedNames = new Set(
-      body.entityToggles.filter((t) => t.isActive).map((t) => t.name),
-    );
-    const rejectedNames = new Set(
-      body.entityToggles.filter((t) => !t.isActive).map((t) => t.name),
-    );
+    const acceptedNames = new Set(body.entityToggles.filter((t) => t.isActive).map((t) => t.name));
+    const rejectedNames = new Set(body.entityToggles.filter((t) => !t.isActive).map((t) => t.name));
 
-    const confirmedEntities = validation?.discoveredEntities
-      .filter((e) => acceptedNames.has(e.name))
-      .map((e) => e.name) ?? [];
+    const confirmedEntities =
+      validation?.discoveredEntities.filter((e) => acceptedNames.has(e.name)).map((e) => e.name) ??
+      [];
 
     const removedEntities = [
       ...hypothesis.entities.filter((e) => rejectedNames.has(e.name)).map((e) => e.name),
-      ...(validation?.discoveredEntities.filter((e) => rejectedNames.has(e.name)).map((e) => e.name) ?? []),
+      ...(validation?.discoveredEntities
+        .filter((e) => rejectedNames.has(e.name))
+        .map((e) => e.name) ?? []),
     ];
 
     const confirmedTags = validation?.suggestedTags.map((t) => t.name) ?? [];

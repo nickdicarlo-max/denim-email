@@ -3,11 +3,7 @@ import { DOMAIN_SHAPES, getDomainShape } from "../domain-shapes";
 
 describe("domain-shapes", () => {
   it("knows 3 domains", () => {
-    expect(Object.keys(DOMAIN_SHAPES).sort()).toEqual([
-      "agency",
-      "property",
-      "school_parent",
-    ]);
+    expect(Object.keys(DOMAIN_SHAPES).sort()).toEqual(["agency", "property", "school_parent"]);
   });
 
   it("each domain has non-empty keywords", () => {

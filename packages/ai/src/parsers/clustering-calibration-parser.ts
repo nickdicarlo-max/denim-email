@@ -45,9 +45,7 @@ export function parseClusteringCalibrationResponse(raw: string): CalibrationResu
 
   const result = calibrationResultSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid clustering calibration response:\n${issues}`);
   }
 

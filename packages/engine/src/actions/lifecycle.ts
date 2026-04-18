@@ -94,7 +94,8 @@ export function computeCaseDecay(input: CaseDecayInput, now: Date): CaseDecayRes
   const futureDates: Date[] = [];
   for (const action of stillPending) {
     if (action.dueDate && action.dueDate >= now) futureDates.push(action.dueDate);
-    if (action.eventStartTime && action.eventStartTime >= now) futureDates.push(action.eventStartTime);
+    if (action.eventStartTime && action.eventStartTime >= now)
+      futureDates.push(action.eventStartTime);
   }
   futureDates.sort((a, b) => a.getTime() - b.getTime());
   const nearest = futureDates[0] ?? null;
@@ -102,7 +103,10 @@ export function computeCaseDecay(input: CaseDecayInput, now: Date): CaseDecayRes
   let updatedUrgency = input.caseUrgency;
   let updatedStatus: "OPEN" | "IN_PROGRESS" | "RESOLVED" = input.caseStatus;
 
-  if (stillPending.length === 0 && (expiredActionIds.length > 0 || input.actions.some((a) => a.status === "DONE"))) {
+  if (
+    stillPending.length === 0 &&
+    (expiredActionIds.length > 0 || input.actions.some((a) => a.status === "DONE"))
+  ) {
     updatedUrgency = "NO_ACTION";
     updatedStatus = "RESOLVED";
   } else if (nearest) {

@@ -19,10 +19,10 @@ import type { EntityGroupInput } from "@denim/types";
 import pLimit from "p-limit";
 import { callClaude } from "@/lib/ai/client";
 import { logAICost } from "@/lib/ai/cost-tracker";
+import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import type { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 
 /** Strip markdown code fences from AI response. */
 function stripCodeFences(raw: string): string {
@@ -133,7 +133,10 @@ export async function broadInboxScan(
   }>;
 }> {
   // searchEmails returns GmailMessageMeta which includes all the fields we need
-  const messages = await gmailClient.searchEmails(`newer_than:${ONBOARDING_TUNABLES.discovery.lookback}`, limit);
+  const messages = await gmailClient.searchEmails(
+    `newer_than:${ONBOARDING_TUNABLES.discovery.lookback}`,
+    limit,
+  );
 
   const metadata = messages.map((msg) => ({
     id: msg.id,

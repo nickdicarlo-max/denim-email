@@ -104,9 +104,7 @@ describe("parseSynthesisResponse", () => {
   it("throws on invalid action type", () => {
     const fixture = {
       ...VALID_FIXTURE,
-      actions: [
-        { ...VALID_FIXTURE.actions[0], actionType: "INVALID" },
-      ],
+      actions: [{ ...VALID_FIXTURE.actions[0], actionType: "INVALID" }],
     };
     expect(() => parseSynthesisResponse(JSON.stringify(fixture))).toThrow(
       "Invalid synthesis response",
@@ -142,17 +140,13 @@ describe("parseSynthesisResponse", () => {
     const result = parseSynthesisResponse(JSON.stringify(withExtra));
 
     expect(result.title).toBe("Kitchen Remodel Permits");
-    expect(
-      (result as unknown as Record<string, unknown>).unexpectedField,
-    ).toBeUndefined();
+    expect((result as unknown as Record<string, unknown>).unexpectedField).toBeUndefined();
   });
 
   it("validates action confidence range", () => {
     const fixture = {
       ...VALID_FIXTURE,
-      actions: [
-        { ...VALID_FIXTURE.actions[0], confidence: 1.5 },
-      ],
+      actions: [{ ...VALID_FIXTURE.actions[0], confidence: 1.5 }],
     };
     expect(() => parseSynthesisResponse(JSON.stringify(fixture))).toThrow(
       "Invalid synthesis response",

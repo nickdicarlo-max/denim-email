@@ -1,28 +1,22 @@
-export { jaro, jaroWinkler, fuzzyMatch, resolveEntity } from "./entity/matching";
-
+export { generateFingerprint, matchAction } from "./actions/dedup";
+export type { ActionDateInput, CaseDecayInput, CaseDecayResult } from "./actions/lifecycle";
+export { computeCaseDecay, computeNextActionDate } from "./actions/lifecycle";
+export type {
+  CoarseClusterInput,
+  FrequencyEmailInput,
+} from "./clustering/frequency-analysis";
+export { analyzeWordFrequencies } from "./clustering/frequency-analysis";
 export {
-  normalizeSubject,
-  threadScore,
-  subjectScore,
+  clusterEmails,
+  findBestCase,
+  scoreEmailAgainstCase,
+} from "./clustering/gravity-model";
+export { isReminder } from "./clustering/reminder-detection";
+export {
   actorScore,
+  normalizeSubject,
+  subjectScore,
+  threadScore,
   timeDecayMultiplier,
 } from "./clustering/scoring";
-
-export {
-  scoreEmailAgainstCase,
-  findBestCase,
-  clusterEmails,
-} from "./clustering/gravity-model";
-
-export { isReminder } from "./clustering/reminder-detection";
-
-export { generateFingerprint, matchAction } from "./actions/dedup";
-
-export { analyzeWordFrequencies } from "./clustering/frequency-analysis";
-export type {
-  FrequencyEmailInput,
-  CoarseClusterInput,
-} from "./clustering/frequency-analysis";
-
-export { computeNextActionDate, computeCaseDecay } from "./actions/lifecycle";
-export type { CaseDecayInput, CaseDecayResult, ActionDateInput } from "./actions/lifecycle";
+export { fuzzyMatch, jaro, jaroWinkler, resolveEntity } from "./entity/matching";

@@ -1,11 +1,11 @@
-import { describe, expect, it } from "vitest";
 import type { ClusteringConfig } from "@denim/types";
+import { describe, expect, it } from "vitest";
 import {
-  threadScore,
-  subjectScore,
   actorScore,
-  timeDecayMultiplier,
   normalizeSubject,
+  subjectScore,
+  threadScore,
+  timeDecayMultiplier,
 } from "../clustering/scoring";
 
 const defaultConfig: ClusteringConfig = {

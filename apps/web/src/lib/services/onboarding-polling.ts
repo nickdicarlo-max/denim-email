@@ -180,30 +180,22 @@ export async function derivePollingResponse(
 
   // Issue #95 Stage 1 — domain discovery running or awaiting user confirm.
   // Surface candidates so the review screen can render top-N domains.
-  if (
-    schema.phase === "DISCOVERING_DOMAINS" ||
-    schema.phase === "AWAITING_DOMAIN_CONFIRMATION"
-  ) {
+  if (schema.phase === "DISCOVERING_DOMAINS" || schema.phase === "AWAITING_DOMAIN_CONFIRMATION") {
     return {
       ...base,
       phase: schema.phase,
-      stage1Candidates:
-        (schema.stage1Candidates as Stage1CandidateDTO[] | null) ?? [],
+      stage1Candidates: (schema.stage1Candidates as Stage1CandidateDTO[] | null) ?? [],
       stage1QueryUsed: schema.stage1QueryUsed ?? undefined,
     };
   }
 
   // Issue #95 Stage 2 — entity discovery running or awaiting user confirm.
   // Surface per-domain candidates for the entity review screen.
-  if (
-    schema.phase === "DISCOVERING_ENTITIES" ||
-    schema.phase === "AWAITING_ENTITY_CONFIRMATION"
-  ) {
+  if (schema.phase === "DISCOVERING_ENTITIES" || schema.phase === "AWAITING_ENTITY_CONFIRMATION") {
     return {
       ...base,
       phase: schema.phase,
-      stage2Candidates:
-        (schema.stage2Candidates as Stage2PerDomainDTO[] | null) ?? [],
+      stage2Candidates: (schema.stage2Candidates as Stage2PerDomainDTO[] | null) ?? [],
     };
   }
 

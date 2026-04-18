@@ -22,8 +22,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/middleware/auth", () => ({
-  withAuth: (handler: any) => async (request: any) =>
-    handler({ userId: "user-1", request }),
+  withAuth: (handler: any) => async (request: any) => handler({ userId: "user-1", request }),
 }));
 
 vi.mock("@/lib/middleware/ownership", () => ({
@@ -55,10 +54,10 @@ vi.mock("@/lib/inngest/client", () => ({
 import { POST } from "../route";
 
 function makeRequest(schemaId: string, body: unknown) {
-  return new Request(
-    `http://localhost/api/onboarding/${schemaId}/entity-confirm`,
-    { method: "POST", body: JSON.stringify(body) },
-  ) as any;
+  return new Request(`http://localhost/api/onboarding/${schemaId}/entity-confirm`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  }) as any;
 }
 
 describe("POST /onboarding/:schemaId/entity-confirm", () => {
@@ -124,20 +123,14 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
         secondaryTypeName: "Vendor",
       },
     ];
-    const res = await POST(
-      makeRequest("s1", { confirmedEntities: entities }),
-    );
+    const res = await POST(makeRequest("s1", { confirmedEntities: entities }));
     expect(res.status).toBe(200);
 
     expect(mocks.updateMany).toHaveBeenCalledWith({
       where: { id: "s1", phase: "AWAITING_ENTITY_CONFIRMATION" },
       data: expect.objectContaining({ phase: "PROCESSING_SCAN" }),
     });
-    expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(
-      expect.anything(),
-      "s1",
-      entities,
-    );
+    expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(expect.anything(), "s1", entities);
     expect(mocks.outboxCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         schemaId: "s1",

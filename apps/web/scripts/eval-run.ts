@@ -9,21 +9,25 @@
  */
 
 import { resolve } from "node:path";
-import type { GmailMessageFull } from "../src/lib/gmail/types";
 import type { EntityGroupInput } from "@denim/types";
-import { loadFixtures } from "../src/lib/gmail/fixture-loader";
 import { FixtureGmailClient } from "../src/lib/gmail/fixture-client";
+import { loadFixtures } from "../src/lib/gmail/fixture-loader";
+import type { GmailMessageFull } from "../src/lib/gmail/types";
 import { prisma } from "../src/lib/prisma";
-import { buildSchemaContext, extractEmail, processEmailBatch } from "../src/lib/services/extraction";
 import { coarseCluster, splitCoarseClusters } from "../src/lib/services/cluster";
-import { synthesizeCase } from "../src/lib/services/synthesis";
 import { runSmartDiscovery } from "../src/lib/services/discovery";
 import {
-  generateHypothesis,
-  validateHypothesis,
+  buildSchemaContext,
+  extractEmail,
+  processEmailBatch,
+} from "../src/lib/services/extraction";
+import {
   createSchemaStub,
+  generateHypothesis,
   persistSchemaRelations,
+  validateHypothesis,
 } from "../src/lib/services/interview";
+import { synthesizeCase } from "../src/lib/services/synthesis";
 
 if (!process.env.DATABASE_URL) {
   console.error("FAILED: DATABASE_URL not set. Run from apps/web/.");
@@ -72,7 +76,9 @@ async function main() {
     const schemaId = await runCreateSchema(fixtures, args);
     console.log(`\nSchema created: ${schemaId}`);
     console.log(`\nRun the pipeline now:`);
-    console.log(`  node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --schema-id ${schemaId} --fixtures ${args.fixtures}`);
+    console.log(
+      `  node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --schema-id ${schemaId} --fixtures ${args.fixtures}`,
+    );
     await prisma.$disconnect();
     return;
   }
@@ -92,16 +98,27 @@ async function main() {
   const schema = await prisma.caseSchema.findUnique({
     where: { id: args.schemaId },
     include: {
-      tags: { where: { isActive: true }, select: { name: true, description: true, isActive: true } },
+      tags: {
+        where: { isActive: true },
+        select: { name: true, description: true, isActive: true },
+      },
       entities: {
         where: { isActive: true },
         select: { name: true, type: true, aliases: true, isActive: true, autoDetected: true },
       },
       extractedFields: { select: { name: true, type: true, description: true, source: true } },
-      exclusionRules: { where: { isActive: true }, select: { ruleType: true, pattern: true, isActive: true } },
+      exclusionRules: {
+        where: { isActive: true },
+        select: { ruleType: true, pattern: true, isActive: true },
+      },
       entityGroups: {
         orderBy: { index: "asc" },
-        include: { entities: { where: { isActive: true }, select: { name: true, type: true, isActive: true } } },
+        include: {
+          entities: {
+            where: { isActive: true },
+            select: { name: true, type: true, isActive: true },
+          },
+        },
       },
     },
   });
@@ -112,7 +129,9 @@ async function main() {
   }
 
   console.error(`  Schema: "${schema.name}" (domain: ${schema.domain})`);
-  console.error(`  Entities: ${schema.entities.length} (${schema.entities.filter((e) => e.type === "PRIMARY").length} primary)`);
+  console.error(
+    `  Entities: ${schema.entities.length} (${schema.entities.filter((e) => e.type === "PRIMARY").length} primary)`,
+  );
   console.error(`  Tags: ${schema.tags.length}`);
   console.error(`  Exclusion rules: ${schema.exclusionRules.length}`);
 
@@ -129,7 +148,10 @@ async function main() {
   // ── Phase 2: Discovery (same as production runSmartDiscovery) ───
   console.error(`\n=== PHASE 2: DISCOVERY ===`);
 
-  const discoveryQueries = (schema.discoveryQueries ?? []) as unknown as { query: string; label: string }[];
+  const discoveryQueries = (schema.discoveryQueries ?? []) as unknown as {
+    query: string;
+    label: string;
+  }[];
   const entityGroups: EntityGroupInput[] = schema.entityGroups.map((g) => ({
     whats: g.entities.filter((e) => e.type === "PRIMARY").map((e) => e.name),
     whos: g.entities.filter((e) => e.type === "SECONDARY").map((e) => e.name),
@@ -155,7 +177,9 @@ async function main() {
 
   const discoveredIds = discoveryResult.emailIds;
   console.error(`  Discovered: ${discoveredIds.length} emails (from ${fixtures.length} fixtures)`);
-  console.error(`  Queries run: ${discoveryResult.queriesRun}, skipped: ${discoveryResult.queriesSkipped}`);
+  console.error(
+    `  Queries run: ${discoveryResult.queriesRun}, skipped: ${discoveryResult.queriesSkipped}`,
+  );
 
   if (discoveredIds.length === 0) {
     console.error("  No emails discovered. Check schema discovery queries.");
@@ -193,7 +217,9 @@ async function main() {
     }
     const elapsed = ((Date.now() - extractionStart) / 1000).toFixed(1);
     const done = Math.min(i + BATCH_SIZE, discoveredIds.length);
-    console.error(`  [${elapsed}s] ${done}/${discoveredIds.length} — ${processed} extracted, ${excluded} excluded, ${failed} failed`);
+    console.error(
+      `  [${elapsed}s] ${done}/${discoveredIds.length} — ${processed} extracted, ${excluded} excluded, ${failed} failed`,
+    );
   }
 
   const extractionTime = ((Date.now() - extractionStart) / 1000).toFixed(1);
@@ -204,7 +230,9 @@ async function main() {
 
   const clusterStart = Date.now();
   const coarseResult = await coarseCluster(args.schemaId);
-  console.error(`  Pass 1 (coarse): ${coarseResult.casesCreated} created, ${coarseResult.casesMerged} merged`);
+  console.error(
+    `  Pass 1 (coarse): ${coarseResult.casesCreated} created, ${coarseResult.casesMerged} merged`,
+  );
 
   const splitResult = await splitCoarseClusters(args.schemaId);
   console.error(`  Pass 2 (split): ${splitResult.casesCreated} created`);
@@ -292,7 +320,9 @@ async function main() {
   console.log(`Domain: ${schema.domain}`);
   console.log(`─────────────────────────────────────`);
   console.log(`Fixtures:     ${fixtures.length}`);
-  console.log(`Discovered:   ${discoveredIds.length} (${pct(discoveredIds.length, fixtures.length)} of fixtures)`);
+  console.log(
+    `Discovered:   ${discoveredIds.length} (${pct(discoveredIds.length, fixtures.length)} of fixtures)`,
+  );
   console.log(`Extracted:    ${processed}`);
   console.log(`Excluded:     ${excluded}`);
   console.log(`Failed:       ${failed}`);
@@ -305,9 +335,15 @@ async function main() {
   console.log(`─────────────────────────────────────`);
   if (fullCases.length > 0) {
     console.log(`Cases:        ${fullCases.length}`);
-    console.log(`  with entity:  ${casesWithEntity}/${fullCases.length} (${pct(casesWithEntity, fullCases.length)})`);
-    console.log(`  with actions: ${fullCases.filter((c) => c.actions.length > 0).length}/${fullCases.length}`);
-    console.log(`  emails/case:  min=${Math.min(...emailsPerCase)} avg=${(totalCaseEmails / fullCases.length).toFixed(1)} max=${Math.max(...emailsPerCase)}`);
+    console.log(
+      `  with entity:  ${casesWithEntity}/${fullCases.length} (${pct(casesWithEntity, fullCases.length)})`,
+    );
+    console.log(
+      `  with actions: ${fullCases.filter((c) => c.actions.length > 0).length}/${fullCases.length}`,
+    );
+    console.log(
+      `  emails/case:  min=${Math.min(...emailsPerCase)} avg=${(totalCaseEmails / fullCases.length).toFixed(1)} max=${Math.max(...emailsPerCase)}`,
+    );
     console.log(`  Urgency:`);
     for (const [urgency, count] of [...urgencyDist.entries()].sort()) {
       console.log(`    ${urgency}: ${count}`);
@@ -320,9 +356,13 @@ async function main() {
   const totalCost = costs._sum?.estimatedCostUsd ?? 0;
   console.log(`AI cost:      $${totalCost.toFixed(4)} (${costs._count} calls)`);
   console.log(`─────────────────────────────────────`);
-  console.log(`Coverage:     ${claimedIds.size}/${fixtures.length} fixtures claimed (${pct(claimedIds.size, fixtures.length)})`);
+  console.log(
+    `Coverage:     ${claimedIds.size}/${fixtures.length} fixtures claimed (${pct(claimedIds.size, fixtures.length)})`,
+  );
   console.log(`─────────────────────────────────────`);
-  console.log(`Time: discovery=${((Date.now() - startTime) / 1000 - Number.parseFloat(extractionTime) - Number.parseFloat(clusterTime) - Number.parseFloat(synthTime)).toFixed(1)}s extraction=${extractionTime}s clustering=${clusterTime}s synthesis=${synthTime}s total=${totalTime}s`);
+  console.log(
+    `Time: discovery=${((Date.now() - startTime) / 1000 - Number.parseFloat(extractionTime) - Number.parseFloat(clusterTime) - Number.parseFloat(synthTime)).toFixed(1)}s extraction=${extractionTime}s clustering=${clusterTime}s synthesis=${synthTime}s total=${totalTime}s`,
+  );
 
   if (failedIds.length > 0) {
     console.log(`\nFailed fixture IDs:`);
@@ -354,17 +394,30 @@ async function runCreateSchema(
 
   const role = args.role ?? "general";
   const domain = args.domain ?? "general";
-  const whats = args.whats ? args.whats.split(",").map((s) => s.trim()).filter(Boolean) : [];
-  const whos = args.whos ? args.whos.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const whats = args.whats
+    ? args.whats
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
+  const whos = args.whos
+    ? args.whos
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [];
 
-  const groups = whats.length > 0
-    ? whats.map((w) => ({ whats: [w], whos }))
-    : whos.length > 0
-      ? [{ whats: [], whos }]
-      : [];
+  const groups =
+    whats.length > 0
+      ? whats.map((w) => ({ whats: [w], whos }))
+      : whos.length > 0
+        ? [{ whats: [], whos }]
+        : [];
 
   const sampleSubjects = fixtures.slice(0, 50).map((f) => f.subject);
-  const sampleSenders = [...new Set(fixtures.map((f) => f.senderDisplayName || f.senderEmail))].slice(0, 30);
+  const sampleSenders = [
+    ...new Set(fixtures.map((f) => f.senderDisplayName || f.senderEmail)),
+  ].slice(0, 30);
 
   const interviewInput = {
     role,
@@ -387,7 +440,9 @@ async function runCreateSchema(
 
   const hypothesis = await generateHypothesis(interviewInput, { userId: EVAL_USER_ID });
   console.error(`  Hypothesis: "${hypothesis.schemaName}"`);
-  console.error(`    Entities: ${hypothesis.entities.length} (${hypothesis.entities.filter((e: any) => e.type === "PRIMARY").length} primary)`);
+  console.error(
+    `    Entities: ${hypothesis.entities.length} (${hypothesis.entities.filter((e: any) => e.type === "PRIMARY").length} primary)`,
+  );
   console.error(`    Tags: ${hypothesis.tags.length}`);
 
   const emailSamples = fixtures.slice(0, 30).map((f) => ({
@@ -434,7 +489,13 @@ async function runCreateSchema(
 // ── Coverage Report ─────────────────────────────────────────────────
 
 async function runCoverageReport(
-  fixtures: { id: string; subject: string; senderDomain: string; senderEmail: string; date: Date }[],
+  fixtures: {
+    id: string;
+    subject: string;
+    senderDomain: string;
+    senderEmail: string;
+    date: Date;
+  }[],
 ) {
   console.error(`\n=== CROSS-SCHEMA COVERAGE REPORT ===\n`);
 
@@ -475,7 +536,9 @@ async function runCoverageReport(
     }
 
     console.log(`\n  "${schema.name}" (${schema.domain})`);
-    console.log(`    Claimed: ${claimed.length} | Excluded: ${excludedCount} | Cases: ${caseCount}`);
+    console.log(
+      `    Claimed: ${claimed.length} | Excluded: ${excludedCount} | Cases: ${caseCount}`,
+    );
   }
 
   const allClaimed = new Set(claimedBy.keys());
@@ -483,7 +546,9 @@ async function runCoverageReport(
   const overlap = [...claimedBy.entries()].filter(([, schemas]) => schemas.length > 1);
 
   console.log(`\n─────────────────────────────────────`);
-  console.log(`Total claimed:    ${allClaimed.size}/${fixtures.length} (${pct(allClaimed.size, fixtures.length)})`);
+  console.log(
+    `Total claimed:    ${allClaimed.size}/${fixtures.length} (${pct(allClaimed.size, fixtures.length)})`,
+  );
   console.log(`Overlap (2+ schemas): ${overlap.length}`);
   console.log(`Unclaimed:        ${unclaimed.length}`);
 
@@ -500,7 +565,9 @@ async function runCoverageReport(
     }
 
     const unclaimedDates = unclaimed.map((f) => f.date).sort((a, b) => a.getTime() - b.getTime());
-    console.log(`  Unclaimed date range: ${unclaimedDates[0].toISOString().slice(0, 10)} → ${unclaimedDates[unclaimedDates.length - 1].toISOString().slice(0, 10)}`);
+    console.log(
+      `  Unclaimed date range: ${unclaimedDates[0].toISOString().slice(0, 10)} → ${unclaimedDates[unclaimedDates.length - 1].toISOString().slice(0, 10)}`,
+    );
 
     console.log(`\n  Sample unclaimed subjects:`);
     for (const f of unclaimed.slice(0, 10)) {

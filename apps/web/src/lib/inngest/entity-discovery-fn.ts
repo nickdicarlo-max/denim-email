@@ -13,15 +13,15 @@
  * is watching the spinner).
  */
 
+import type { DomainName } from "@/lib/config/domain-shapes";
+import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
-import type { DomainName } from "@/lib/config/domain-shapes";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { writeStage2Result } from "@/lib/services/interview";
+import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
 
 export const runEntityDiscovery = inngest.createFunction(
@@ -31,10 +31,7 @@ export const runEntityDiscovery = inngest.createFunction(
     triggers: [{ event: "onboarding.entity-discovery.requested" }],
     retries: 2,
     priority: { run: "120" },
-    concurrency: [
-      { key: "event.data.schemaId", limit: 1 },
-      { limit: 20 },
-    ],
+    concurrency: [{ key: "event.data.schemaId", limit: 1 }, { limit: 20 }],
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
@@ -54,13 +51,10 @@ export const runEntityDiscovery = inngest.createFunction(
       );
 
       if (schema.phase !== "DISCOVERING_ENTITIES") {
-        throw new Error(
-          `Schema ${schemaId} not in DISCOVERING_ENTITIES (got ${schema.phase})`,
-        );
+        throw new Error(`Schema ${schemaId} not in DISCOVERING_ENTITIES (got ${schema.phase})`);
       }
 
-      const confirmed: string[] =
-        (schema.stage2ConfirmedDomains as string[] | null) ?? [];
+      const confirmed: string[] = (schema.stage2ConfirmedDomains as string[] | null) ?? [];
       if (confirmed.length === 0) {
         throw new Error(`Schema ${schemaId} has no confirmed Stage-1 domains`);
       }

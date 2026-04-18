@@ -9,8 +9,8 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { GmailMessageFull } from "./types";
 import { parseGmailJson } from "./parse";
+import type { GmailMessageFull } from "./types";
 
 /**
  * Load all Gmail API JSON fixtures from a directory.

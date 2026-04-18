@@ -12,9 +12,7 @@ import { GENERIC_SENDER_DOMAINS } from "./interview";
  *     for generic-provider senders like `jane@gmail.com`, where expanding
  *     the domain would pull every personal email in the inbox.
  */
-export type ExpansionTarget =
-  | { type: "domain"; value: string }
-  | { type: "sender"; value: string };
+export type ExpansionTarget = { type: "domain"; value: string } | { type: "sender"; value: string };
 
 /**
  * Extract expansion targets from an enriched hypothesis. For each

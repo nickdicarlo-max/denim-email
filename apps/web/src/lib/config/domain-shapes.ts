@@ -4,10 +4,7 @@
 // DO NOT edit the values here without updating the spec file first.
 
 export type DomainName = "property" | "school_parent" | "agency";
-export type Stage2Algorithm =
-  | "property-address"
-  | "school-two-pattern"
-  | "agency-domain-derive";
+export type Stage2Algorithm = "property-address" | "school-two-pattern" | "agency-domain-derive";
 
 export interface DomainShape {
   domain: DomainName;
@@ -105,9 +102,7 @@ export const DOMAIN_SHAPES: Record<DomainName, DomainShape> = {
 
 export function getDomainShape(domain: string): DomainShape {
   if (!(domain in DOMAIN_SHAPES)) {
-    throw new Error(
-      `Unknown domain: ${domain}. Known: ${Object.keys(DOMAIN_SHAPES).join(", ")}`,
-    );
+    throw new Error(`Unknown domain: ${domain}. Known: ${Object.keys(DOMAIN_SHAPES).join(", ")}`);
   }
   return DOMAIN_SHAPES[domain as DomainName];
 }

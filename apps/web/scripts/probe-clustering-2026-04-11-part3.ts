@@ -1,7 +1,10 @@
 import * as dotenv from "dotenv";
+
 dotenv.config({ path: ".env.local" });
-import { PrismaClient } from "@prisma/client";
+
 import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+
 const adapter = new PrismaPg({ connectionString: process.env.DIRECT_URL! });
 const p = new PrismaClient({ adapter });
 const log = (s: string) => process.stderr.write(s + "\n");
@@ -38,14 +41,21 @@ async function main() {
 
     log(`Total Email rows: ${all.length}`);
     const counts = {
-      entityIdSet: 0, entityIdNull: 0,
-      excluded: 0, notExcluded: 0,
-      inCase: 0, orphan: 0,
+      entityIdSet: 0,
+      entityIdNull: 0,
+      excluded: 0,
+      notExcluded: 0,
+      inCase: 0,
+      orphan: 0,
       // composite
-      entitySetExcluded: 0, entitySetNotExcl: 0,
-      entityNullExcluded: 0, entityNullNotExcl: 0,
+      entitySetExcluded: 0,
+      entitySetNotExcl: 0,
+      entityNullExcluded: 0,
+      entityNullNotExcl: 0,
       // orphan breakdown
-      orphanEntitySet: 0, orphanEntityNull: 0, orphanExcluded: 0,
+      orphanEntitySet: 0,
+      orphanEntityNull: 0,
+      orphanExcluded: 0,
     };
     for (const e of all) {
       if (e.entityId) counts.entityIdSet++;
@@ -103,7 +113,9 @@ async function main() {
       for (const e of orphansEligible) {
         senderCounts[e.senderEmail] = (senderCounts[e.senderEmail] || 0) + 1;
       }
-      const sorted = Object.entries(senderCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+      const sorted = Object.entries(senderCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
       log(`\n  TOP SENDERS in orphans-with-entity (the bug surface):`);
       for (const [email, n] of sorted) log(`    ${n.toString().padStart(4)} | ${email}`);
     }
@@ -111,4 +123,7 @@ async function main() {
 
   await p.$disconnect();
 }
-main().catch((e) => { log("FAIL: " + e.message); process.exit(1); });
+main().catch((e) => {
+  log("FAIL: " + e.message);
+  process.exit(1);
+});

@@ -41,9 +41,10 @@ export function buildValidationPrompt(
   entityGroups?: EntityGroupContext[],
   userThings?: string[],
 ): ValidationPromptResult {
-  const userThingsList = userThings && userThings.length > 0
-    ? userThings.map((t) => `"${t}"`).join(", ")
-    : "(none provided)";
+  const userThingsList =
+    userThings && userThings.length > 0
+      ? userThings.map((t) => `"${t}"`).join(", ")
+      : "(none provided)";
 
   // STATIC: rules, schema, grounding, alias detection, noise classification.
   // Identical across every validateHypothesis call — safe to cache as the

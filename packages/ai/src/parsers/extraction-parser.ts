@@ -44,16 +44,12 @@ export function parseExtractionResponse(raw: string): ExtractionResult {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error(
-      `Failed to parse extraction response as JSON: ${cleaned.slice(0, 200)}...`,
-    );
+    throw new Error(`Failed to parse extraction response as JSON: ${cleaned.slice(0, 200)}...`);
   }
 
   const result = extractionResultSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid extraction response:\n${issues}`);
   }
 
@@ -73,10 +69,7 @@ export function parseExtractionResponse(raw: string): ExtractionResult {
  *   - any element fails validation
  *   - the array length does not match `expectedCount`
  */
-export function parseBatchExtraction(
-  raw: string,
-  expectedCount: number,
-): ExtractionResult[] {
+export function parseBatchExtraction(raw: string, expectedCount: number): ExtractionResult[] {
   const cleaned = stripCodeFences(raw);
 
   let parsed: unknown;
@@ -90,16 +83,12 @@ export function parseBatchExtraction(
 
   const result = BatchExtractionSchema.safeParse(parsed);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
+    const issues = result.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
     throw new Error(`Invalid batch extraction response:\n${issues}`);
   }
 
   if (result.data.length !== expectedCount) {
-    throw new Error(
-      `Expected ${expectedCount} extraction results, got ${result.data.length}`,
-    );
+    throw new Error(`Expected ${expectedCount} extraction results, got ${result.data.length}`);
   }
 
   return result.data

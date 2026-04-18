@@ -4,11 +4,11 @@ import { buildStage1Query } from "../domain-discovery";
 describe("buildStage1Query", () => {
   it("builds a Gmail OR-subject query with the domain's keyword list", () => {
     const q = buildStage1Query("property", 365);
-    expect(q).toContain('subject:(');
+    expect(q).toContain("subject:(");
     expect(q).toContain('"invoice"');
     expect(q).toContain('"repair"');
-    expect(q).toContain('-category:promotions');
-    expect(q).toContain('newer_than:365d');
+    expect(q).toContain("-category:promotions");
+    expect(q).toContain("newer_than:365d");
   });
 
   it("agency query contains the working-vocab additions", () => {

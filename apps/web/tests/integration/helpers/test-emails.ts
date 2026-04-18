@@ -9,16 +9,12 @@ interface EntityIds {
   coachId: string;
 }
 
-export async function seedTestEmails(
-  schemaId: string,
-  entityIds: EntityIds,
-): Promise<void> {
+export async function seedTestEmails(schemaId: string, entityIds: EntityIds): Promise<void> {
   const { vmsId, evscId, coachId } = entityIds;
   const now = new Date();
 
   // Dates spread across the last 2 weeks
-  const d = (daysAgo: number) =>
-    new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
+  const d = (daysAgo: number) => new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000);
 
   await prisma.email.createMany({
     data: [
@@ -116,8 +112,7 @@ export async function seedTestEmails(
         date: d(8),
         isReply: true,
         threadPosition: 2,
-        summary:
-          "Thursday practice moved to Field 5 due to maintenance. Same time 4:30-6pm.",
+        summary: "Thursday practice moved to Field 5 due to maintenance. Same time 4:30-6pm.",
         tags: ["Schedule", "Practice"],
         extractedData: {},
         bodyLength: 150,

@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestUser, cleanupTestUser, type TestUser } from "../helpers/test-user";
-import { createTestSchema, type TestSchemaResult } from "../helpers/test-schema";
-import { seedTestEmails } from "../helpers/test-emails";
-import { withTimeout } from "../helpers/timeout";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { prisma } from "@/lib/prisma";
 import { clusterNewEmails } from "@/lib/services/cluster";
 import { synthesizeCase } from "@/lib/services/synthesis";
-import { prisma } from "@/lib/prisma";
+import { seedTestEmails } from "../helpers/test-emails";
+import { createTestSchema, type TestSchemaResult } from "../helpers/test-schema";
+import { cleanupTestUser, createTestUser, type TestUser } from "../helpers/test-user";
+import { withTimeout } from "../helpers/timeout";
 
 let testUser: TestUser;
 let testSchema: TestSchemaResult;
@@ -22,11 +22,7 @@ describe("Synthesis Edge Cases", () => {
     });
 
     // Run clustering to create cases
-    await withTimeout(
-      clusterNewEmails(testSchema.schema.id),
-      60_000,
-      "clusterNewEmails (setup)",
-    );
+    await withTimeout(clusterNewEmails(testSchema.schema.id), 60_000, "clusterNewEmails (setup)");
   }, 120_000);
 
   afterAll(async () => {
@@ -149,9 +145,7 @@ describe("Synthesis Edge Cases", () => {
     });
 
     // synthesizedAt should have been updated
-    expect(after.synthesizedAt!.getTime()).toBeGreaterThan(
-      before.synthesizedAt!.getTime(),
-    );
+    expect(after.synthesizedAt!.getTime()).toBeGreaterThan(before.synthesizedAt!.getTime());
   }, 360_000);
 
   // -------------------------------------------------------------------

@@ -34,7 +34,10 @@ function buildFieldDefinitions(schema: SynthesisSchemaContext): string {
     return "No extracted fields defined.";
   }
   return schema.extractedFields
-    .map((f: { name: string; type: string; description: string }) => `  - "${f.name}" (${f.type}): ${f.description}`)
+    .map(
+      (f: { name: string; type: string; description: string }) =>
+        `  - "${f.name}" (${f.type}): ${f.description}`,
+    )
     .join("\n");
 }
 

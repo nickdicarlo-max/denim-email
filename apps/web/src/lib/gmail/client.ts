@@ -1,6 +1,6 @@
-import { logger } from "@/lib/logger";
 import { ExternalAPIError } from "@denim/types";
 import { google } from "googleapis";
+import { logger } from "@/lib/logger";
 import type { GmailMessageFull, GmailMessageMeta, ScanDiscovery } from "./types";
 
 const METADATA_HEADERS = ["From", "To", "Cc", "Subject", "Date", "In-Reply-To"];
@@ -181,8 +181,7 @@ export class GmailClient {
       // never the raw error.message (same shape as sanitizeError in
       // gmail-metadata-fetch.ts).
       const name = error instanceof Error ? error.name : "Error";
-      const status =
-        error instanceof Error ? (error.message.match(/\b[45]\d\d\b/)?.[0] ?? "") : "";
+      const status = error instanceof Error ? (error.message.match(/\b[45]\d\d\b/)?.[0] ?? "") : "";
       logger.error({ service: "gmail", operation, errorName: name, errorStatus: status });
       throw new ExternalAPIError(
         `Gmail list failed: ${name}${status ? `:${status}` : ""}`,
@@ -309,9 +308,7 @@ export class GmailClient {
    * Extract attachment metadata from a MIME payload without downloading content.
    * Recursively walks the MIME tree to collect filename, mimeType, and size.
    */
-  extractAttachmentMetadata(
-    payload: any,
-  ): Array<{
+  extractAttachmentMetadata(payload: any): Array<{
     gmailAttachmentId: string;
     filename: string;
     mimeType: string;

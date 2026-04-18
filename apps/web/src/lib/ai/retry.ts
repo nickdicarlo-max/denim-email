@@ -20,9 +20,7 @@ function isRateLimitError(error: unknown): boolean {
  */
 function extractRetryDelay(error: unknown, baseDelayMs: number, attempt: number): number {
   // Try standard retry-after header (Anthropic)
-  const retryAfter = (error as { headers?: Record<string, string> })?.headers?.[
-    "retry-after"
-  ];
+  const retryAfter = (error as { headers?: Record<string, string> })?.headers?.["retry-after"];
   if (retryAfter) {
     return Number.parseInt(retryAfter, 10) * 1000;
   }

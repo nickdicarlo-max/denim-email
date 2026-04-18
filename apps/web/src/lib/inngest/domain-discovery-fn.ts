@@ -9,15 +9,15 @@
  * Gmail 10,000 req/100sec cap. Priority 120 (interactive — user watches spinner).
  */
 
+import type { DomainName } from "@/lib/config/domain-shapes";
+import { discoverDomains } from "@/lib/discovery/domain-discovery";
 import { matchesGmailAuthError } from "@/lib/gmail/auth-errors";
 import { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { discoverDomains } from "@/lib/discovery/domain-discovery";
-import type { DomainName } from "@/lib/config/domain-shapes";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { writeStage1Result } from "@/lib/services/interview";
+import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
 
 export const runDomainDiscovery = inngest.createFunction(
@@ -27,10 +27,7 @@ export const runDomainDiscovery = inngest.createFunction(
     triggers: [{ event: "onboarding.domain-discovery.requested" }],
     retries: 2,
     priority: { run: "120" },
-    concurrency: [
-      { key: "event.data.schemaId", limit: 1 },
-      { limit: 20 },
-    ],
+    concurrency: [{ key: "event.data.schemaId", limit: 1 }, { limit: 20 }],
   },
   async ({ event, step }) => {
     const { schemaId, userId } = event.data;
@@ -58,8 +55,7 @@ export const runDomainDiscovery = inngest.createFunction(
             const accessToken = await getValidGmailToken(userId);
             const gmail = new GmailClient(accessToken);
             const inputs = schema.inputs as { userEmail?: string } | null;
-            const userDomain =
-              (inputs?.userEmail ?? "").split("@")[1]?.toLowerCase() ?? "";
+            const userDomain = (inputs?.userEmail ?? "").split("@")[1]?.toLowerCase() ?? "";
             return discoverDomains({
               gmailClient: gmail,
               domain: schema.domain as DomainName,

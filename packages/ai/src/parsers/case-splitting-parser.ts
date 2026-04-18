@@ -42,9 +42,7 @@ export function parseCaseSplittingResponse(raw: string): CaseSplitResult {
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    throw new Error(
-      `Failed to parse case splitting response as JSON: ${cleaned.slice(0, 200)}...`,
-    );
+    throw new Error(`Failed to parse case splitting response as JSON: ${cleaned.slice(0, 200)}...`);
   }
 
   const envelope = caseSplitEnvelopeSchema.safeParse(parsed);

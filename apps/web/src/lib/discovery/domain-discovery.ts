@@ -34,9 +34,7 @@ export interface DiscoverDomainsOutput {
   errorCount: number;
 }
 
-export async function discoverDomains(
-  input: DiscoverDomainsInput,
-): Promise<DiscoverDomainsOutput> {
+export async function discoverDomains(input: DiscoverDomainsInput): Promise<DiscoverDomainsOutput> {
   const shape = getDomainShape(input.domain);
   const query = buildStage1Query(input.domain, ONBOARDING_TUNABLES.stage1.lookbackDays);
   const fetched = await fetchFromHeaders(

@@ -28,13 +28,9 @@ import { GmailClient } from "@/lib/gmail/client";
 import { serializeMessageForStep } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-import { getValidGmailToken } from "@/lib/services/gmail-tokens";
 import { extractExpansionTargets } from "@/lib/services/expansion-targets";
-import {
-  generateHypothesis,
-  resolveWhoEmails,
-  validateHypothesis,
-} from "@/lib/services/interview";
+import { getValidGmailToken } from "@/lib/services/gmail-tokens";
+import { generateHypothesis, resolveWhoEmails, validateHypothesis } from "@/lib/services/interview";
 import { advanceSchemaPhase, markSchemaFailed } from "@/lib/services/onboarding-state";
 import { inngest } from "./client";
 
@@ -456,9 +452,7 @@ export const runOnboardingPipeline = inngest.createFunction(
 
           // Accumulate discoveries across targets, deduped by entity name
           // against existing DB entities AND across targets in this pass.
-          const existingNames = new Set(
-            activeEntities.map((e) => e.name.toLowerCase()),
-          );
+          const existingNames = new Set(activeEntities.map((e) => e.name.toLowerCase()));
           const allPrimaryNames = await prisma.entity.findMany({
             where: { schemaId, type: "PRIMARY" },
             select: { name: true },
@@ -469,8 +463,7 @@ export const runOnboardingPipeline = inngest.createFunction(
 
           for (const target of targets) {
             try {
-              const query =
-                `from:${target.value} newer_than:${ONBOARDING_TUNABLES.pass2.lookback}`;
+              const query = `from:${target.value} newer_than:${ONBOARDING_TUNABLES.pass2.lookback}`;
               const targetMessages = await gmail.searchEmails(
                 query,
                 ONBOARDING_TUNABLES.pass2.emailsPerTarget,

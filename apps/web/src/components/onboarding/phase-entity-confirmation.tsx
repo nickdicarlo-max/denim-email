@@ -44,11 +44,7 @@ function identityKeyFor(candidate: Stage2DomainCandidateDTO): string {
   return candidate.key;
 }
 
-export function PhaseEntityConfirmation({
-  response,
-}: {
-  response: OnboardingPollingResponse;
-}) {
+export function PhaseEntityConfirmation({ response }: { response: OnboardingPollingResponse }) {
   const groups: Stage2PerDomainDTO[] = useMemo(
     () => response.stage2Candidates ?? [],
     [response.stage2Candidates],
@@ -99,14 +95,11 @@ export function PhaseEntityConfirmation({
         identityKey: p.identityKey,
         kind: p.kind,
       }));
-      const res = await authenticatedFetch(
-        `/api/onboarding/${response.schemaId}/entity-confirm`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirmedEntities }),
-        },
-      );
+      const res = await authenticatedFetch(`/api/onboarding/${response.schemaId}/entity-confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmedEntities }),
+      });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `Confirm failed (${res.status})`);
@@ -126,21 +119,15 @@ export function PhaseEntityConfirmation({
         <span className="material-symbols-outlined text-[40px] text-accent animate-spin">
           progress_activity
         </span>
-        <h1 className="font-serif text-2xl text-primary">
-          Finding what matters to you
-        </h1>
-        <p className="text-sm text-muted">
-          Scanning confirmed senders for entities…
-        </p>
+        <h1 className="font-serif text-2xl text-primary">Finding what matters to you</h1>
+        <p className="text-sm text-muted">Scanning confirmed senders for entities…</p>
       </div>
     );
   }
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <h1 className="font-serif text-2xl text-primary">
-        Which of these are relevant?
-      </h1>
+      <h1 className="font-serif text-2xl text-primary">Which of these are relevant?</h1>
       <p className="text-muted text-sm mt-1">
         Pick the items you want organized. You can rename any of them inline.
       </p>
@@ -148,9 +135,7 @@ export function PhaseEntityConfirmation({
       <div className="mt-6 flex flex-col gap-6">
         {groups.map((group) => (
           <div key={group.confirmedDomain} className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium text-muted">
-              {group.confirmedDomain}
-            </h2>
+            <h2 className="text-sm font-medium text-muted">{group.confirmedDomain}</h2>
             <ul className="flex flex-col gap-2">
               {group.candidates.map((candidate) => {
                 const key = identityKeyFor(candidate);
@@ -177,9 +162,7 @@ export function PhaseEntityConfirmation({
                       disabled={!isPicked || status === "submitting"}
                       className="flex-1 bg-transparent text-primary text-sm font-medium border-b border-transparent focus:border-accent focus:outline-none disabled:text-muted"
                     />
-                    <span className="text-xs text-muted">
-                      {candidate.frequency}
-                    </span>
+                    <span className="text-xs text-muted">{candidate.frequency}</span>
                     {candidate.autoFixed && (
                       <span
                         className="text-[10px] uppercase tracking-wide text-accent"
@@ -201,10 +184,7 @@ export function PhaseEntityConfirmation({
       )}
 
       <div className="mt-8">
-        <Button
-          onClick={submit}
-          disabled={picks.size === 0 || status === "submitting"}
-        >
+        <Button onClick={submit} disabled={picks.size === 0 || status === "submitting"}>
           {status === "submitting"
             ? "Confirming…"
             : `Confirm ${picks.size} ${picks.size === 1 ? "entity" : "entities"}`}

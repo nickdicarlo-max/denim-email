@@ -1,9 +1,6 @@
 import type { ExtractionResult } from "@denim/types";
 import { describe, expect, it } from "vitest";
-import {
-  parseBatchExtraction,
-  parseExtractionResponse,
-} from "../parsers/extraction-parser";
+import { parseBatchExtraction, parseExtractionResponse } from "../parsers/extraction-parser";
 
 const VALID_FIXTURE: ExtractionResult = {
   summary:
@@ -71,9 +68,7 @@ describe("parseExtractionResponse", () => {
   it("throws when detectedEntities has invalid enum type", () => {
     const bad = {
       ...VALID_FIXTURE,
-      detectedEntities: [
-        { name: "Soccer Team", type: "TERTIARY", confidence: 0.8 },
-      ],
+      detectedEntities: [{ name: "Soccer Team", type: "TERTIARY", confidence: 0.8 }],
     };
     const raw = JSON.stringify(bad);
 
@@ -130,12 +125,8 @@ describe("parseExtractionResponse", () => {
     const result = parseExtractionResponse(raw);
 
     expect(result.summary).toBe(VALID_FIXTURE.summary);
-    expect(
-      (result as unknown as Record<string, unknown>).unexpectedField,
-    ).toBeUndefined();
-    expect(
-      (result as unknown as Record<string, unknown>).anotherExtra,
-    ).toBeUndefined();
+    expect((result as unknown as Record<string, unknown>).unexpectedField).toBeUndefined();
+    expect((result as unknown as Record<string, unknown>).anotherExtra).toBeUndefined();
   });
 });
 
@@ -146,13 +137,10 @@ describe("parseExtractionResponse", () => {
 function makeBatchEntry(index: number, overrides: Partial<ExtractionResult> = {}) {
   return {
     index,
-    summary:
-      `Summary for batch entry ${index} covering the scheduled event and response needed.`,
+    summary: `Summary for batch entry ${index} covering the scheduled event and response needed.`,
     tags: ["Schedule"],
     extractedData: { eventIndex: index },
-    detectedEntities: [
-      { name: "Soccer Team", type: "PRIMARY" as const, confidence: 1.0 },
-    ],
+    detectedEntities: [{ name: "Soccer Team", type: "PRIMARY" as const, confidence: 1.0 }],
     isInternal: false,
     language: "en",
     relevanceScore: 1.0,
@@ -185,18 +173,14 @@ describe("parseBatchExtraction", () => {
     ];
     const raw = JSON.stringify(payload);
 
-    expect(() => parseBatchExtraction(raw, 5)).toThrow(
-      "Invalid batch extraction response",
-    );
+    expect(() => parseBatchExtraction(raw, 5)).toThrow("Invalid batch extraction response");
   });
 
   it("throws when the array length doesn't match expectedCount", () => {
     const payload = [0, 1, 2].map((i) => makeBatchEntry(i));
     const raw = JSON.stringify(payload);
 
-    expect(() => parseBatchExtraction(raw, 5)).toThrow(
-      "Expected 5 extraction results, got 3",
-    );
+    expect(() => parseBatchExtraction(raw, 5)).toThrow("Expected 5 extraction results, got 3");
   });
 
   it("sorts unordered indices back into input order", () => {

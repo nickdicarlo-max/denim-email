@@ -1,8 +1,8 @@
+import { NextResponse } from "next/server";
 import { GmailClient } from "@/lib/gmail/client";
 import { withAuth } from "@/lib/middleware/auth";
 import { handleApiError } from "@/lib/middleware/error-handler";
 import { getValidGmailToken } from "@/lib/services/gmail-tokens";
-import { NextResponse } from "next/server";
 
 export const POST = withAuth(async ({ userId, request }) => {
   try {

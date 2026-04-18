@@ -3,7 +3,7 @@
  * Pure functions, zero I/O, no side effects.
  */
 
-import type { FrequencyWord, FrequencyTable } from "@denim/types";
+import type { FrequencyTable, FrequencyWord } from "@denim/types";
 
 /** Input email for frequency analysis. */
 export interface FrequencyEmailInput {
@@ -20,21 +20,139 @@ export interface CoarseClusterInput {
 }
 
 const STOP_WORDS = new Set([
-  "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-  "have", "has", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "shall", "can", "need", "dare", "ought",
-  "used", "to", "of", "in", "for", "on", "at", "by", "with", "from",
-  "about", "into", "through", "during", "before", "after", "above",
-  "below", "between", "out", "off", "over", "under", "again", "further",
-  "then", "once", "here", "there", "where", "when", "how", "all", "each",
-  "every", "both", "few", "more", "most", "other", "some", "such", "no",
-  "nor", "not", "only", "own", "same", "so", "than", "too", "very",
-  "just", "because", "as", "until", "while", "up", "down", "and", "but",
-  "or", "if", "this", "that", "these", "those", "it", "its", "he", "she",
-  "they", "we", "you", "i", "me", "my", "your", "his", "her", "their",
-  "our", "what", "which", "who", "whom", "re", "fw", "fwd", "am", "pm",
-  "also", "get", "got", "new", "one", "two", "many", "much", "well",
-  "still", "back", "even", "like", "let", "us",
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "need",
+  "dare",
+  "ought",
+  "used",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "at",
+  "by",
+  "with",
+  "from",
+  "about",
+  "into",
+  "through",
+  "during",
+  "before",
+  "after",
+  "above",
+  "below",
+  "between",
+  "out",
+  "off",
+  "over",
+  "under",
+  "again",
+  "further",
+  "then",
+  "once",
+  "here",
+  "there",
+  "where",
+  "when",
+  "how",
+  "all",
+  "each",
+  "every",
+  "both",
+  "few",
+  "more",
+  "most",
+  "other",
+  "some",
+  "such",
+  "no",
+  "nor",
+  "not",
+  "only",
+  "own",
+  "same",
+  "so",
+  "than",
+  "too",
+  "very",
+  "just",
+  "because",
+  "as",
+  "until",
+  "while",
+  "up",
+  "down",
+  "and",
+  "but",
+  "or",
+  "if",
+  "this",
+  "that",
+  "these",
+  "those",
+  "it",
+  "its",
+  "he",
+  "she",
+  "they",
+  "we",
+  "you",
+  "i",
+  "me",
+  "my",
+  "your",
+  "his",
+  "her",
+  "their",
+  "our",
+  "what",
+  "which",
+  "who",
+  "whom",
+  "re",
+  "fw",
+  "fwd",
+  "am",
+  "pm",
+  "also",
+  "get",
+  "got",
+  "new",
+  "one",
+  "two",
+  "many",
+  "much",
+  "well",
+  "still",
+  "back",
+  "even",
+  "like",
+  "let",
+  "us",
 ]);
 
 const MAX_WORDS_PER_CLUSTER = 30;
@@ -52,12 +170,7 @@ function tokenize(text: string): string[] {
     .toLowerCase()
     .split(/[\s\p{P}]+/u)
     .map((token) => token.replace(/[^a-z0-9]/g, ""))
-    .filter(
-      (token) =>
-        token.length > 1 &&
-        !STOP_WORDS.has(token) &&
-        !/^\d+$/.test(token),
-    );
+    .filter((token) => token.length > 1 && !STOP_WORDS.has(token) && !/^\d+$/.test(token));
 }
 
 interface WordStats {
@@ -76,9 +189,7 @@ interface WordStats {
  * 3. Co-occurrence: for each word, find words in >70% of the same emails.
  * 4. Score: frequency * sourceWeight * crossEntityPenalty. Top 30 per cluster.
  */
-export function analyzeWordFrequencies(
-  clusters: CoarseClusterInput[],
-): FrequencyTable[] {
+export function analyzeWordFrequencies(clusters: CoarseClusterInput[]): FrequencyTable[] {
   const clusterCount = clusters.length;
 
   // Step 1: Build per-cluster word stats
@@ -155,13 +266,9 @@ export function analyzeWordFrequencies(
       // Source weight: 2.0 if majority of occurrences come from subjects, 1.0 otherwise
       const totalOccurrences = entry.subjectCount + entry.summaryCount;
       const sourceWeight =
-        totalOccurrences > 0 && entry.subjectCount / totalOccurrences > 0.5
-          ? 2.0
-          : 1.0;
+        totalOccurrences > 0 && entry.subjectCount / totalOccurrences > 0.5 ? 2.0 : 1.0;
 
-      const crossEntityPenalty = penalizedWords.has(word)
-        ? CROSS_ENTITY_PENALTY
-        : 1.0;
+      const crossEntityPenalty = penalizedWords.has(word) ? CROSS_ENTITY_PENALTY : 1.0;
 
       const weightedScore = frequency * sourceWeight * crossEntityPenalty;
 
@@ -173,10 +280,7 @@ export function analyzeWordFrequencies(
         if (emailWords) {
           for (const otherWord of emailWords) {
             if (otherWord !== word) {
-              coOccurrenceCounts.set(
-                otherWord,
-                (coOccurrenceCounts.get(otherWord) ?? 0) + 1,
-              );
+              coOccurrenceCounts.set(otherWord, (coOccurrenceCounts.get(otherWord) ?? 0) + 1);
             }
           }
         }

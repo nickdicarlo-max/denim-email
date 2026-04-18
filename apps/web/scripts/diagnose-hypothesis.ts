@@ -67,9 +67,7 @@ async function main() {
 
   if (schemas.length === 0) {
     console.error(
-      targetSchemaId
-        ? `No schema found with id: ${targetSchemaId}`
-        : "No schemas in database.",
+      targetSchemaId ? `No schema found with id: ${targetSchemaId}` : "No schemas in database.",
     );
     process.exit(1);
   }
@@ -99,9 +97,7 @@ async function diagnoseSchema(schema: any) {
   console.log(`  phaseUpdatedAt:  ${schema.phaseUpdatedAt?.toISOString() ?? "(null)"}`);
 
   if (schema.createdAt && schema.phaseUpdatedAt) {
-    console.log(
-      `  total elapsed:   ${elapsed(schema.createdAt, schema.phaseUpdatedAt)}`,
-    );
+    console.log(`  total elapsed:   ${elapsed(schema.createdAt, schema.phaseUpdatedAt)}`);
   }
 
   // =========================================================================
@@ -161,9 +157,7 @@ async function diagnoseSchema(schema: any) {
     subheader("3b. Hypothesis Tags");
     if (h.tags?.length) {
       for (const t of h.tags) {
-        console.log(
-          `    ${(t.name ?? t).toString().padEnd(25)} weak=${t.isWeak ?? false}`,
-        );
+        console.log(`    ${(t.name ?? t).toString().padEnd(25)} weak=${t.isWeak ?? false}`);
       }
     } else {
       console.log("    (no tags)");
@@ -259,9 +253,7 @@ async function diagnoseSchema(schema: any) {
   if (dqArr.length > 0) {
     console.log(`  Total queries: ${dqArr.length}\n`);
     for (const q of dqArr) {
-      console.log(
-        `    [group=${q.groupIndex ?? "?"}] ${(q.label ?? "").padEnd(35)} | ${q.query}`,
-      );
+      console.log(`    [group=${q.groupIndex ?? "?"}] ${(q.label ?? "").padEnd(35)} | ${q.query}`);
     }
   } else {
     console.log("  Total queries: 0");
@@ -306,9 +298,7 @@ async function diagnoseSchema(schema: any) {
 
   if (groups.length > 0) {
     for (const g of groups) {
-      const members = g.entities
-        .map((e: any) => `${e.name} (${e.type})`)
-        .join(", ");
+      const members = g.entities.map((e: any) => `${e.name} (${e.type})`).join(", ");
       console.log(`    Group ${g.index}: ${members}`);
     }
   } else {
@@ -327,9 +317,7 @@ async function diagnoseSchema(schema: any) {
 
   if (tags.length > 0) {
     for (const t of tags) {
-      console.log(
-        `    ${t.name.padEnd(25)} weak=${t.isWeak} frequency=${t.frequency}`,
-      );
+      console.log(`    ${t.name.padEnd(25)} weak=${t.isWeak} frequency=${t.frequency}`);
     }
   } else {
     console.log("  (no tags persisted yet)");
@@ -440,12 +428,8 @@ async function diagnoseSchema(schema: any) {
   // Per-step timing is available in:
   //   - Server console logs (withLogging wrapper)
   //   - Inngest dashboard (step-level timing for generate-hypothesis, validate-hypothesis)
-  console.log(
-    `\n  NOTE: For per-step timing (hypothesis gen, validation passes),`,
-  );
-  console.log(
-    `        check the Inngest dashboard or server console output.`,
-  );
+  console.log(`\n  NOTE: For per-step timing (hypothesis gen, validation passes),`);
+  console.log(`        check the Inngest dashboard or server console output.`);
 }
 
 main().catch((e) => {
