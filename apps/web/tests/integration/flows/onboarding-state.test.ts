@@ -88,11 +88,25 @@ describe("onboarding-state helpers", () => {
   // -------------------------------------------------------------------------
   describe("phaseIndex", () => {
     it("orders schema phases monotonically", () => {
+      // Issue #95 fast-discovery order (AWAITING_REVIEW is legacy, kept
+      // before PROCESSING_SCAN so old rows still compare sanely).
       expect(phaseIndex("PENDING")).toBeLessThan(phaseIndex("GENERATING_HYPOTHESIS"));
-      expect(phaseIndex("GENERATING_HYPOTHESIS")).toBeLessThan(phaseIndex("FINALIZING_SCHEMA"));
-      expect(phaseIndex("FINALIZING_SCHEMA")).toBeLessThan(phaseIndex("PROCESSING_SCAN"));
-      expect(phaseIndex("PROCESSING_SCAN")).toBeLessThan(phaseIndex("AWAITING_REVIEW"));
-      expect(phaseIndex("AWAITING_REVIEW")).toBeLessThan(phaseIndex("COMPLETED"));
+      expect(phaseIndex("GENERATING_HYPOTHESIS")).toBeLessThan(phaseIndex("DISCOVERING_DOMAINS"));
+      expect(phaseIndex("DISCOVERING_DOMAINS")).toBeLessThan(
+        phaseIndex("AWAITING_DOMAIN_CONFIRMATION"),
+      );
+      expect(phaseIndex("AWAITING_DOMAIN_CONFIRMATION")).toBeLessThan(
+        phaseIndex("DISCOVERING_ENTITIES"),
+      );
+      expect(phaseIndex("DISCOVERING_ENTITIES")).toBeLessThan(
+        phaseIndex("AWAITING_ENTITY_CONFIRMATION"),
+      );
+      expect(phaseIndex("AWAITING_ENTITY_CONFIRMATION")).toBeLessThan(
+        phaseIndex("FINALIZING_SCHEMA"),
+      );
+      expect(phaseIndex("FINALIZING_SCHEMA")).toBeLessThan(phaseIndex("AWAITING_REVIEW"));
+      expect(phaseIndex("AWAITING_REVIEW")).toBeLessThan(phaseIndex("PROCESSING_SCAN"));
+      expect(phaseIndex("PROCESSING_SCAN")).toBeLessThan(phaseIndex("COMPLETED"));
     });
 
     it("treats terminal states as max index", () => {

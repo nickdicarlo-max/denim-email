@@ -128,11 +128,16 @@ describe("derivePollingResponse", () => {
       }
     });
 
-    it("FINALIZING_SCHEMA → FINALIZING_SCHEMA", async () => {
+    // Legacy row fallback: FINALIZING_SCHEMA no longer appears in the new
+    // #95 flow, but existing rows may still be in that phase after a
+    // partial migration. derivePollingResponse maps them to
+    // GENERATING_HYPOTHESIS so the UI renders a plausible "setting up…"
+    // state instead of flashing to PENDING via the unknown-phase fallback.
+    it("FINALIZING_SCHEMA → GENERATING_HYPOTHESIS (legacy row fallback)", async () => {
       const { ts, row } = await freshSchemaRow({ phase: "FINALIZING_SCHEMA" });
       try {
         const res = await derivePollingResponse(row, null);
-        expect(res.phase).toBe("FINALIZING_SCHEMA");
+        expect(res.phase).toBe("GENERATING_HYPOTHESIS");
       } finally {
         await cleanupSchema(ts.schema.id);
       }

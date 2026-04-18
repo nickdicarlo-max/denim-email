@@ -63,6 +63,11 @@ describe("Onboarding routes — HTTP contracts", () => {
     phase:
       | "PENDING"
       | "GENERATING_HYPOTHESIS"
+      // Issue #95 fast-discovery phases.
+      | "DISCOVERING_DOMAINS"
+      | "AWAITING_DOMAIN_CONFIRMATION"
+      | "DISCOVERING_ENTITIES"
+      | "AWAITING_ENTITY_CONFIRMATION"
       | "FINALIZING_SCHEMA"
       | "PROCESSING_SCAN"
       | "AWAITING_REVIEW"
@@ -150,53 +155,60 @@ describe("Onboarding routes — HTTP contracts", () => {
   });
 
   // ---------------------------------------------------------------------
-  // POST /api/onboarding/:schemaId — review confirmation
+  // POST /api/onboarding/:schemaId — DEPRECATED shim (#95 Task 4.3, commit 2c13672)
+  //
+  // The single-screen review has been replaced by POST /:schemaId/domain-confirm
+  // and POST /:schemaId/entity-confirm. This handler only absorbs stale retries:
+  //   - New-flow / terminal phases  → 200 { status: "already-confirmed" }
+  //   - Old-flow phases             → 410 Gone (points at /entity-confirm)
+  // Body is not parsed, so Zod 400s no longer fire here.
   // ---------------------------------------------------------------------
-  describe("POST /api/onboarding/[schemaId] (confirm review)", () => {
-    it("CAS-flips AWAITING_REVIEW → COMPLETED + status=ACTIVE + writes final name", async () => {
+  describe("POST /api/onboarding/[schemaId] — deprecation shim", () => {
+    it("returns 410 Gone for AWAITING_REVIEW (old-flow phase)", async () => {
       const schemaId = await seedSchema({ phase: "AWAITING_REVIEW" });
       const res = await api.post(`/api/onboarding/${schemaId}`, {
-        topicName: "My Confirmed Topic",
+        topicName: "Old-flow body",
         entityToggles: [],
       });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(410);
 
+      // Schema must not have moved — deprecation shim is side-effect-free.
       const row = await prisma.caseSchema.findUniqueOrThrow({
         where: { id: schemaId },
-        select: { phase: true, status: true, name: true },
+        select: { phase: true, status: true },
       });
-      expect(row.phase).toBe("COMPLETED");
-      expect(row.status).toBe("ACTIVE");
-      expect(row.name).toBe("My Confirmed Topic");
+      expect(row.phase).toBe("AWAITING_REVIEW");
+      expect(row.status).toBe("DRAFT");
     });
 
-    it("idempotent: already-ACTIVE schema returns already-completed without error", async () => {
+    it("returns 200 already-confirmed for an ACTIVE (terminal) schema", async () => {
       const schemaId = await seedSchema({ phase: "COMPLETED", status: "ACTIVE" });
       const res = await api.post(`/api/onboarding/${schemaId}`, {
-        topicName: "Late Confirm",
+        topicName: "Late retry",
         entityToggles: [],
       });
       expect(res.status).toBe(200);
       const body = (res.data as { data: { status: string } }).data;
-      expect(body.status).toBe("already-completed");
+      expect(body.status).toBe("already-confirmed");
     });
 
-    it("rejects confirm from a non-AWAITING_REVIEW phase with 409", async () => {
+    it("returns 200 already-confirmed when the schema is in a new-flow phase", async () => {
       const schemaId = await seedSchema({ phase: "PROCESSING_SCAN" });
       const res = await api.post(`/api/onboarding/${schemaId}`, {
-        topicName: "Too Early",
+        topicName: "Late retry",
         entityToggles: [],
       });
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(200);
+      const body = (res.data as { data: { status: string } }).data;
+      expect(body.status).toBe("already-confirmed");
     });
 
-    it("rejects invalid body (missing topicName) with 400", async () => {
-      const schemaId = await seedSchema({ phase: "AWAITING_REVIEW" });
-      const res = await api.post(`/api/onboarding/${schemaId}`, {
-        // missing topicName
-        entityToggles: [],
-      });
-      expect(res.status).toBe(400);
+    it("accepts an empty body — no Zod validation on the shim", async () => {
+      const schemaId = await seedSchema({ phase: "AWAITING_DOMAIN_CONFIRMATION" });
+      const res = await api.post(`/api/onboarding/${schemaId}`, {});
+      expect(res.status).toBe(200);
+      const body = (res.data as { data: { status: string } }).data;
+      expect(body.status).toBe("already-confirmed");
     });
   });
 

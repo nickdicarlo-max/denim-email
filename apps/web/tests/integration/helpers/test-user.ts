@@ -4,6 +4,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
+import { storeGmailTokens } from "@/lib/services/gmail-tokens";
 import { ensureUserRow } from "@/lib/services/user";
 
 const TEST_EMAIL = "integration-test@denim-email.test";
@@ -74,6 +75,27 @@ export async function createTestUser(): Promise<TestUser> {
   });
 
   return { userId, accessToken };
+}
+
+/**
+ * Seed an encrypted Gmail token pair on the test user so routes that gate on
+ * `user.googleTokens` (e.g. POST /api/onboarding/start's pre-flight check)
+ * succeed without a real OAuth dance.
+ *
+ * Routes through production `storeGmailTokens` to keep test setup aligned with
+ * the real code path (per Bug 5 lesson: test helpers must not re-implement
+ * prod DB writes). The token values are stubs — downstream Gmail API calls
+ * will fail if exercised. Tests that only gate on token presence (idempotency,
+ * validation) are fine; tests that need real Gmail access (happy path with
+ * RUN_E2E_HAPPY=1) should overwrite with a real OAuth playground token.
+ */
+export async function seedGmailToken(userId: string): Promise<void> {
+  await storeGmailTokens(userId, TEST_EMAIL, {
+    access_token: "test-access-token",
+    refresh_token: "test-refresh-token",
+    expiry_date: Date.now() + 60 * 60 * 1000,
+    scope: "https://www.googleapis.com/auth/gmail.readonly",
+  });
 }
 
 /**

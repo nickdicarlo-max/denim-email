@@ -36,7 +36,12 @@ import { ulid } from "ulid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { createApiClient } from "./helpers/api-client";
-import { cleanupTestUser, createTestUser, type TestUser } from "./helpers/test-user";
+import {
+  cleanupTestUser,
+  createTestUser,
+  seedGmailToken,
+  type TestUser,
+} from "./helpers/test-user";
 
 describe("POST /api/onboarding/start — concurrent idempotency", () => {
   let testUser: TestUser;
@@ -45,6 +50,12 @@ describe("POST /api/onboarding/start — concurrent idempotency", () => {
 
   beforeAll(async () => {
     testUser = await createTestUser();
+    // Start route's 422 GMAIL_NOT_CONNECTED pre-flight gates on
+    // `user.googleTokens` existence. The concurrent idempotency tests fire
+    // valid bodies and expect 202 — seed a stub token so the pre-flight
+    // passes. The Inngest workflow runs async after 202, so a stub is fine;
+    // these tests never wait for Gmail calls.
+    await seedGmailToken(testUser.userId);
     api = createApiClient(testUser.accessToken);
   }, 60_000);
 
