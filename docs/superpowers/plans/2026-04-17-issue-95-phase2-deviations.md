@@ -294,8 +294,62 @@ try {
 
 ---
 
+## Task 3.3 — GET polling surface for Stage 1 / Stage 2 (commit TBD — this commit)
+
+### D3.3-1 — Typed DTOs instead of `(… as any)` casts at the JSON boundary
+
+**Plan said:**
+
+```typescript
+stage1Candidates: (schema.stage1Candidates as any) ?? [],
+stage2Candidates: (schema.stage2Candidates as any) ?? [],
+```
+
+Inline `any` casts where the `Json?` column is narrowed.
+
+**Shipped:** Three named exported DTOs — `Stage1CandidateDTO`, `Stage2DomainCandidateDTO`, `Stage2PerDomainDTO` — referenced in both the `OnboardingPollingResponse` interface and the narrowing cast (`as Stage1CandidateDTO[] | null`).
+
+**Why:** Three reasons:
+
+1. **Boundary honesty.** The `Json?` column is the runtime boundary between the producer (`writeStage1Result` / `writeStage2Result`) and consumer (this polling service). Narrowing through a named type makes the assumed shape explicit so the next time the producer changes, a grep + typecheck run reveals the mismatch instead of letting `any` absorb it silently.
+2. **Client reuse.** The Stage 1 / Stage 2 review components built in Tasks 3.4 / 3.5 will fetch this response and need typed props. Exporting DTOs here means those components can `import type { Stage1CandidateDTO, Stage2PerDomainDTO }` instead of re-declaring the shapes locally.
+3. **Biome-clean.** The project's lint config flags `noExplicitAny`. The plan's sample would have failed CI.
+
+Trade-off: four extra interfaces + ~15 lines. The cost of `any` in a response-shape function is repaid the first time a typo in a producer ships past runtime silently. Worth it.
+
+### D3.3-2 — `AWAITING_DOMAIN_CONFIRMATION` / `AWAITING_ENTITY_CONFIRMATION` branches moved BEFORE the legacy phase fallthrough
+
+**Plan said:** Place the new branches alongside the pre-scan schema-owned phases (after `PROCESSING_SCAN`), without specifying exact ordering.
+
+**Shipped:** Inserted immediately after the `PENDING / GENERATING_HYPOTHESIS / FINALIZING_SCHEMA` block and **before** the `PROCESSING_SCAN` branch. Final order of branches in `derivePollingResponse`:
+
+1. `ACTIVE` (terminal)
+2. `FAILED` / `NO_EMAILS_FOUND` / `AWAITING_REVIEW` / `COMPLETED`
+3. `PENDING` / `GENERATING_HYPOTHESIS` / `FINALIZING_SCHEMA`
+4. **New: Stage 1 (`DISCOVERING_DOMAINS` / `AWAITING_DOMAIN_CONFIRMATION`)**
+5. **New: Stage 2 (`DISCOVERING_ENTITIES` / `AWAITING_ENTITY_CONFIRMATION`)**
+6. `PROCESSING_SCAN` (hits DB for metrics)
+7. Unknown-phase fallthrough (error log + PENDING).
+
+**Why:** Two reasons.
+
+1. **Match the state-machine ordering in `onboarding-state.ts`.** That file orders phases `PENDING(1) → GENERATING_HYPOTHESIS(?) → DISCOVERING_DOMAINS(2) → AWAITING_DOMAIN_CONFIRMATION(3) → DISCOVERING_ENTITIES(4) → AWAITING_ENTITY_CONFIRMATION(5) → PROCESSING_SCAN(…)`. The polling function is effectively a runtime pattern-match on the same state machine — keeping branch order aligned with the declared ordinal ordering reduces the chance of future bugs where someone inserts a new phase between existing branches and the ordering drifts.
+2. **Avoid an unnecessary DB hit.** `PROCESSING_SCAN` is the one branch that queries `computeScanMetrics`. Placing the four no-DB Stage 1/2 branches above it means a poll for a schema still in `AWAITING_DOMAIN_CONFIRMATION` short-circuits before reaching the metrics hit, even in a hypothetical bug where `schema.phase` somehow matches both (unreachable under current invariants, but cheap defense).
+
+The regression test added under "regression guards" verifies that `PENDING` schemas with stray `stage1Candidates` JSON do **not** leak those fields onto the response — guards against branch-ordering drift.
+
+### D3.3-3 — Extra regression test: `PENDING` does not leak stage fields
+
+**Plan said:** "Two cases: AWAITING_DOMAIN_CONFIRMATION returns stage1 data; AWAITING_ENTITY_CONFIRMATION returns stage2 data."
+
+**Shipped:** Seven test cases total — two per stage as specified, plus null-column fallbacks for each stage (should emit `[]` not crash), plus one regression guard asserting that a `PENDING` schema with stray `stage1Candidates` JSON does **not** surface them in the response.
+
+**Why:** The stage fields are **only** populated on matching phases. A future refactor that moves the Stage 1 branch to a shared helper could accidentally start unconditionally populating the DTOs. The `PENDING` regression test makes that regression noisy instead of silent.
+
+---
+
 ## Open items / future tasks
 
-Tasks 3.1 + 3.2 shipped. Phase 3 Task 3.3 (GET polling extensions for Stage 1/2 payloads) is next.
+Tasks 3.1 + 3.2 + 3.3 shipped. Task 3.3b is a verified no-op (drain is event-generic). Phase 3 Task 3.4 (`phase-domain-confirmation.tsx` component) is next.
 
 Append new sections here as tasks land.

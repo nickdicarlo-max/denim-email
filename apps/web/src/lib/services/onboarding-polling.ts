@@ -15,6 +15,12 @@ import { computeScanMetrics } from "./scan-metrics";
 export type OnboardingPhase =
   | "PENDING"
   | "GENERATING_HYPOTHESIS"
+  // Issue #95 fast-discovery phases — Stage 1 (domain discovery) and
+  // Stage 2 (entity discovery) each have a running + awaiting-confirm pair.
+  | "DISCOVERING_DOMAINS"
+  | "AWAITING_DOMAIN_CONFIRMATION"
+  | "DISCOVERING_ENTITIES"
+  | "AWAITING_ENTITY_CONFIRMATION"
   | "DISCOVERING"
   | "EXTRACTING"
   | "CLUSTERING"
@@ -41,6 +47,27 @@ export interface OnboardingError {
   retryable: boolean;
 }
 
+// --- Issue #95 fast-discovery payload types --------------------------------
+
+export interface Stage1CandidateDTO {
+  domain: string;
+  count: number;
+}
+
+export interface Stage2DomainCandidateDTO {
+  key: string;
+  displayString: string;
+  frequency: number;
+  autoFixed: boolean;
+  meta?: Record<string, unknown>;
+}
+
+export interface Stage2PerDomainDTO {
+  confirmedDomain: string;
+  algorithm: string;
+  candidates: Stage2DomainCandidateDTO[];
+}
+
 export interface OnboardingPollingResponse {
   schemaId: string;
   phase: OnboardingPhase;
@@ -48,6 +75,11 @@ export interface OnboardingPollingResponse {
   error?: OnboardingError;
   nextHref?: string;
   updatedAt: string;
+  // Present during DISCOVERING_DOMAINS / AWAITING_DOMAIN_CONFIRMATION.
+  stage1Candidates?: Stage1CandidateDTO[];
+  stage1QueryUsed?: string;
+  // Present during DISCOVERING_ENTITIES / AWAITING_ENTITY_CONFIRMATION.
+  stage2Candidates?: Stage2PerDomainDTO[];
 }
 
 /**
@@ -144,6 +176,35 @@ export async function derivePollingResponse(
     // Legacy: FINALIZING_SCHEMA no longer appears in the new flow.
     // Map to GENERATING_HYPOTHESIS so existing rows don't break the UI.
     return { ...base, phase: "GENERATING_HYPOTHESIS" };
+  }
+
+  // Issue #95 Stage 1 — domain discovery running or awaiting user confirm.
+  // Surface candidates so the review screen can render top-N domains.
+  if (
+    schema.phase === "DISCOVERING_DOMAINS" ||
+    schema.phase === "AWAITING_DOMAIN_CONFIRMATION"
+  ) {
+    return {
+      ...base,
+      phase: schema.phase,
+      stage1Candidates:
+        (schema.stage1Candidates as Stage1CandidateDTO[] | null) ?? [],
+      stage1QueryUsed: schema.stage1QueryUsed ?? undefined,
+    };
+  }
+
+  // Issue #95 Stage 2 — entity discovery running or awaiting user confirm.
+  // Surface per-domain candidates for the entity review screen.
+  if (
+    schema.phase === "DISCOVERING_ENTITIES" ||
+    schema.phase === "AWAITING_ENTITY_CONFIRMATION"
+  ) {
+    return {
+      ...base,
+      phase: schema.phase,
+      stage2Candidates:
+        (schema.stage2Candidates as Stage2PerDomainDTO[] | null) ?? [],
+    };
   }
 
   // PROCESSING_SCAN: the active ScanJob owns the visible phase. Counters
