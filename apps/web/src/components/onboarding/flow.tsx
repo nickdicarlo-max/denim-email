@@ -3,6 +3,8 @@
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
 import { PhaseClustering } from "./phase-clustering";
 import { PhaseDiscovering } from "./phase-discovering";
+import { PhaseDomainConfirmation } from "./phase-domain-confirmation";
+import { PhaseEntityConfirmation } from "./phase-entity-confirmation";
 import { PhaseExtracting } from "./phase-extracting";
 import { PhaseFailed } from "./phase-failed";
 import { PhaseGenerating } from "./phase-generating";
@@ -27,6 +29,18 @@ export function OnboardingFlow({ response }: { response: OnboardingPollingRespon
       return <PhasePending response={response} />;
     case "GENERATING_HYPOTHESIS":
       return <PhaseGenerating response={response} />;
+    // Issue #95 fast-discovery: DISCOVERING_* is a busy "searching" state,
+    // AWAITING_*_CONFIRMATION surfaces the review UI. Using PhasePending for
+    // the two busy states keeps us consistent with DISCOVERING/EXTRACTING/
+    // CLUSTERING, which have bespoke phase cards.
+    case "DISCOVERING_DOMAINS":
+      return <PhasePending response={response} />;
+    case "AWAITING_DOMAIN_CONFIRMATION":
+      return <PhaseDomainConfirmation response={response} />;
+    case "DISCOVERING_ENTITIES":
+      return <PhasePending response={response} />;
+    case "AWAITING_ENTITY_CONFIRMATION":
+      return <PhaseEntityConfirmation response={response} />;
     case "DISCOVERING":
       return <PhaseDiscovering response={response} />;
     case "EXTRACTING":

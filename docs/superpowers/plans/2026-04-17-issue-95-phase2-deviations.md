@@ -485,8 +485,45 @@ Neither changes the submit payload; strictly presentation.
 
 ---
 
+## Task 3.6 — Wire `flow.tsx` to the four new phases (commit TBD — this commit)
+
+### D3.6-1 — Busy phases (`DISCOVERING_DOMAINS` / `DISCOVERING_ENTITIES`) route to `PhasePending` instead of getting bespoke components
+
+**Plan said:**
+
+```tsx
+case "AWAITING_DOMAIN_CONFIRMATION":
+  return <PhaseDomainConfirmation response={response} />;
+case "AWAITING_ENTITY_CONFIRMATION":
+  return <PhaseEntityConfirmation response={response} />;
+case "DISCOVERING_DOMAINS":
+case "DISCOVERING_ENTITIES":
+  return <PhasePending response={response} />;
+```
+
+**Shipped:** Same mapping, but split `DISCOVERING_DOMAINS` and `DISCOVERING_ENTITIES` into two separate `case` labels (not stacked fall-through) so each gets its own explicit branch.
+
+**Why:** Two reasons.
+
+1. **Biome's `noFallthroughSwitchCase` rule.** The repo's Biome config flags stacked `case` labels without `break`/`return`. Splitting them into explicit single-case branches that each `return <PhasePending …>` dodges the warning without changing runtime behaviour.
+2. **Future-proofing.** If a later task introduces a bespoke "scanning for domains" vs "scanning for entities" card, the separate branches can be individually retargeted without editing the switch shape.
+
+Both branches still render the same `PhasePending` today, matching the plan's intent.
+
+### D3.6-2 — Import list sorted alphabetically (automatic, not a choice)
+
+**Plan said:** Didn't specify import order.
+
+**Shipped:** `PhaseDomainConfirmation` and `PhaseEntityConfirmation` slotted alphabetically between `PhaseDiscovering` and `PhaseExtracting` to match Biome's import-sort rule already applied to the file.
+
+**Why:** The project runs `biome check --apply` which sorts imports. Writing them in a different order would trigger a fixup commit on the next push. Logged so future readers know the ordering is enforced, not stylistic.
+
+---
+
 ## Open items / future tasks
 
-Tasks 3.1 + 3.2 + 3.3 + 3.4 + 3.5 shipped. Phase 3 Task 3.6 (wire `flow.tsx` to route the two new phases) is next — the last Phase 3 task before Phase 4 pipeline cutover.
+**Phase 3 complete.** Tasks 3.1 + 3.2 + 3.3 + 3.3b (no-op) + 3.4 + 3.5 + 3.6 all shipped. The review-screen UX layer is now wired end-to-end: POST routes → polling shape → review components → `flow.tsx`.
+
+Phase 4 (pipeline cutover — rewrite `runOnboarding` to emit Stage 1, remove the legacy extract/cluster path from the original onboarding function) is next. Phase 4 is a breaking change — existing onboarding stops working until Task 4.x completes — so it should be bundled in one session with end-to-end verification before Phase 5.
 
 Append new sections here as tasks land.
