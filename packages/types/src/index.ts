@@ -18,6 +18,8 @@ export type {
 } from "./gmail-credentials";
 export {
   credentialFailure,
+  extractCredentialFailure,
+  isCredentialFailure,
   remedyFor,
 } from "./gmail-credentials";
 export type {

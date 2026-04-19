@@ -57,3 +57,32 @@ export function remedyFor(reason: CredentialFailureReason): CredentialRemedy {
 export function credentialFailure(reason: CredentialFailureReason): CredentialFailure {
   return { reason, remedy: remedyFor(reason) };
 }
+
+/**
+ * Shape guard for `CredentialFailure`. Used by `extractCredentialFailure`
+ * to duck-type-check thrown errors instead of relying on `instanceof
+ * GmailCredentialError`, which is unreliable across workspace-package
+ * boundaries in Next.js dev mode: Turbopack can load `@denim/types` as
+ * two distinct module instances (one class per import chunk) and the
+ * identity check silently returns false. See #107.
+ */
+export function isCredentialFailure(value: unknown): value is CredentialFailure {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { reason?: unknown; remedy?: unknown };
+  return typeof v.reason === "string" && typeof v.remedy === "string";
+}
+
+/**
+ * Extract a typed `CredentialFailure` from any thrown value. Resilient
+ * to Turbopack workspace-package class duplication in dev mode where
+ * `err instanceof GmailCredentialError` returns false even though the
+ * error WAS constructed as one. Prefer this over `instanceof` in every
+ * Inngest catch block that pulls `credentialFailure` off an error.
+ */
+export function extractCredentialFailure(err: unknown): CredentialFailure | undefined {
+  if (err && typeof err === "object" && "credentialFailure" in err) {
+    const cf = (err as { credentialFailure: unknown }).credentialFailure;
+    if (isCredentialFailure(cf)) return cf;
+  }
+  return undefined;
+}

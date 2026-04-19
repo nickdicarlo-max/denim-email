@@ -9,7 +9,7 @@
  * Gmail 10,000 req/100sec cap. Priority 120 (interactive — user watches spinner).
  */
 
-import { GmailCredentialError } from "@denim/types";
+import { extractCredentialFailure } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverDomains } from "@/lib/discovery/domain-discovery";
 import {
@@ -134,9 +134,12 @@ export const runDomainDiscovery = inngest.createFunction(
     } catch (err) {
       // Every auth failure path now throws GmailCredentialError -- either
       // from getAccessToken (credentials module) or from wrapGmailApiError
-      // in lib/gmail/client.ts (wraps 401s from the Gmail API). String
-      // matching is gone; the UI reads the typed credentialFailure column.
-      const typedFailure = err instanceof GmailCredentialError ? err.credentialFailure : undefined;
+      // in lib/gmail/client.ts (wraps 401s from the Gmail API). Duck-typed
+      // extraction instead of `instanceof` because Turbopack can load
+      // `@denim/types` as two distinct module instances in dev mode,
+      // making class-identity checks unreliable (#107). UI reads the typed
+      // credentialFailure column off the schema.
+      const typedFailure = extractCredentialFailure(err);
 
       await step.run("mark-failed", async () => {
         await markSchemaFailed(schemaId, "DISCOVERING_DOMAINS", err, typedFailure);

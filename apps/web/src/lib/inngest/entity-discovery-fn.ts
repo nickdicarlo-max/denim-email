@@ -13,7 +13,7 @@
  * is watching the spinner).
  */
 
-import { GmailCredentialError } from "@denim/types";
+import { extractCredentialFailure } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverEntitiesForDomain } from "@/lib/discovery/entity-discovery";
 import { GmailClient } from "@/lib/gmail/client";
@@ -89,8 +89,9 @@ export const runEntityDiscovery = inngest.createFunction(
               const message = err instanceof Error ? err.message : String(err);
               // Gmail-auth failures are schema-wide, not per-domain — rethrow.
               // All auth errors now funnel through GmailCredentialError
-              // (getAccessToken + client.ts wrapGmailApiError).
-              if (err instanceof GmailCredentialError) {
+              // (getAccessToken + client.ts wrapGmailApiError). Duck-typed
+              // check, not `instanceof`, per #107 (Turbopack module duplication).
+              if (extractCredentialFailure(err) !== undefined) {
                 throw err;
               }
               logger.warn({
@@ -140,7 +141,9 @@ export const runEntityDiscovery = inngest.createFunction(
         domainsFailed: perDomain.filter((d) => d.failed).length,
       };
     } catch (err) {
-      const typedFailure = err instanceof GmailCredentialError ? err.credentialFailure : undefined;
+      // Duck-typed extraction, not `instanceof`, per #107 -- Turbopack
+      // workspace-package class duplication in dev mode breaks identity.
+      const typedFailure = extractCredentialFailure(err);
 
       await step.run("mark-failed", async () => {
         await markSchemaFailed(schemaId, "DISCOVERING_ENTITIES", err, typedFailure);
