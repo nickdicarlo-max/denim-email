@@ -169,64 +169,37 @@ export const runOnboardingPipeline = inngest.createFunction(
         }
       });
 
-      // ---- Step 1: AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN --------
+      // ---- Step 1: ensure onboarding ScanJob exists ----------------------
       //
-      // /entity-confirm already flipped the phase. advanceSchemaPhase's
-      // CAS gate will return "skipped" on its first real invocation (phase
-      // is already PROCESSING_SCAN). We still enter the step to commit the
-      // ScanJob row idempotently — the phase transition ownership remains
-      // the route's, but scan-row creation lives here so Function B stays
-      // self-sufficient for retry.
-      const createdScanId = await step.run("create-scan-job", async () => {
-        return advanceSchemaPhase({
-          schemaId,
-          from: "AWAITING_ENTITY_CONFIRMATION",
-          to: "PROCESSING_SCAN",
-          work: async () => {
-            // Idempotency guard (#69): advanceSchemaPhase runs work() before
-            // the CAS commit. If scanJob.create succeeded but the subsequent
-            // CAS updateMany failed, an Inngest retry would re-enter this
-            // step and create a second ONBOARDING scan. Check for an
-            // existing onboarding scan first and reuse it.
-            const existing = await prisma.scanJob.findFirst({
-              where: { schemaId, triggeredBy: "ONBOARDING" },
-              orderBy: { createdAt: "desc" },
-              select: { id: true },
-            });
-            if (existing) return existing.id;
-            const scan = await prisma.scanJob.create({
-              data: {
-                schemaId,
-                userId,
-                status: "PENDING",
-                phase: "PENDING",
-                triggeredBy: "ONBOARDING",
-                totalEmails: 0, // overwritten by runScan discovery step
-              },
-              select: { id: true },
-            });
-            return scan.id;
-          },
-        });
-      });
-
-      // ---- Step 2: resolve scan job id ----------------------------------
+      // Phase transition ownership is the route's: `/entity-confirm` CAS-
+      // advances AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN before
+      // emitting `onboarding.review.confirmed`. By the time Function B runs,
+      // the phase is ALREADY past the transition — so wrapping ScanJob
+      // creation in `advanceSchemaPhase` made `work()` skip and the ScanJob
+      // was never written (the "schema ... past AWAITING_ENTITY_CONFIRMATION
+      // but has no onboarding ScanJob" NonRetriableError).
       //
-      // On "skipped" (Inngest retry OR the route already flipped the phase
-      // before this function fired), look up the most recent onboarding scan.
-      const scanJobId: string = await step.run("resolve-scan-job", async () => {
-        if (createdScanId !== "skipped") return createdScanId as string;
+      // Direct idempotent create: look up an existing ONBOARDING scan for
+      // the schema, reuse it on retry; otherwise insert a fresh row.
+      const scanJobId: string = await step.run("create-scan-job", async () => {
         const existing = await prisma.scanJob.findFirst({
           where: { schemaId, triggeredBy: "ONBOARDING" },
           orderBy: { createdAt: "desc" },
           select: { id: true },
         });
-        if (!existing) {
-          throw new NonRetriableError(
-            `runOnboardingPipeline: schema ${schemaId} is past AWAITING_ENTITY_CONFIRMATION but has no onboarding ScanJob`,
-          );
-        }
-        return existing.id;
+        if (existing) return existing.id;
+        const scan = await prisma.scanJob.create({
+          data: {
+            schemaId,
+            userId,
+            status: "PENDING",
+            phase: "PENDING",
+            triggeredBy: "ONBOARDING",
+            totalEmails: 0, // overwritten by runScan discovery step
+          },
+          select: { id: true },
+        });
+        return scan.id;
       });
 
       // ---- Step 3: request scan -----------------------------------------
