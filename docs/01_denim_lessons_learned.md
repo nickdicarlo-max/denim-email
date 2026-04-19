@@ -390,6 +390,106 @@ Per-email recall alone is insufficient. A domain can rank top-5 with only modest
 
 ---
 
+## 2026-04-19: Inngest system events must be registered in DenimEvents
+
+**Context:** During #109 investigation, noticed `run-coarse-clustering (failure)` initializing in the Inngest log paired with `POST /api/inngest?fnId=...-failure&stepId=step 400` from Next. The onFailure handler couldn't actually run — Inngest rejected its invocation at the validation layer.
+
+### Discovery 10: `inngest/function.failed` must be in the typed event union or every `onFailure` handler 400s
+
+**Symptom:** When a function exhausts retries and terminally fails, Inngest dispatches an internal `inngest/function.failed` event. Functions declared with `inngest.createFunction({ ..., onFailure })` implicitly listen on this event filtered by `function_id`. With the event missing from `DenimEvents`, Inngest rejected the onFailure call with `EventValidationError: Event not found in triggers: inngest/function.failed`. Net effect: scans crashed at whatever phase the pipeline died at, no terminal `status=FAILED` got written, no `scan.completed` reason=failed event fired, the schema hung in `PROCESSING_SCAN` until the 20-minute `runOnboarding.waitForEvent` timeout — or indefinitely if the schema was created by the old code path without the timeout.
+
+**Root cause:** `packages/types/src/events.ts` defined the app's custom events (`onboarding.*`, `scan.*`, `extraction.*`, `synthesis.*`, `feedback.*`, `cron.*`) but missed the Inngest-internal events. These aren't code you emit — they're platform events the runtime emits automatically — but your typed event union has to include them for the typed SDK wrappers to validate invocations against them.
+
+**Fix (commit `36e2250`):** Added `inngest/function.failed` to `DenimEvents` with the documented SDK payload shape (`function_id`, `run_id`, `error`, `event`). Registration alone fixes it — the four existing `onFailure` handlers in `apps/web/src/lib/inngest/functions.ts` were correctly structured all along. Typecheck caught no code change requirement.
+
+**Rule exposed:** **When consuming any platform-emitted event, check whether the platform's typed SDK requires the event to be declared in your union.** For Inngest this includes every `inngest/*` event your app depends on — today only `function.failed` via `onFailure`, but future additions (`function.cancelled` via `cancelOn`, debounced handlers, or any rate-limit event) would follow the same pattern. If a platform event you consume isn't in your event union, it will either fail validation at invocation (Inngest's behavior) or silently never fire (other platforms). Both are silent-failure traps.
+
+**Meta:** This is a class cousin of Bug 2 / Bug 7 — critical functionality silently not running. The Inngest case is slightly better than the Bug 7 Client Reference case because the failure surfaces as a 400 in the Next log (if you're watching). But the onFailure handler never gets a chance to leave a terminal row, so the downstream effect (scan hangs) is identical. Preventive detection: grep every Inngest function for `onFailure:` and verify the event the SDK will dispatch on failure is in `DenimEvents`.
+
+---
+
+## 2026-04-19: `instanceof` across workspace packages is unreliable under Turbopack dev
+
+**Context:** During #105 credentials refactor verification, spotted a schema that failed at `runDomainDiscovery` with the new error message text from the credentials module (`"[DISCOVERING_DOMAINS] Gmail not connected"`) but `phaseCredentialFailure` NULL in the DB. The catch block that was supposed to extract the typed failure payload fell through to the untyped branch. Class identity was the culprit.
+
+### Discovery 11: `err instanceof GmailCredentialError` returns false even when err WAS constructed as one
+
+**Symptom:** The Inngest catch block in `domain-discovery-fn.ts` used `err instanceof GmailCredentialError` to decide whether the error carried a typed `credentialFailure` payload. In Next.js dev mode under Turbopack, that check returned false — silently, without a compile error — even when the error was an actual `GmailCredentialError`. Result: `typedFailure` was `undefined`, `markSchemaFailed` wrote the error message text to `phaseError` but left `phaseCredentialFailure` NULL, and the UI rendered the generic "Setup failed / Try again" screen instead of the "Google connection lost / Reconnect Google" flow that unblocked the user.
+
+**Root cause:** Turbopack can load a workspace-package module (e.g. `@denim/types`) as two distinct module instances when it's imported from different chunks. One chunk's `throw new GmailCredentialError(...)` used class constructor A; the catching chunk's `instanceof` comparison referenced class constructor B. Same source, different runtime identity. JavaScript `instanceof` walks the prototype chain looking for a specific constructor function reference; two parallel module instantiations of the same source produce two different function references, and the chain walk fails.
+
+**Fix (commit `0f0c022`):** Added duck-typed helpers to `packages/types/src/gmail-credentials.ts`:
+- `isCredentialFailure(value)` — shape guard checking for `reason: string` + `remedy: string`.
+- `extractCredentialFailure(err)` — pulls `err.credentialFailure` if present and shape-valid.
+
+Swapped `instanceof` in three catch sites (`domain-discovery-fn.ts` outer catch, `entity-discovery-fn.ts` outer catch + per-domain rethrow gate) to `extractCredentialFailure(err) !== undefined`. Added 6 regression tests including a plain shaped object test that simulates the Turbopack scenario — a `{ credentialFailure: {...} }` not constructed via `GmailCredentialError` still extracts correctly. Left one `instanceof AuthError` check in `functions.ts:197` — intentional, `AuthError` is the broader class and the identity coupling is shallower.
+
+**Rule exposed:** **`instanceof` on classes defined in a workspace package is unreliable for error branching in dev mode.** Provide a duck-typed helper alongside every workspace-package class used for catch-block decisions. Prefer the duck-typed helper in every cross-module catch site. Same-module `instanceof` still works (auth callback's in-process `instanceof` was intentionally left as-is) — the failure mode is specifically cross-module-instance identity.
+
+**Preventive checklist:**
+
+1. For every `@denim/*` package export used in error branching (`instanceof SomeClass`), export a matching `isSomeClass(value)` / `extractSomeThing(err)` helper.
+2. In every `catch (err)` block in `apps/web/src/lib/inngest/**`, `apps/web/src/lib/services/**`, prefer the duck-type helper over `instanceof`.
+3. When writing regression tests for typed errors, include a "plain shaped object" variant — same fields, not constructed via `new` — to simulate the runtime that caused the bug.
+
+**Why the tests didn't catch it:** `service.test.ts` creates and catches `GmailCredentialError` in the same module. Same module = same constructor instance = `instanceof` works. The failure mode is specifically bundle-time duplication across chunks, which only manifests at runtime in dev mode against the Turbopack bundler. Unit tests running under Vitest (no Turbopack involved) wouldn't reproduce it even if you wrote them perfectly. The regression test added here covers the *shape* (plain object with `credentialFailure`) rather than the *bundler scenario* — good enough to prevent someone from reverting back to `instanceof`.
+
+**Meta:** Third failure mode today (after Bug 7 Client Reference wrap, Discovery 10 event-union registration) where the platform's runtime behavior silently broke typed code that looked correct. All three share the shape: *the TypeScript types said it was fine, the runtime disagreed, and the failure surfaced as a silent drop somewhere downstream instead of an error at the point of miscompile*. Preventive rule for the class: **every cross-module decision that relies on runtime identity (instanceof, symbol equality, constructor match) should have a duck-typed or Zod-parsed fallback.**
+
+---
+
+## 2026-04-19: Persist markers, not records, when the records already exist
+
+**Context:** During #112 Tier 2 design, I proposed a new JSONB column `stage1ConfirmedUserContacts` carrying full contact records (`{ query, matchCount, senderEmail, senderDomain, errorCount }[]`). Nick pushed back: *"are these using the data schema we have? I feel we have the columns we need to do this, no?"* Spawned a schema-check agent which flagged the duplication.
+
+### Discovery 12: Confirmation markers, not duplicated records
+
+**Symptom:** Avoided (caught pre-commit via schema analysis). My proposed column would have duplicated every field in the already-persisted `stage1UserContacts` column. At confirm time, we'd rewrite the full record (same senderEmail, same matchCount, same everything) just to mark "user ticked this." `stage1UserContacts` is immutable discovery output; `stage1ConfirmedUserContacts` would have been immutable *selected-subset-of-discovery-output*.
+
+**Root cause:** I conflated two distinct data needs. The discovery stage (Stage 1 find-or-tell) produces all the hits plus the "no results" entries. The confirmation stage (domain-confirm transaction) needs to remember *which* of those entries the user selected. Different concerns, and the second one only needs a key into the first. Storing the full records in both places means:
+
+- Write amplification (paying for bytes we already have).
+- Drift risk (if discovery output ever gets corrected/reprocessed, the confirmation snapshot stays stale).
+- Confusing semantics (which column is the source of truth for `senderEmail`?).
+
+**Fix (commit `c44a5ba`):** New column is `stage1ConfirmedUserContactQueries: string[]` — just the query strings (`["farrukh malik", "margaret potter"]`). `runEntityDiscovery` cross-references this set against `stage1UserContacts` at read time to pull the full context for each confirmed query. Single source of truth for the contact records. The confirmation layer is pure metadata.
+
+**Rule exposed:** **When persisting "user's choice" data that correlates with existing "discovery output" data, persist only the minimal marker (key, ID, query string), not the full record.** The discovery output stays the source of truth; the marker set is a pointer. Same applies to: which emails the user excluded on review, which entities the user renamed, which case tags the user added. Every "user confirmed / rejected / selected" signal is a set of keys, not a set of records.
+
+**Heuristic for the next designer:** Before adding a new column shaped like `Array<{foo, bar, baz}>`, check whether any of (foo, bar, baz) already live in another column on the same table keyed on the same logical identity. If yes, the new column should be `Array<identityKey>` — persist the identity, not the fields.
+
+**Meta:** This is the prevention-time analog of the duplication rules in Bug 4 and Round 2. Those rules were about *code duplication* — same decision logic in two files. This one is about *data duplication* — same record fields in two columns. Both drift silently. The Bug-4 rule was re-discovered during code review; this one was re-discovered during schema review. Same shape of catch.
+
+---
+
+## 2026-04-19: Parallel agent dispatch for "is this design right?" checks
+
+**Context:** Before committing to the #115 + #112 Tier 2 slice, Nick asked two parallel questions: *"are we using the schema we have?"* (implementation question) and *"is this the next right task to work on?"* (prioritization question). Rather than serialize these behind my proposed design, dispatched both in parallel to specialized subagents and used the answers to inform the execution.
+
+### Discovery 13: Architectural pressure-testing via parallel subagents is cheap
+
+**Symptom (positive):** Both questions returned answers within ~1 minute, both surfaced blind spots in the original proposal:
+
+1. The schema-check agent caught the record-vs-marker duplication (Discovery 12 above) that would have made the next designer curse.
+2. The prioritization agent confirmed the slice was right but flagged that *"running evals against a still-opaque Stage 2 burns a run on UX noise"* — a framing I hadn't articulated that makes the polish-first order defensible beyond gut.
+
+Neither agent rubber-stamped. Both forced revisions before any code was written.
+
+**Rule exposed:** **At the "before I start coding" checkpoint, dispatch parallel subagents when you have (a) an architectural call worth pressure-testing and (b) a prioritization call worth second-opinion-ing.** Good uses:
+
+- "Given this proposed interface, is there existing data that could carry it?" → Explore or schema-architect agent.
+- "Is this the highest-leverage next task vs these alternatives?" → general-purpose with issue-list access.
+- "What failure modes does this design have under retry/concurrency/offline?" → code-reviewer or architect agent.
+- "Is the test I'm about to write going to catch the class of bug I care about?" → code-reviewer.
+
+The cost (~2 minutes of parallel dispatch + ~5 minutes of reading the returns) is trivial relative to the cost of shipping a bad architecture that then has to be refactored. The key is *parallel*, not *serial* — serial dispatch adds latency without extra independence, and you're tempted to let the first answer bias the second.
+
+**Anti-pattern to avoid:** spawning subagents for narrow implementation questions the main agent can answer in 30 seconds by reading a file. Subagents are valuable for *breadth* (multi-file search, issue-list aggregation, cross-theme analysis) and for *independence* (a second opinion that didn't see your proposal). They're overkill for "what's the signature of this function."
+
+**Meta:** Today's sprint produced three class-preventive discoveries (10, 11, 12) and the workflow that caught one of them (13) worth preserving. The parallel-agent dispatch is a tool for the sprint toolbox, not a lesson about a specific code class. Promoting it here because the skill is "when to reach for this tool" and the answer is "at design-check gates, not during execution."
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
@@ -492,6 +592,53 @@ instance; the #105 refactor closes the class.
 with a typed `reason` code. Grep for `logger.warn` inside auth-adjacent try/catch
 blocks — each one needs a comment explaining why continuing is safe (in practice,
 the answer is almost always "it isn't" and the `warn` should be an error redirect).
+
+### 9. "Platform event consumed without being in the typed union"
+
+If an Inngest function declares `onFailure`, `cancelOn`, or any trigger that
+listens on a platform-emitted event (events under the `inngest/*` namespace),
+the event must be in `DenimEvents` or the handler 400s at invocation and the
+feature silently doesn't run. TypeScript won't warn — the `onFailure` signature
+accepts any handler — but the Inngest runtime validates against the typed union
+at dispatch time.
+
+**Check:** Grep `onFailure:|cancelOn:` under `apps/web/src/lib/inngest/`. For
+each, verify the event the SDK will dispatch (`inngest/function.failed`,
+`inngest/function.cancelled`, `inngest/scheduled.timer`, etc.) is in
+`packages/types/src/events.ts`. When adding a new Inngest function with
+cross-function listening, add the relevant platform events to the union first.
+
+### 10. "`instanceof` across workspace packages"
+
+`err instanceof GmailCredentialError` returns false in Next.js dev mode when the
+thrown error and the catching code loaded `@denim/types` as two distinct module
+instances (Turbopack class-duplication across chunks). Same-module tests pass,
+cross-module runtime lies. Silent misclassification — the catch block reads
+`undefined` from the `.credentialFailure` property access against a class whose
+identity didn't match, and the UI renders the wrong error screen.
+
+**Check:** For every `@denim/*` class used in error branching, ship a duck-typed
+companion (`isThing(value)` / `extractThing(err)`). Prefer the duck-typed helper
+in catch blocks that sit across module boundaries — Inngest functions, service
+methods, API routes. Same-module `instanceof` (e.g., within a single file) is
+still safe. When writing regression tests for typed errors, include a
+"plain shaped object" variant — same fields, not constructed via `new` — to
+simulate the bundle-time duplication the runtime produces.
+
+### 11. "Persisted record duplicates a column already on the row"
+
+If a new column is shaped `Array<{foo, bar, baz}>` and any of (foo, bar, baz)
+already live on the same row (logical identity: same schemaId, same domain, same
+whatever), you're about to write the same data twice. The confirmation/selection
+layer only needs the minimal marker — an identityKey or query string — pointing
+into the source-of-truth column.
+
+**Check:** Before adding a JSONB column that stores records, grep the prisma
+schema on the same model for fields with the same names. If a match exists, the
+new column should be `Array<identityKey>` (marker set) instead — the source
+column is the record store, the new column is the pointer set. Applies to user-
+confirmation markers, calibration selections, feedback flags, anything that
+records "which existing thing did the user pick."
 
 ---
 

@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-19 Morning (Four-issue arc in one session — **#105 credentials refactor verified end-to-end**, then four regressions surfaced + shipped on `feature/perf-quality-sprint`: **#109** (Phase 4 cutover gap, `seedSchemaDefaults` writer for `clusteringConfig` + `summaryLabels`), **#113** (sessionStorage draft leak between topics, three "Add Topic" entry points + category-change safety net), **#111** (schema.name stub, user-provided name field + deterministic `composeFallbackSchemaName` from first confirmed PRIMARY), **#112 Tier 1** (find-or-tell user-hint discovery — parallel Stage 1 passes with "found N emails at domain.com" or "no emails found in the last 8 weeks" for every user what/who). Final live run: Nick typed `stallion` + `portfolio pro advisors` + `guitar` + Farrukh / Margaret / George / Vernon; every hit surfaced with counts, every miss explicitly labeled, Stage 2 confirmed both stallionis.com and portfolioproadvisors.com (vs prior run where Stallion was silently dropped), 8 cases synthesized. Follow-ups filed: #110 (audit unread schema JSON cols), #114 (AI name upgrade + rename UI), #115 (Stage 2 entity-confirmation UX opacity). Next: #115 + #112 Tier 2.)
+Last updated: 2026-04-19 Afternoon (Sprint planning + seven-issue cleanup + infra slice + Stage 2 UX polish — all on `feature/perf-quality-sprint`. Closed 6 shipped/dupe issues with commit-pointer comments (#30, #77, #78, #82, #104, #106). Shipped **#108** (register `inngest/function.failed` in DenimEvents so `onFailure` handlers validate), **#107** (duck-typed `extractCredentialFailure` that survives Turbopack cross-package module duplication, +6 regression tests), **#112 Tier 2 + #115** bundled (new minimal JSONB column `stage1ConfirmedUserContactQueries`; `runEntityDiscovery` reads it + `stage1UserContacts` to seed pre-confirmed SECONDARY candidates; Stage 2 review rewritten with Thing/Contact badges, grouped-by-domain headers, `Added by you` pills, per-domain empty-state copy). Filed **#116** as breadcrumb for a one-off Turbopack CSS worker crash on `/feed` during restart (Windows `0xc0000142` init failure; not code-related). Open count 48 → 40; 328 unit tests passing across 4 workspaces. Next: pick a new slice post-reboot — candidates are #93 entity-robustness aliases (Bucknell overmatch fix), #38 Eval Session 2, #72 CI integration + Playwright, or #32 Gmail sample data for rapid testing.)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -1028,6 +1028,63 @@ Stage 2 received `confirmedDomains = ["stallionis.com", "portfolioproadvisors.co
 2. **#112 Tier 2** — pre-confirmed SECONDARY entity creation from Stage 1's confirmed user-named contacts. Means Farrukh appears on Stage 2 review as a pre-checked SECONDARY with an "Added by you" badge regardless of what the algorithm derives.
 3. Deferred (filed for later): #110 schema-col audit, #114 AI name + rename UI.
 4. After #115 + #112 Tier 2 land clean → revisit speed on bigger schemas.
+
+---
+
+## 2026-04-19 Afternoon Session — Sprint planning + infra fixes + Stage 2 UX polish
+
+Continuation of the morning. Pulled open issues via `/recall-issues`, cleaned deadwood, landed the infra slice Nick had sequenced (#108 → #109 already done → #107), then bundled #115 + #112 Tier 2 per the plan. Final state before Nick's laptop reboot: 40 open issues (was 48 at the start of the afternoon), 328 passing tests, 4 new commits on `feature/perf-quality-sprint`.
+
+### Sprint planning findings
+
+Pulled 48 open issues; grouped by theme (#95 fast-discovery fallout, overnight bugs, perf, eval/quality, tests/CI, UX backlog, meta). Spawned two parallel agents:
+
+1. **Schema check** (Nick: "do we already have the columns we need for Tier 2?"). Agent analyzed current schema + flow and came back: cross-referencing `confirmedDomains ∩ stage1UserContacts.senderDomain` has edge cases (multiple user-hints on same domain; user-hint domain colliding with a keyword-discovered domain). Cleanest answer: one small marker column `stage1ConfirmedUserContactQueries: string[]`, not the fat JSONB blob I'd originally proposed.
+2. **Prioritization check** ("is #115 + #112 Tier 2 actually the right next task?"). Agent confirmed yes, with the key insight: *"Running evals against a still-opaque Stage 2 burns a run on UX noise."* Polish first, then #93 + #38/#91 eval measurement. Flagged #99, #66, #91 as stale/should-close candidates for a future pass.
+
+### Closed as shipped / dupe (6 issues)
+
+| # | Title | Resolution |
+|---|---|---|
+| #106 | Empty clusteringConfig crash | Dupe of #109 (commit `4678814`) |
+| #30 | State-machine refactor parent | 18/18 tasks shipped 2026-04-08 |
+| #77 | Gemini batch extraction | Shipped `7c0d1d0` |
+| #82 | Live case count during synthesis | Shipped `f3b54ff` |
+| #78 | Parallel synthesis + splitting | Synthesis shipped `2c6b373`; splitting → #86 |
+| #104 | April 18 E2E Test plan | Executed; findings split across #105-#115 |
+
+**#106 bug-duplication lesson**: #106 was filed overnight 2026-04-19 00:52. The morning session independently re-diagnosed the same crash and filed #109. Cheap cost, but worth noting for sprint-plan hygiene — `gh issue list --search` on root-cause phrases before filing would have caught it.
+
+### Commits landed
+
+| Commit | Issue | Summary |
+|---|---|---|
+| `36e2250` | #108 | Registered `inngest/function.failed` in `DenimEvents`. Four `onFailure` handlers (extractBatch/runCoarseClustering/runCaseSplitting/synthesizeCaseWorker) were silently 400'ing on invocation because the system event wasn't in the typed union. Code unchanged; registration alone is the fix. |
+| `0f0c022` | #107 | Duck-typed `isCredentialFailure` + `extractCredentialFailure` in `@denim/types`. Swapped 3 catch sites across `domain-discovery-fn.ts` + `entity-discovery-fn.ts` (outer catch + per-domain rethrow gate). `instanceof GmailCredentialError` was unreliable across Turbopack module boundaries in dev — same-module tests passed, cross-module runtime lied. Added 6 regression tests covering real instance, plain shaped object (the Turbopack scenario), plain Error, non-object values, malformed payload. |
+| `c44a5ba` | #112 Tier 2 + #115 | Pre-confirmed SECONDARY entities + Stage 2 UX rewrite. New JSONB column + extended `writeStage2ConfirmedDomains` signature + `runEntityDiscovery` cross-references `stage1UserContacts` via `stage1ConfirmedUserContactQueries` to build `meta.source: "user_named"` candidates per domain. Stage 2 UI: header framing copy, per-domain `Inside <domain>` grouping with item counts, row format carries sender email + Thing/Contact kind badge + `Added by you` pill for user-seeded rows, per-domain empty-state copy ("We didn't find specific things inside X. Denim will still track the domain as a whole."), user-seeded rows pre-checked on mount and when groups arrive after initial render. Button label `Confirm N items` (was "entities"). Stage 2 picks accept SECONDARY kind. |
+
+Also filed **#116** — Turbopack dev-server CSS worker crash breadcrumb. One-off `GET /feed 500` during restart; worker process died with Windows `0xc0000142` (STATUS_DLL_INIT_FAILED) while Turbopack evaluated PostCSS on `apps/web/src/app/globals.css`. Panic log captured. Not code-related; main Next.js process stayed up and served `/api/inngest` 200 after. Logging for context only; don't debug unless recurrent.
+
+### Test + type state at session end
+
+- Typecheck clean across all 4 workspaces.
+- 328 unit tests passing: types 11 (+6 from #107 regression suite) + engine 92 + ai 52 + web 174.
+- Integration tests not re-run this session (no service boundaries shifted).
+
+### Known open questions from the agent-2 prioritization pass
+
+Flagged for a future cleanup sweep (not this slice):
+
+- **#99** (plan-stale-API-sigs) — plan is executed; this is an artifact. Close candidate.
+- **#66** (`relatedUserThing` not persisted) — likely dead path post-#95 refactor. Verify and close.
+- **#91** (conditional on #93 + property run) — consider folding into #93 or closing with checklist comment on #93.
+- Also: #1 (Model Constants) and #13 (Lighthouse on prod) are >3 weeks old — either do or close.
+
+### Next action on resume (post-reboot)
+
+1. **Fresh E2E verification** — DB wipe + delete Supabase Auth row + fresh Google OAuth, then drive Stage 1 + Stage 2. Expected qualitative wins: (a) Farrukh explicitly shows on Stage 2 review as a pre-checked SECONDARY with "Added by you" pill; (b) clear `Thing` / `Contact` badges per row; (c) `Inside <domain>` headers; (d) no more bare `portfolioproadvisors` row. If Stage 1 user-whos section shows no user-named contacts and Stage 2 has no "Added by you" entries, something is wrong — possibly the `stage1ConfirmedUserContactQueries` persistence isn't firing.
+2. **Pick next slice from one of**: (a) #93 entity-robustness aliases (Bucknell overmatch fix, unblocks #91 verification run), (b) #38 Eval Session 2 (now safe to measure post-#115), (c) #72 CI integration + Playwright (pre-external-user investment), (d) #32 Gmail sample data for rapid testing (iteration speed multiplier). Agent 2's recommendation: (a) + (b) as a pair — entity robustness then eval.
+3. **Stale-issue cleanup** (cheap housekeeping): close or re-scope #99, #66, #91 per the agent-2 flags above.
 
 ---
 
