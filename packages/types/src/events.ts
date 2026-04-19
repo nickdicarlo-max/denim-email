@@ -196,6 +196,30 @@ export type DenimEvents = {
       toCaseId: string;
     };
   };
+  /**
+   * #108: Inngest system event emitted automatically when any function
+   * exhausts retries and terminally fails. Registering it in DenimEvents
+   * is required for `inngest.createFunction({ onFailure: ... })` handlers
+   * to validate at invocation time — Inngest rejects the onFailure call
+   * with `EventValidationError: Event not found in triggers: inngest/function.failed`
+   * if it's missing, so the failure handlers never run and scans hang at
+   * whatever phase they crashed in.
+   */
+  "inngest/function.failed": {
+    data: {
+      function_id: string;
+      run_id: string;
+      error: {
+        name?: string;
+        message?: string;
+        stack?: string;
+      };
+      event: {
+        name: string;
+        data: unknown;
+      };
+    };
+  };
   "cron.daily.scans.trigger": {
     /**
      * Triggers the `cronDailyScans` Inngest function which walks every
