@@ -20,6 +20,9 @@ export const InterviewInputSchema = z.object({
   sharedWhos: z.array(entityNameString).optional(),
   goals: z.array(z.string()).default([]),
   customDescription: z.string().trim().max(500).optional(),
+  // #111: optional user-provided topic name. Trimmed empty strings are rejected
+  // so the entity-confirm fallback path can trigger deterministically.
+  name: z.string().trim().min(1).max(100).optional(),
 });
 
 export const FinalizeConfirmationsSchema = z.object({

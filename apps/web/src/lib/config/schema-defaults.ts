@@ -53,3 +53,33 @@ export function buildDefaultClusteringConfig(domain: string | null | undefined):
 export function defaultSummaryLabels(domain: string | null | undefined) {
   return SUMMARY_LABELS[resolveDomain(domain)];
 }
+
+const DOMAIN_FALLBACK_TITLES: Record<SeedDomain, string> = {
+  school_parent: "Kids Activities",
+  property: "Properties",
+  construction: "Construction",
+  legal: "Legal Matters",
+  agency: "Client Work",
+  general: "My Topic",
+};
+
+/**
+ * #111: compose a fallback topic name when the user didn't provide one.
+ * Uses the first confirmed PRIMARY entity's displayLabel. If no PRIMARY is
+ * confirmed (unusual — entity-confirm allows SECONDARY-only), falls back to
+ * a domain-tailored generic title.
+ */
+export function composeFallbackSchemaName(
+  domain: string | null | undefined,
+  entities: ReadonlyArray<{ displayLabel: string; kind: "PRIMARY" | "SECONDARY" }>,
+): string {
+  const firstPrimary = entities.find((e) => e.kind === "PRIMARY");
+  if (firstPrimary) {
+    const trimmed = firstPrimary.displayLabel.trim();
+    if (trimmed.length === 0) {
+      return DOMAIN_FALLBACK_TITLES[resolveDomain(domain)];
+    }
+    return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
+  }
+  return DOMAIN_FALLBACK_TITLES[resolveDomain(domain)];
+}

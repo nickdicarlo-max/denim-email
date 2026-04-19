@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   outboxUpdate: vi.fn(),
   persistConfirmedEntities: vi.fn(),
   seedSchemaDefaults: vi.fn(),
+  seedSchemaName: vi.fn(),
   inngestSend: vi.fn(async () => undefined),
 }));
 
@@ -47,6 +48,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/services/interview", () => ({
   persistConfirmedEntities: mocks.persistConfirmedEntities,
   seedSchemaDefaults: mocks.seedSchemaDefaults,
+  seedSchemaName: mocks.seedSchemaName,
 }));
 
 vi.mock("@/lib/inngest/client", () => ({
@@ -70,11 +72,13 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
       userId: "user-1",
       phase: "AWAITING_ENTITY_CONFIRMATION",
       domain: "agency",
+      name: "Setting up...",
     });
     mocks.outboxCreate.mockResolvedValue({});
     mocks.outboxUpdate.mockResolvedValue({});
     mocks.persistConfirmedEntities.mockResolvedValue(undefined);
     mocks.seedSchemaDefaults.mockResolvedValue(undefined);
+    mocks.seedSchemaName.mockResolvedValue(undefined);
     mocks.inngestSend.mockResolvedValue(undefined);
   });
 
@@ -136,6 +140,13 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
     });
     expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(expect.anything(), "s1", entities);
     expect(mocks.seedSchemaDefaults).toHaveBeenCalledWith(expect.anything(), "s1", "agency");
+    expect(mocks.seedSchemaName).toHaveBeenCalledWith(
+      expect.anything(),
+      "s1",
+      "Setting up...",
+      "agency",
+      entities,
+    );
     expect(mocks.outboxCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         schemaId: "s1",

@@ -14,6 +14,8 @@ export default function NamesPage() {
   const [roleLabel, setRoleLabel] = useState("");
   const [roleIcon, setRoleIcon] = useState("");
 
+  const [topicName, setTopicName] = useState("");
+
   const [whats, setWhats] = useState<string[]>([]);
   const [whatInput, setWhatInput] = useState("");
 
@@ -41,6 +43,7 @@ export default function NamesPage() {
     if (saved) {
       setWhats(saved.whats);
       setWhos(saved.whos);
+      if (saved.name) setTopicName(saved.name);
     }
   }, [router]);
 
@@ -71,7 +74,12 @@ export default function NamesPage() {
   }
 
   function handleContinue() {
-    onboardingStorage.setNames({ whats, whos });
+    const trimmedName = topicName.trim();
+    onboardingStorage.setNames({
+      whats,
+      whos,
+      ...(trimmedName ? { name: trimmedName } : {}),
+    });
     router.push("/onboarding/connect");
   }
 
@@ -95,8 +103,22 @@ export default function NamesPage() {
           </button>
         </div>
 
+        {/* Section 0: Topic name (optional) */}
+        <h1 className="font-serif text-xl text-primary">Name this topic</h1>
+        <p className="text-muted text-sm mt-1">
+          Optional. We&apos;ll pick one from what you add if you skip this.
+        </p>
+        <div className="mt-4">
+          <Input
+            placeholder="e.g. Client Work, Rental Properties, Kids Activities"
+            value={topicName}
+            onChange={(e) => setTopicName(e.target.value)}
+            maxLength={100}
+          />
+        </div>
+
         {/* Section 1: Things */}
-        <h1 className="font-serif text-xl text-primary">Name the things you track</h1>
+        <h2 className="font-serif text-xl text-primary mt-10">Name the things you track</h2>
         <p className="text-muted text-sm mt-1">{dc.whatHint}</p>
 
         <div className="mt-4 flex gap-2">

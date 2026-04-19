@@ -32,7 +32,11 @@ import { handleApiError } from "@/lib/middleware/error-handler";
 import { assertResourceOwnership } from "@/lib/middleware/ownership";
 import { extractOnboardingSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
-import { persistConfirmedEntities, seedSchemaDefaults } from "@/lib/services/interview";
+import {
+  persistConfirmedEntities,
+  seedSchemaDefaults,
+  seedSchemaName,
+} from "@/lib/services/interview";
 
 // Charset: letters, digits, dot, space, hyphen, underscore, plus, @.
 // Rejects quotes, angle brackets, semicolons, control chars.
@@ -66,7 +70,7 @@ export const POST = withAuth(async ({ userId, request }) => {
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
-      select: { id: true, userId: true, phase: true, domain: true },
+      select: { id: true, userId: true, phase: true, domain: true, name: true },
     });
     assertResourceOwnership(schema, userId, "Schema");
 
@@ -81,6 +85,16 @@ export const POST = withAuth(async ({ userId, request }) => {
       // summaryLabels (the hypothesis flow did). Seed deterministic
       // per-domain defaults here so the scan pipeline can read them.
       await seedSchemaDefaults(tx, schemaId!, schema!.domain);
+      // Issue #111: upgrade the "Setting up..." placeholder to a real name
+      // when the user didn't provide one at the interview step. No-op if the
+      // user supplied a name (persisted via createSchemaStub).
+      await seedSchemaName(
+        tx,
+        schemaId!,
+        schema!.name,
+        schema!.domain,
+        body.confirmedEntities,
+      );
       await tx.onboardingOutbox.create({
         data: {
           schemaId: schemaId!,

@@ -16,7 +16,11 @@ import { ExternalAPIError } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { CLUSTERING_TUNABLES } from "@/lib/config/clustering-tunables";
-import { buildDefaultClusteringConfig, defaultSummaryLabels } from "@/lib/config/schema-defaults";
+import {
+  buildDefaultClusteringConfig,
+  composeFallbackSchemaName,
+  defaultSummaryLabels,
+} from "@/lib/config/schema-defaults";
 import { logger } from "@/lib/logger";
 import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
@@ -341,12 +345,17 @@ export async function createSchemaStub(opts: {
   inputs?: InterviewInput;
 }): Promise<string> {
   const client = opts.tx ?? prisma;
+  // #111: prefer user-provided name if the interview captured one. When empty,
+  // the "Setting up..." placeholder triggers the entity-confirm composed-name
+  // fallback in `seedSchemaName`.
+  const userProvidedName = opts.inputs?.name?.trim();
   const schema = await client.caseSchema.create({
     data: {
       ...(opts.schemaId ? { id: opts.schemaId } : {}),
       userId: opts.userId,
-      // Placeholder fields — overwritten by persistSchemaRelations.
-      name: "Setting up...",
+      // Placeholder fields — overwritten by persistSchemaRelations (legacy
+      // flow) or seedSchemaDefaults + seedSchemaName (Stage 1/2 flow).
+      name: userProvidedName || "Setting up...",
       description: "",
       primaryEntityConfig: {} as Prisma.InputJsonValue,
       discoveryQueries: [] as unknown as Prisma.InputJsonValue,
@@ -1139,4 +1148,27 @@ export async function seedSchemaDefaults(
       summaryLabels: defaultSummaryLabels(domain) as unknown as Prisma.InputJsonValue,
     },
   });
+}
+
+/**
+ * #111: upgrade `schema.name` from the "Setting up..." placeholder to a
+ * human-readable title when the user didn't provide one at the interview
+ * step. Never overwrites a user-provided (or already-upgraded) name.
+ *
+ * `currentName` is passed in to avoid a DB round-trip; the caller already
+ * read it alongside domain + phase for the transaction's CAS check.
+ */
+export async function seedSchemaName(
+  tx: Prisma.TransactionClient,
+  schemaId: string,
+  currentName: string,
+  domain: string | null | undefined,
+  entities: ReadonlyArray<ConfirmedEntity>,
+): Promise<void> {
+  if (currentName !== "Setting up...") return;
+  const derived = composeFallbackSchemaName(
+    domain,
+    entities.map((e) => ({ displayLabel: e.displayLabel, kind: e.kind })),
+  );
+  await tx.caseSchema.update({ where: { id: schemaId }, data: { name: derived } });
 }

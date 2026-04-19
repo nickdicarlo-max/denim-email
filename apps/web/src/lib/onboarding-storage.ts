@@ -13,6 +13,8 @@ export interface OnboardingCategory {
 export interface OnboardingNames {
   whats: string[];
   whos: string[];
+  /** #111: optional user-provided topic name. Empty string = not provided. */
+  name?: string;
 }
 
 function get<T>(key: string): T | null {

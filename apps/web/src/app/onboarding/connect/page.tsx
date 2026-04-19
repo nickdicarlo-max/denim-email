@@ -124,6 +124,7 @@ export default function ConnectPage() {
               whos: names.whos,
               groups: [],
               goals: [],
+              ...(names.name ? { name: names.name } : {}),
               ...(category.customDescription
                 ? { customDescription: category.customDescription }
                 : {}),

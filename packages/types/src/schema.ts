@@ -16,6 +16,8 @@ export interface InterviewInput {
   groups: EntityGroupInput[]; // The paired structure — source of truth
   sharedWhos?: string[]; // Ungrouped WHOs — discovery senders, not routing targets
   goals: string[];
+  /** Optional user-provided topic name. If absent, entity-confirm derives one. */
+  name?: string;
 }
 
 export interface SchemaHypothesis {

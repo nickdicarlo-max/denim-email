@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { CLUSTERING_TUNABLES } from "../clustering-tunables";
-import { buildDefaultClusteringConfig, defaultSummaryLabels } from "../schema-defaults";
+import {
+  buildDefaultClusteringConfig,
+  composeFallbackSchemaName,
+  defaultSummaryLabels,
+} from "../schema-defaults";
 
 const ALL_DOMAINS = [
   "school_parent",
@@ -79,5 +83,69 @@ describe("defaultSummaryLabels", () => {
   it("falls back to 'general' on unknown domain", () => {
     expect(defaultSummaryLabels("nonsense")).toEqual(defaultSummaryLabels("general"));
     expect(defaultSummaryLabels(null)).toEqual(defaultSummaryLabels("general"));
+  });
+});
+
+describe("composeFallbackSchemaName", () => {
+  it("uses the first PRIMARY entity's displayLabel", () => {
+    const name = composeFallbackSchemaName("agency", [
+      { displayLabel: "Portfolio Pro Advisors", kind: "PRIMARY" },
+      { displayLabel: "Stallion Investments", kind: "PRIMARY" },
+      { displayLabel: "Farrukh Malik", kind: "SECONDARY" },
+    ]);
+    expect(name).toBe("Portfolio Pro Advisors");
+  });
+
+  it("skips SECONDARY entities when picking a PRIMARY", () => {
+    const name = composeFallbackSchemaName("property", [
+      { displayLabel: "Timothy Bishop", kind: "SECONDARY" },
+      { displayLabel: "3910 Bucknell", kind: "PRIMARY" },
+    ]);
+    expect(name).toBe("3910 Bucknell");
+  });
+
+  it("falls back to a domain-tailored title when no PRIMARY is confirmed", () => {
+    expect(composeFallbackSchemaName("agency", [])).toBe("Client Work");
+    expect(composeFallbackSchemaName("property", [])).toBe("Properties");
+    expect(composeFallbackSchemaName("school_parent", [])).toBe("Kids Activities");
+    expect(composeFallbackSchemaName("legal", [])).toBe("Legal Matters");
+    expect(composeFallbackSchemaName("general", [])).toBe("My Topic");
+    expect(composeFallbackSchemaName("construction", [])).toBe("Construction");
+  });
+
+  it("falls back to domain title when only SECONDARY entities exist", () => {
+    const name = composeFallbackSchemaName("agency", [
+      { displayLabel: "Farrukh Malik", kind: "SECONDARY" },
+    ]);
+    expect(name).toBe("Client Work");
+  });
+
+  it("trims whitespace on the PRIMARY displayLabel", () => {
+    const name = composeFallbackSchemaName("agency", [
+      { displayLabel: "   Anthropic   ", kind: "PRIMARY" },
+    ]);
+    expect(name).toBe("Anthropic");
+  });
+
+  it("falls back when the PRIMARY displayLabel is whitespace-only", () => {
+    const name = composeFallbackSchemaName("general", [
+      { displayLabel: "   ", kind: "PRIMARY" },
+    ]);
+    expect(name).toBe("My Topic");
+  });
+
+  it("truncates absurdly long PRIMARY names to 80 chars with ellipsis", () => {
+    const long = "A".repeat(120);
+    const name = composeFallbackSchemaName("general", [
+      { displayLabel: long, kind: "PRIMARY" },
+    ]);
+    expect(name.length).toBe(80);
+    expect(name.endsWith("...")).toBe(true);
+  });
+
+  it("unknown domain falls back to general", () => {
+    expect(composeFallbackSchemaName("not-a-real-domain", [])).toBe("My Topic");
+    expect(composeFallbackSchemaName(null, [])).toBe("My Topic");
+    expect(composeFallbackSchemaName(undefined, [])).toBe("My Topic");
   });
 });
