@@ -32,7 +32,7 @@ import { handleApiError } from "@/lib/middleware/error-handler";
 import { assertResourceOwnership } from "@/lib/middleware/ownership";
 import { extractOnboardingSchemaId } from "@/lib/middleware/request-params";
 import { prisma } from "@/lib/prisma";
-import { persistConfirmedEntities } from "@/lib/services/interview";
+import { persistConfirmedEntities, seedSchemaDefaults } from "@/lib/services/interview";
 
 // Charset: letters, digits, dot, space, hyphen, underscore, plus, @.
 // Rejects quotes, angle brackets, semicolons, control chars.
@@ -66,7 +66,7 @@ export const POST = withAuth(async ({ userId, request }) => {
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
-      select: { id: true, userId: true, phase: true },
+      select: { id: true, userId: true, phase: true, domain: true },
     });
     assertResourceOwnership(schema, userId, "Schema");
 
@@ -77,6 +77,10 @@ export const POST = withAuth(async ({ userId, request }) => {
       });
       if (count === 0) return false;
       await persistConfirmedEntities(tx, schemaId!, body.confirmedEntities);
+      // Issue #109: Stage 1/2 flow doesn't generate clusteringConfig or
+      // summaryLabels (the hypothesis flow did). Seed deterministic
+      // per-domain defaults here so the scan pipeline can read them.
+      await seedSchemaDefaults(tx, schemaId!, schema!.domain);
       await tx.onboardingOutbox.create({
         data: {
           schemaId: schemaId!,

@@ -16,6 +16,7 @@ import { ExternalAPIError } from "@denim/types";
 import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { CLUSTERING_TUNABLES } from "@/lib/config/clustering-tunables";
+import { buildDefaultClusteringConfig, defaultSummaryLabels } from "@/lib/config/schema-defaults";
 import { logger } from "@/lib/logger";
 import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
@@ -1118,4 +1119,24 @@ export async function persistConfirmedEntities(
       data: { name: label, isActive: true },
     });
   }
+}
+
+/**
+ * Populates schema-level JSON columns the scan pipeline reads but the
+ * Stage 1/2 fast-discovery flow doesn't generate. Pairs with
+ * `persistConfirmedEntities` in the Stage 2 entity-confirm transaction.
+ * See `schema-defaults.ts` for the deterministic per-domain values.
+ */
+export async function seedSchemaDefaults(
+  tx: Prisma.TransactionClient,
+  schemaId: string,
+  domain: string | null | undefined,
+): Promise<void> {
+  await tx.caseSchema.update({
+    where: { id: schemaId },
+    data: {
+      clusteringConfig: buildDefaultClusteringConfig(domain) as unknown as Prisma.InputJsonValue,
+      summaryLabels: defaultSummaryLabels(domain) as unknown as Prisma.InputJsonValue,
+    },
+  });
 }

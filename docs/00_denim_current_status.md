@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-18 Late Evening (Issue #95 Task 6.1 integration-test rewrite + staleness fixes shipped; live E2E surfaced a Gmail reconnect loop; **issue #105 filed + fully executed in 8 commits** — new `GmailCredentials` bounded-context module, Zod at trust boundaries, typed `CredentialFailure` end-to-end, fail-closed callback, Biome `noRestrictedImports` rule enforcing server/client module split, legacy `gmail-tokens.ts` + `auth-errors.ts` deleted, lessons-learned entry for the class. GitGuardian alert addressed: DB creds sanitized at HEAD, `.claude/settings.local.json` untracked, Supabase password rotation pending user action. Next session: OAuth-playground test of the rewritten sign-in flow, then Phase 5 entry.)
+Last updated: 2026-04-19 Morning (OAuth-playground test on fresh schema — **#105 credentials refactor verified end-to-end** through Stage 1 → Stage 2 → scan → `COMPLETED` in 1m51s on a 200-email agency inbox. Surfaced a Phase 4 cutover gap: `persistConfirmedEntities` doesn't populate `schema.clusteringConfig` or `schema.summaryLabels`, so coarse clustering crashed on `undefined.fresh`. **Issue #109 filed + fixed in one session**: new `schema-defaults.ts` helpers, `seedSchemaDefaults` writer called inside the entity-confirm transaction, 20 new unit tests. Scan re-ran clean; 5 cases synthesized. Two additional regressions filed as follow-ups: **#111** (schema.name stuck at `"Setting up..."`), **#112** (user whats/whos ignored by Stage 1/2 discovery — Nick typed "Stallion" + "Farrukh Malik", neither surfaced). Next: address #111 + #112 before further runs.)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -917,6 +917,67 @@ Separate email alert from 2026-04-14 surfaced during the session. Investigation 
 3. **If OAuth-playground test is clean**, run a full live E2E through Stage 1 → Stage 2 → scan → COMPLETED. That's the live verification `Task 4.5` was blocked on.
 4. **Decide Phase 5 entry** (spec-as-config YAML loader per the trimmed corrections doc) based on E2E findings.
 5. **Pre-merge to main**: integration tests that depend on Inngest dev server running (`onboarding-routes`, `onboarding-polling`, `onboarding-state`, `onboarding-concurrent-start`) should still pass. Happy-path test (`RUN_E2E_HAPPY=1`) runs only against a real Gmail token — skipped by default.
+
+---
+
+## 2026-04-19 Morning Session — OAuth Playground Test + #109 Fix
+
+First morning session after the 2026-04-18 overnight #105 refactor. Goal: verify the credentials bounded-context works end-to-end through a full onboarding + scan. DB password was rotated pre-session per the security TODO.
+
+### Setup friction (non-code)
+
+Supabase pooler password propagation lag + a DIRECT_URL paste typo (missing `@`, wrong host shape) caused three false-start DB probes. Rotated password twice; eventually both URLs valid with identical credentials. Key lesson: pooler (6543) authentication can lag direct (5432) by up to several minutes after a password reset — not a code issue. Once DATABASE_URL authenticated, restarted `pnpm dev` so Next.js picked up fresh env (it captures `process.env` at startup, not per-request).
+
+Also learned: `prisma.user.deleteMany()` only clears the public-schema `User` table; it doesn't touch Supabase's `auth.users` — a stale Supabase Auth session cookie still counts as signed-in and bypasses `/auth/callback` entirely. Clean OAuth-callback test requires deleting the `auth.users` row (dashboard) in addition to the DB wipe.
+
+### #105 credentials refactor: verified good
+
+Fresh sign-in → consent → `/auth/callback` → `storeCredentials` → `user.googleTokens` populated. No `callback.storeTokens.failed` warn, no `TypeError: .includes is not a function`. Onboarding start pre-flight passed on first try. Schema `01KPK3TQKGW3QHAXDE1D6NE7BM` progressed through `DISCOVERING_DOMAINS` → `AWAITING_DOMAIN_CONFIRMATION` → `DISCOVERING_ENTITIES` → `AWAITING_ENTITY_CONFIRMATION` → `PROCESSING_SCAN`. The 2026-04-18 bug class is structurally gone.
+
+### #109 — Phase 4 cutover gap: coarse clustering crashed on first run
+
+**Symptom**: Run #1 reached clustering, failed with `TypeError: Cannot read properties of undefined (reading 'fresh')` at `packages/engine/src/clustering/scoring.ts:97` inside `timeDecayMultiplier`. Retried 3× via Inngest, died.
+
+**Root cause**: `createSchemaStub` writes `clusteringConfig: {}` as a placeholder (`apps/web/src/lib/services/interview.ts:348`). The legacy `persistSchemaRelations` overwrote it from `hypothesis.clusteringConfig`. The new Stage 2 `persistConfirmedEntities` writer only inserts/updates `Entity` rows — it never populates schema-level JSON columns. First live run through Stage 1/2 → scan was the first time the gap bit; unit tests pass because they cover the writer in isolation.
+
+**Audit** (grep across `apps/web/src` + `packages`):
+
+| Column | Read by | Severity |
+|---|---|---|
+| `clusteringConfig` / `tunedClusteringConfig` | `cluster.ts:115, 1232` | **CRITICAL** — crashes on `.timeDecayDays.fresh` deref |
+| `summaryLabels` | `synthesis.ts:215` + 2 read-API routes | **REQUIRED** — injected into synthesis Claude prompt |
+| `discoveryQueries` | `scan.ts:79` with `?? []` fallback | OK empty |
+| `primaryEntityConfig` / `extractionPrompt` / `synthesisPrompt` | no active reader | OK empty (tracked in #110) |
+
+**Fix landed this session**:
+- NEW `apps/web/src/lib/config/schema-defaults.ts` — `buildDefaultClusteringConfig(domain)` + `defaultSummaryLabels(domain)` pure helpers. Composes `CLUSTERING_TUNABLES.domainDefaults[domain]` + `.weights` + `.reminder` into the 9-field `ClusteringConfig`. Handles all 6 domains plus unknown-domain fallback to `general`. Per-domain `summaryLabels` duplicated from the prompt file (6 × 3 strings; small acceptable dup).
+- NEW `seedSchemaDefaults(tx, schemaId, domain)` writer in `interview.ts`. Single `tx.caseSchema.update`; deterministic; idempotent.
+- WIRED into `POST /api/onboarding/[schemaId]/entity-confirm/route.ts` inside the existing transaction, after `persistConfirmedEntities`. Extended initial `findUnique` to include `domain`.
+- 20 new unit tests in `__tests__/schema-defaults.test.ts` — all 6 domains covered for both helpers + fallback cases. Entity-confirm route test updated with the new mock and assertion.
+
+**Verification**: typecheck clean, 153/153 web unit tests pass, DB wiped, re-ran full flow. Second run: `phase=COMPLETED`, 200 emails discovered, 138 excluded by discovery, 62 clustered into 22 clusters, 5 cases synthesized (1 synthesis failed per AI-side Zod — stamped as terminal via the `e804b70` fix, scan completed cleanly), 7 actions extracted. Scan duration **1m 51s** on 200 emails — no longer gated on the #58 synthetic-ID bug + #88 extractBatch concurrency bump in prior commits, now with working clustering.
+
+### Two regressions surfaced + filed (not fixed this session)
+
+Nick examined the completed schema and flagged two gaps:
+
+- **#111** — `schema.name` stuck at `"Setting up..."`. Legacy `persistSchemaRelations` wrote the name from `hypothesis.name`; no analog in the new flow and `InterviewInput` has no `name` field. Proposed: add required name to the interview form + allow post-scan rename.
+- **#112** — User-entered `whats` and `whos` dropped on the floor. Nick typed `"Stallion"` (Stallion Investments) and `"Farrukh Malik"` (who emails from `stallionis.com`). Stage 1 top-5 didn't include `stallionis.com` (below the keyword-only threshold), and Stage 2 `deriveAgencyEntity` doesn't consult user hints. High severity — regression from the pre-#95 hypothesis flow where `userThings` threaded into discovery. 3-tier proposed fix in the issue body.
+
+### Commit + branch state
+
+One commit on `feature/perf-quality-sprint` covering #109 fix + tests + this session block. Nothing pushed to remote. Deviations log not updated (this wasn't a plan deviation, it was a Phase 4 integration gap).
+
+### Issues this session
+
+- **Filed**: #109 (Phase 4 cutover gap), #110 (audit unread schema columns — low-pri follow-up), #111 (schema.name stub), #112 (user hints ignored).
+- **Closed-implicitly**: #105 Gmail credentials refactor verification pending-live — now verified.
+
+### Next action on resume
+
+**Nick's call: fix #111 + #112 before any more live runs.** The product loop of "small hints → smart discovery → review → inclusion" is currently broken — testing anything else is working around a known regression.
+
+Speed note: 1m 51s on 200 emails is acceptable-ish; Nick wants to revisit on bigger schemas once the hint regression is closed.
 
 ---
 
