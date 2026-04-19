@@ -99,10 +99,12 @@ describe("POST /onboarding/:schemaId/domain-confirm", () => {
     );
     expect(res.status).toBe(200);
 
-    expect(mocks.writeStage2ConfirmedDomains).toHaveBeenCalledWith(expect.anything(), "s1", [
-      "portfolioproadvisors.com",
-      "stallionis.com",
-    ]);
+    expect(mocks.writeStage2ConfirmedDomains).toHaveBeenCalledWith(
+      expect.anything(),
+      "s1",
+      ["portfolioproadvisors.com", "stallionis.com"],
+      [], // #112 Tier 2: no user-contact queries in this repro
+    );
     expect(mocks.outboxCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
         schemaId: "s1",
@@ -115,6 +117,23 @@ describe("POST /onboarding/:schemaId/domain-confirm", () => {
         name: "onboarding.entity-discovery.requested",
         data: { schemaId: "s1", userId: "user-1" },
       }),
+    );
+  });
+
+  it("threads confirmedUserContactQueries through to writeStage2ConfirmedDomains (#112 Tier 2)", async () => {
+    mocks.writeStage2ConfirmedDomains.mockResolvedValueOnce(1);
+    const res = await POST(
+      makeRequest("s1", {
+        confirmedDomains: ["stallionis.com"],
+        confirmedUserContactQueries: ["farrukh malik", "margaret potter"],
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.writeStage2ConfirmedDomains).toHaveBeenCalledWith(
+      expect.anything(),
+      "s1",
+      ["stallionis.com"],
+      ["farrukh malik", "margaret potter"],
     );
   });
 });

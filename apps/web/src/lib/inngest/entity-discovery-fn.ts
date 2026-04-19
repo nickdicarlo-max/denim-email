@@ -46,6 +46,8 @@ export const runEntityDiscovery = inngest.createFunction(
             domain: true,
             phase: true,
             stage2ConfirmedDomains: true,
+            stage1UserContacts: true,
+            stage1ConfirmedUserContactQueries: true,
           },
         }),
       );
@@ -57,6 +59,52 @@ export const runEntityDiscovery = inngest.createFunction(
       const confirmed: string[] = (schema.stage2ConfirmedDomains as string[] | null) ?? [];
       if (confirmed.length === 0) {
         throw new Error(`Schema ${schemaId} has no confirmed Stage-1 domains`);
+      }
+
+      // #112 Tier 2: user-named contact seeds. Build a per-domain map of
+      // pre-confirmed SECONDARY candidates from the user's Stage 1
+      // "Your contacts" selections. Cross-reference the confirmed-query
+      // list against the Stage 1 discovery payload so we get the full
+      // senderEmail / senderDomain context back.
+      const userContacts = (schema.stage1UserContacts as Array<{
+        query: string;
+        matchCount: number;
+        senderEmail: string | null;
+        senderDomain: string | null;
+      }> | null) ?? [];
+      const confirmedQueries = new Set(
+        (schema.stage1ConfirmedUserContactQueries as string[] | null) ?? [],
+      );
+      const userSeedsByDomain = new Map<
+        string,
+        Array<{
+          key: string;
+          displayString: string;
+          frequency: number;
+          autoFixed: boolean;
+          meta: Record<string, unknown>;
+        }>
+      >();
+      for (const c of userContacts) {
+        if (!confirmedQueries.has(c.query)) continue;
+        if (!c.senderEmail || !c.senderDomain) continue;
+        if (!confirmed.includes(c.senderDomain)) continue;
+        const bucket = userSeedsByDomain.get(c.senderDomain) ?? [];
+        bucket.push({
+          // `@`-prefixed identityKey matches the reserved SECONDARY
+          // convention enforced by the entity-confirm Zod refine.
+          key: `@${c.senderEmail.toLowerCase()}`,
+          displayString: c.query,
+          frequency: c.matchCount,
+          autoFixed: false,
+          meta: {
+            source: "user_named",
+            senderEmail: c.senderEmail,
+            senderDomain: c.senderDomain,
+            kind: "SECONDARY",
+          },
+        });
+        userSeedsByDomain.set(c.senderDomain, bucket);
       }
 
       // Parallel fan-out, one step.run per domain. Inngest memoizes each
@@ -77,11 +125,19 @@ export const runEntityDiscovery = inngest.createFunction(
                 schemaDomain: schema.domain as DomainName,
                 confirmedDomain,
               });
+              // Prepend user-named seeds so they appear first in the
+              // review UI. Dedup by key to avoid a derived candidate
+              // with the same identity key re-appearing below its seed.
+              const seeds = userSeedsByDomain.get(confirmedDomain) ?? [];
+              const seedKeys = new Set(seeds.map((s) => s.key));
+              const derived = (r.candidates as Array<{ key: string }>).filter(
+                (c) => !seedKeys.has(c.key),
+              );
               return {
                 confirmedDomain,
                 algorithm: r.algorithm,
                 subjectsScanned: r.subjectsScanned,
-                candidates: r.candidates as unknown[],
+                candidates: [...seeds, ...derived] as unknown[],
                 errorCount: r.errorCount ?? 0,
                 failed: false,
               };

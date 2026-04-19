@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type {
   OnboardingPollingResponse,
@@ -10,38 +10,48 @@ import type {
 import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 
 /**
- * AWAITING_ENTITY_CONFIRMATION — Stage 2 review checkpoint (issue #95).
+ * AWAITING_ENTITY_CONFIRMATION — Stage 2 review checkpoint (issues #95 +
+ * #112 Tier 2 + #115).
  *
- * Renders per-confirmed-domain groups of entity candidates extracted by the
- * Stage 2 dispatcher (property addresses, school institutions, agency
- * company names). The user ticks the entities that are real and can rename
- * the display label inline. Confirming POSTs to `/entity-confirm`
- * (Task 3.2), which CAS-flips
- * `AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN` and emits
- * `onboarding.review.confirmed` to fire the existing Function B pipeline.
+ * Per-confirmed-domain groups of entity candidates. Two sources in the
+ * candidate list:
  *
- * identityKey rule: pass `candidate.key` through unchanged. The producer
- * (`entity-discovery.ts`) already normalizes per algorithm:
- *   - property  → `normalizeAddressKey` (lowercased, street-type collapsed).
- *   - school_parent → lowercased trimmed institution/activity name.
- *   - agency → `authoritativeDomain` (bare DNS label, e.g., "anthropic.com").
+ * 1. Algorithm-derived (autoDetected) — property addresses, school
+ *    institutions, agency first-token convergence. Kind = PRIMARY.
+ * 2. User-seeded (meta.source === "user_named", Tier 2) — surfaced from
+ *    the user's Stage 1 "Your contacts" selections via
+ *    `stage1ConfirmedUserContactQueries`. Kind = SECONDARY. Pre-checked
+ *    on mount because the user already confirmed intent on Stage 1.
  *
- * All Stage-2 kinds are PRIMARY by construction — SECONDARY (email-address
- * WHOs) don't come out of Stage 2. This also dodges the server-side guard
- * in `/entity-confirm` that rejects `@`-prefixed identityKeys paired with
- * PRIMARY.
+ * identityKey semantics stay the producer's:
+ *   - property         → normalized address (lowercased, street-type collapsed)
+ *   - school_parent    → lowercased trimmed institution/activity name
+ *   - agency (derived) → authoritative DNS label ("anthropic.com")
+ *   - user-seeded      → `@<senderEmail>` (matches SECONDARY convention in
+ *                        `/entity-confirm` Zod refine)
+ *
+ * Kind is derived per-candidate from `meta.kind`; falls back to PRIMARY to
+ * stay safe for pre-Tier-2 schemas with no `meta`.
  */
 
 type SubmitStatus = "idle" | "submitting" | "error";
+type Kind = "PRIMARY" | "SECONDARY";
 
 interface Pick {
   identityKey: string;
   displayLabel: string;
-  kind: "PRIMARY";
+  kind: Kind;
+  /** #115: rendered as a small "Added by you" badge on the row. */
+  isUserSeeded: boolean;
 }
 
-function identityKeyFor(candidate: Stage2DomainCandidateDTO): string {
-  return candidate.key;
+function kindFor(candidate: Stage2DomainCandidateDTO): Kind {
+  const kind = (candidate.meta?.kind as Kind | undefined) ?? "PRIMARY";
+  return kind === "SECONDARY" ? "SECONDARY" : "PRIMARY";
+}
+
+function isUserSeeded(candidate: Stage2DomainCandidateDTO): boolean {
+  return candidate.meta?.source === "user_named";
 }
 
 export function PhaseEntityConfirmation({ response }: { response: OnboardingPollingResponse }) {
@@ -50,15 +60,54 @@ export function PhaseEntityConfirmation({ response }: { response: OnboardingPoll
     [response.stage2Candidates],
   );
 
-  // Map from identityKey → current Pick. A Map keeps insertion order stable
-  // so the POST body mirrors the on-screen ordering.
-  const [picks, setPicks] = useState<Map<string, Pick>>(() => new Map());
+  // Pre-populate picks with every user-seeded candidate — the user
+  // ticked these on Stage 1 already; forcing a second click is the
+  // opacity problem we're fixing.
+  const [picks, setPicks] = useState<Map<string, Pick>>(() => {
+    const initial = new Map<string, Pick>();
+    for (const group of groups) {
+      for (const c of group.candidates) {
+        if (isUserSeeded(c)) {
+          initial.set(c.key, {
+            identityKey: c.key,
+            displayLabel: c.displayString,
+            kind: kindFor(c),
+            isUserSeeded: true,
+          });
+        }
+      }
+    }
+    return initial;
+  });
   const [labelEdits, setLabelEdits] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<SubmitStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Groups can arrive after the initial render (polling tick fills them
+  // in). Add any new user-seeded candidates to picks as they appear.
+  useEffect(() => {
+    setPicks((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const group of groups) {
+        for (const c of group.candidates) {
+          if (isUserSeeded(c) && !next.has(c.key)) {
+            next.set(c.key, {
+              identityKey: c.key,
+              displayLabel: c.displayString,
+              kind: kindFor(c),
+              isUserSeeded: true,
+            });
+            changed = true;
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [groups]);
+
   const toggle = (candidate: Stage2DomainCandidateDTO) => {
-    const key = identityKeyFor(candidate);
+    const key = candidate.key;
     setPicks((prev) => {
       const next = new Map(prev);
       if (next.has(key)) {
@@ -67,7 +116,8 @@ export function PhaseEntityConfirmation({ response }: { response: OnboardingPoll
         next.set(key, {
           identityKey: key,
           displayLabel: labelEdits[key] ?? candidate.displayString,
-          kind: "PRIMARY",
+          kind: kindFor(candidate),
+          isUserSeeded: isUserSeeded(candidate),
         });
       }
       return next;
@@ -127,55 +177,23 @@ export function PhaseEntityConfirmation({ response }: { response: OnboardingPoll
 
   return (
     <div className="w-full max-w-2xl mx-auto">
-      <h1 className="font-serif text-2xl text-primary">Which of these are relevant?</h1>
+      <h1 className="font-serif text-2xl text-primary">Confirm what to track</h1>
       <p className="text-muted text-sm mt-1">
-        Pick the items you want organized. You can rename any of them inline.
+        Things are topics Denim organizes emails into. Contacts are people you asked us to find.
+        You can rename any of them inline.
       </p>
 
       <div className="mt-6 flex flex-col gap-6">
         {groups.map((group) => (
-          <div key={group.confirmedDomain} className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium text-muted">{group.confirmedDomain}</h2>
-            <ul className="flex flex-col gap-2">
-              {group.candidates.map((candidate) => {
-                const key = identityKeyFor(candidate);
-                const isPicked = picks.has(key);
-                const inputValue = labelEdits[key] ?? candidate.displayString;
-                return (
-                  <li
-                    key={key}
-                    className="flex items-center gap-3 rounded-sm bg-surface-highest px-4 py-3"
-                  >
-                    <input
-                      type="checkbox"
-                      id={`entity-${key}`}
-                      checked={isPicked}
-                      onChange={() => toggle(candidate)}
-                      disabled={status === "submitting"}
-                      className="h-4 w-4 accent-accent"
-                    />
-                    <input
-                      type="text"
-                      aria-label={`Name for ${candidate.displayString}`}
-                      value={inputValue}
-                      onChange={(e) => editLabel(key, e.target.value)}
-                      disabled={!isPicked || status === "submitting"}
-                      className="flex-1 bg-transparent text-primary text-sm font-medium border-b border-transparent focus:border-accent focus:outline-none disabled:text-muted"
-                    />
-                    <span className="text-xs text-muted">{candidate.frequency}</span>
-                    {candidate.autoFixed && (
-                      <span
-                        className="text-[10px] uppercase tracking-wide text-accent"
-                        title="Variants merged automatically"
-                      >
-                        merged
-                      </span>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+          <DomainGroup
+            key={group.confirmedDomain}
+            group={group}
+            picks={picks}
+            labelEdits={labelEdits}
+            submitting={status === "submitting"}
+            onToggle={toggle}
+            onEditLabel={editLabel}
+          />
         ))}
       </div>
 
@@ -187,9 +205,142 @@ export function PhaseEntityConfirmation({ response }: { response: OnboardingPoll
         <Button onClick={submit} disabled={picks.size === 0 || status === "submitting"}>
           {status === "submitting"
             ? "Confirming…"
-            : `Confirm ${picks.size} ${picks.size === 1 ? "entity" : "entities"}`}
+            : `Confirm ${picks.size} ${picks.size === 1 ? "item" : "items"}`}
         </Button>
       </div>
     </div>
+  );
+}
+
+function DomainGroup({
+  group,
+  picks,
+  labelEdits,
+  submitting,
+  onToggle,
+  onEditLabel,
+}: {
+  group: Stage2PerDomainDTO;
+  picks: Map<string, Pick>;
+  labelEdits: Record<string, string>;
+  submitting: boolean;
+  onToggle: (c: Stage2DomainCandidateDTO) => void;
+  onEditLabel: (identityKey: string, value: string) => void;
+}) {
+  const hasCandidates = group.candidates.length > 0;
+
+  return (
+    <section className="flex flex-col gap-2">
+      <header className="flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-primary">
+          Inside <span className="font-mono text-accent-text">{group.confirmedDomain}</span>
+        </h2>
+        {hasCandidates && (
+          <span className="text-xs text-muted">
+            {group.candidates.length} item{group.candidates.length === 1 ? "" : "s"}
+          </span>
+        )}
+      </header>
+
+      {!hasCandidates ? (
+        <p className="text-xs text-muted italic bg-surface-mid rounded-sm px-4 py-3">
+          We didn't find specific things inside {group.confirmedDomain}. Denim will still track the
+          domain as a whole.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {group.candidates.map((candidate) => (
+            <CandidateRow
+              key={candidate.key}
+              candidate={candidate}
+              picked={picks.has(candidate.key)}
+              editedLabel={labelEdits[candidate.key]}
+              submitting={submitting}
+              onToggle={onToggle}
+              onEditLabel={onEditLabel}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function CandidateRow({
+  candidate,
+  picked,
+  editedLabel,
+  submitting,
+  onToggle,
+  onEditLabel,
+}: {
+  candidate: Stage2DomainCandidateDTO;
+  picked: boolean;
+  editedLabel: string | undefined;
+  submitting: boolean;
+  onToggle: (c: Stage2DomainCandidateDTO) => void;
+  onEditLabel: (identityKey: string, value: string) => void;
+}) {
+  const kind = kindFor(candidate);
+  const userSeeded = isUserSeeded(candidate);
+  const inputValue = editedLabel ?? candidate.displayString;
+  const senderEmail = (candidate.meta?.senderEmail as string | undefined) ?? null;
+  const frequency = candidate.frequency;
+
+  // User-seeded rows get a soft accent background so they read as
+  // "things you asked for" at a glance; derived rows stay neutral.
+  const rowBg = userSeeded ? "bg-upcoming-soft" : "bg-surface-highest";
+
+  return (
+    <li className={`flex flex-col gap-1 rounded-sm ${rowBg} px-4 py-3`}>
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          id={`entity-${candidate.key}`}
+          checked={picked}
+          onChange={() => onToggle(candidate)}
+          disabled={submitting}
+          className="h-4 w-4 accent-accent"
+        />
+        <input
+          type="text"
+          aria-label={`Name for ${candidate.displayString}`}
+          value={inputValue}
+          onChange={(e) => onEditLabel(candidate.key, e.target.value)}
+          disabled={!picked || submitting}
+          className="flex-1 bg-transparent text-primary text-sm font-medium border-b border-transparent focus:border-accent focus:outline-none disabled:text-primary"
+        />
+        <KindBadge kind={kind} />
+        <span className="text-xs text-muted whitespace-nowrap">
+          {frequency} email{frequency === 1 ? "" : "s"}
+        </span>
+      </div>
+      {(senderEmail || userSeeded || candidate.autoFixed) && (
+        <div className="flex items-center gap-2 pl-7 text-xs text-muted">
+          {senderEmail && <span className="font-mono">{senderEmail}</span>}
+          {userSeeded && (
+            <span className="text-upcoming-text font-medium">· Added by you</span>
+          )}
+          {candidate.autoFixed && (
+            <span className="uppercase tracking-wide text-accent" title="Variants merged">
+              · merged
+            </span>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function KindBadge({ kind }: { kind: Kind }) {
+  const label = kind === "PRIMARY" ? "Thing" : "Contact";
+  const style =
+    kind === "PRIMARY"
+      ? "bg-accent-soft text-accent-text"
+      : "bg-upcoming-soft text-upcoming-text";
+  return (
+    <span className={`text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5 ${style}`}>
+      {label}
+    </span>
   );
 }

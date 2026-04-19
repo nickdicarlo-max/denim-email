@@ -44,6 +44,12 @@ const BodySchema = z.object({
     )
     .min(1)
     .max(20),
+  // #112 Tier 2: user-who query strings the user ticked in the "Your
+  // contacts" section of the Stage 1 review. Stage 2 reads these
+  // alongside confirmedDomains to seed pre-confirmed SECONDARY entity
+  // candidates from stage1UserContacts. Optional — older clients (or
+  // users who didn't enter whos) omit it.
+  confirmedUserContactQueries: z.array(z.string().min(1).max(255)).max(20).optional(),
 });
 
 export const POST = withAuth(async ({ userId, request }) => {
@@ -61,7 +67,12 @@ export const POST = withAuth(async ({ userId, request }) => {
     // Atomic CAS + outbox. If updateMany matches 0 rows (wrong phase or
     // concurrent click), short-circuit without writing the outbox row.
     const updatedCount = await prisma.$transaction(async (tx) => {
-      const count = await writeStage2ConfirmedDomains(tx, schemaId!, body.confirmedDomains);
+      const count = await writeStage2ConfirmedDomains(
+        tx,
+        schemaId!,
+        body.confirmedDomains,
+        body.confirmedUserContactQueries ?? [],
+      );
       if (count === 0) return 0;
       await tx.onboardingOutbox.create({
         data: {

@@ -32,21 +32,30 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
 
   // Pre-check any user-named result with matches — user said they wanted it,
   // so default to including it. Discovered (keyword) candidates stay opt-in.
-  const initialSelection = useMemo(() => {
-    const s = new Set<string>();
+  const initial = useMemo(() => {
+    const domains = new Set<string>();
+    const contactQueries = new Set<string>();
     for (const t of userThings) {
-      if (t.matchCount > 0 && t.topDomain) s.add(t.topDomain);
+      if (t.matchCount > 0 && t.topDomain) domains.add(t.topDomain);
     }
     for (const c of userContacts) {
-      if (c.matchCount > 0 && c.senderDomain) s.add(c.senderDomain);
+      if (c.matchCount > 0 && c.senderDomain) {
+        domains.add(c.senderDomain);
+        contactQueries.add(c.query);
+      }
     }
-    return s;
+    return { domains, contactQueries };
     // Effectively a constant per-poll-response; the component unmounts when
     // phase advances past AWAITING_DOMAIN_CONFIRMATION.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [selected, setSelected] = useState<Set<string>>(initialSelection);
+  const [selected, setSelected] = useState<Set<string>>(initial.domains);
+  // #112 Tier 2: tracks which user-who query strings the user ticked so
+  // Stage 2 can seed them as pre-confirmed SECONDARY entity candidates.
+  const [selectedContactQueries, setSelectedContactQueries] = useState<Set<string>>(
+    initial.contactQueries,
+  );
   const [status, setStatus] = useState<SubmitStatus>("idle");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -59,6 +68,24 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
     });
   };
 
+  // Toggling a user-contact row mutates both sets: the domain (for
+  // Stage 2 to run on) and the query string (for Stage 2 to seed a
+  // pre-confirmed SECONDARY entity carrying the user's label + sender).
+  const toggleContact = (query: string, senderDomain: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(senderDomain)) next.delete(senderDomain);
+      else next.add(senderDomain);
+      return next;
+    });
+    setSelectedContactQueries((prev) => {
+      const next = new Set(prev);
+      if (next.has(query)) next.delete(query);
+      else next.add(query);
+      return next;
+    });
+  };
+
   const submit = async () => {
     if (selected.size === 0) return;
     setStatus("submitting");
@@ -67,7 +94,10 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
       const res = await authenticatedFetch(`/api/onboarding/${response.schemaId}/domain-confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmedDomains: [...selected] }),
+        body: JSON.stringify({
+          confirmedDomains: [...selected],
+          confirmedUserContactQueries: [...selectedContactQueries],
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -133,9 +163,11 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
               <UserContactRow
                 key={`contact-${c.query}`}
                 contact={c}
-                selected={c.senderDomain ? selected.has(c.senderDomain) : false}
+                selected={selectedContactQueries.has(c.query)}
                 submitting={status === "submitting"}
-                onToggle={() => c.senderDomain && toggle(c.senderDomain)}
+                onToggle={() =>
+                  c.senderDomain && toggleContact(c.query, c.senderDomain)
+                }
               />
             ))}
           </ul>

@@ -1073,11 +1073,18 @@ export async function writeStage2ConfirmedDomains(
   tx: Prisma.TransactionClient,
   schemaId: string,
   confirmedDomains: string[],
+  /** #112 Tier 2: user-who query strings the user ticked on the Stage 1
+   *  review. Stage 2 cross-references against `stage1UserContacts` to
+   *  seed pre-confirmed SECONDARY entity candidates. Empty array is the
+   *  legacy shape (no user-named contacts confirmed). */
+  confirmedUserContactQueries: string[] = [],
 ): Promise<number> {
   const { count } = await tx.caseSchema.updateMany({
     where: { id: schemaId, phase: "AWAITING_DOMAIN_CONFIRMATION" },
     data: {
       stage2ConfirmedDomains: confirmedDomains as unknown as Prisma.InputJsonValue,
+      stage1ConfirmedUserContactQueries:
+        confirmedUserContactQueries as unknown as Prisma.InputJsonValue,
       phase: "DISCOVERING_ENTITIES",
       phaseUpdatedAt: new Date(),
     },
