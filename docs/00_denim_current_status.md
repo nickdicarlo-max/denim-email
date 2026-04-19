@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-19 Morning (OAuth-playground test on fresh schema — **#105 credentials refactor verified end-to-end** through Stage 1 → Stage 2 → scan → `COMPLETED` in 1m51s on a 200-email agency inbox. Surfaced a Phase 4 cutover gap: `persistConfirmedEntities` doesn't populate `schema.clusteringConfig` or `schema.summaryLabels`, so coarse clustering crashed on `undefined.fresh`. **Issue #109 filed + fixed in one session**: new `schema-defaults.ts` helpers, `seedSchemaDefaults` writer called inside the entity-confirm transaction, 20 new unit tests. Scan re-ran clean; 5 cases synthesized. Two additional regressions filed as follow-ups: **#111** (schema.name stuck at `"Setting up..."`), **#112** (user whats/whos ignored by Stage 1/2 discovery — Nick typed "Stallion" + "Farrukh Malik", neither surfaced). Next: address #111 + #112 before further runs.)
+Last updated: 2026-04-19 Morning (Four-issue arc in one session — **#105 credentials refactor verified end-to-end**, then four regressions surfaced + shipped on `feature/perf-quality-sprint`: **#109** (Phase 4 cutover gap, `seedSchemaDefaults` writer for `clusteringConfig` + `summaryLabels`), **#113** (sessionStorage draft leak between topics, three "Add Topic" entry points + category-change safety net), **#111** (schema.name stub, user-provided name field + deterministic `composeFallbackSchemaName` from first confirmed PRIMARY), **#112 Tier 1** (find-or-tell user-hint discovery — parallel Stage 1 passes with "found N emails at domain.com" or "no emails found in the last 8 weeks" for every user what/who). Final live run: Nick typed `stallion` + `portfolio pro advisors` + `guitar` + Farrukh / Margaret / George / Vernon; every hit surfaced with counts, every miss explicitly labeled, Stage 2 confirmed both stallionis.com and portfolioproadvisors.com (vs prior run where Stallion was silently dropped), 8 cases synthesized. Follow-ups filed: #110 (audit unread schema JSON cols), #114 (AI name upgrade + rename UI), #115 (Stage 2 entity-confirmation UX opacity). Next: #115 + #112 Tier 2.)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -978,6 +978,56 @@ One commit on `feature/perf-quality-sprint` covering #109 fix + tests + this ses
 **Nick's call: fix #111 + #112 before any more live runs.** The product loop of "small hints → smart discovery → review → inclusion" is currently broken — testing anything else is working around a known regression.
 
 Speed note: 1m 51s on 200 emails is acceptable-ish; Nick wants to revisit on bigger schemas once the hint regression is closed.
+
+---
+
+## 2026-04-19 Late Morning Session — #113 + #111 + #112 Tier 1
+
+Continuation of the same morning session. Closed three of the regressions surfaced during the #109 fix verification, and filed one more that turned up on the verification run.
+
+### Commits landed on `feature/perf-quality-sprint` (4 total, stacked on `4678814`)
+
+| Commit | Issue | Summary |
+|---|---|---|
+| `4678814` | #109 | (earlier) seed `clusteringConfig` + `summaryLabels` on entity-confirm |
+| `04aa46d` | #113 | Clear sessionStorage draft when user starts a new topic. Three entry points wired (`settings/topics/topic-list-client.tsx`, `settings/page.tsx`, `feed/empty-state.tsx`) plus a category-change safety net in `category/page.tsx` `handleContinue` that drops stale names when the user picks a different role/domain. |
+| `e619058` | #111 | User-provided name field in the interview form + deterministic fallback. `InterviewInput.name` optional (types + Zod + sessionStorage). `createSchemaStub` now writes the user-provided name straight to `schema.name`; if absent, the stub's `"Setting up..."` placeholder remains visible until entity-confirm, where `seedSchemaName` composes a fallback from the first confirmed PRIMARY entity's displayLabel (or a domain-tailored title when no PRIMARY is confirmed). AI-generated name upgrade + post-scan rename UI tracked as #114. |
+| `374c7ed` | #112 Tier 1 | Find-or-tell user-hint discovery at Stage 1. Three parallel Gmail searches: existing keyword-domain (ideation) + per-user-what (`"Stallion"` full-text) + per-user-who (`from:"Farrukh Malik"`). All three share the `fetchFromHeaders` primitive and run concurrently; one failure is isolated (`matchCount: 0, errorCount: 1`). Two new additive JSONB columns (`stage1UserThings`, `stage1UserContacts`). Stage 1 review UI restructured into three sections with pre-checked user-named rows flowing into the same `confirmedDomains` payload. 12 new primitive unit tests + entity-confirm route test updates. Tier 2 (pre-confirmed SECONDARY entity creation from user-named contacts at entity-confirm time) deferred. |
+
+Test count: 153 → 173 over the four commits. Typecheck clean on every workspace at every commit.
+
+### Final live E2E (schema `01KPK7GQCC972MWAK2K284PKV0`)
+
+Fresh user, fresh Supabase Auth + browser cookies. Interview inputs on purpose designed to exercise every branch:
+
+| Hint | Category | Result persisted in `stage1UserThings` / `stage1UserContacts` |
+|---|---|---|
+| `stallion` | what | 9 emails at stallionis.com, top sender Farrukh Malik |
+| `portfolio pro advisors` | what | 43 emails at portfolioproadvisors.com (George Trevino + Margaret Potter) |
+| `guitar` | what | **0 matches — explicit null** (the "tell" half of find-or-tell) |
+| `farrukh malik` | who | 4 emails at fmalik@stallionis.com |
+| `margaret potter` | who | 26 emails at mpotter@portfolioproadvisors.com |
+| `george trevino` | who | 21 emails at gtrevino@portfolioproadvisors.com |
+| `vernon maxwell` | who | **0 matches — explicit null** |
+
+Stage 2 received `confirmedDomains = ["stallionis.com", "portfolioproadvisors.com"]` — **Stallion is no longer silently dropped** (was the core #112 bug). Scan completed: 8 cases, 0 failures. Schema `name` = `"Control Surface Consulting"` (user-provided), not the stub. #113 confirmed by Nick's qualitative "much better" — no visible input leak.
+
+### Issues this session
+
+- **Closed**: #109, #111, #113. #112 Tier 1 landed; Tier 2 tracked inside the #112 issue body for a future session.
+- **Filed**: #110 (audit unread schema JSON cols — primaryEntityConfig, extractionPrompt, synthesisPrompt, discoveryQueries fallback), #114 (AI name upgrade + post-scan rename UI), #115 (Stage 2 entity-confirmation UX is opaque — checkboxes labeled "farrukh" and "portfolioproadvisors" with no context or framing; surfaced by Nick on the final live run).
+
+### Soft observations (not blockers)
+
+- `deriveAgencyEntity` derived Farrukh as a **PRIMARY** entity rather than SECONDARY — the algorithm's first-token-convergence logic treats a single-sender domain as the org's PRIMARY representative. Conflates with the user's mental model where Farrukh was typed as a who (SECONDARY). Folds into #115's proposed "Thing vs Contact" badge + #112 Tier 2's pre-confirmed SECONDARY creation.
+- Only 2 entities in the final DB (`Portfolioproadvisors` + `Farrukh`) despite 8 synthesized cases. Stage 2 doesn't surface individual senders when the agency algorithm falls back to domain-name labeling for a non-convergent domain. Margaret / George were absorbed into the PPA entity.
+
+### Next action on resume
+
+1. **#115 first** — it's the user's last touch-point before scan kicks off and Nick explicitly flagged the opacity. Low-lift: header + row format + badge + empty-state copy. Should bundle naturally with:
+2. **#112 Tier 2** — pre-confirmed SECONDARY entity creation from Stage 1's confirmed user-named contacts. Means Farrukh appears on Stage 2 review as a pre-checked SECONDARY with an "Added by you" badge regardless of what the algorithm derives.
+3. Deferred (filed for later): #110 schema-col audit, #114 AI name + rename UI.
+4. After #115 + #112 Tier 2 land clean → revisit speed on bigger schemas.
 
 ---
 
