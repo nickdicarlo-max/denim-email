@@ -1,9 +1,20 @@
-import Link from "next/link";
+"use client";
+
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { onboardingStorage } from "@/lib/onboarding-storage";
 
 type Variant = "processing" | "caught-up" | "no-topics";
 
 export function FeedEmptyState({ variant }: { variant: Variant }) {
+  const router = useRouter();
+  // Issue #113: Get Started must not inherit prior schema's sessionStorage
+  // draft (e.g. if a user had a completed schema that was deleted).
+  const startNewTopic = () => {
+    onboardingStorage.clearAll();
+    router.push("/onboarding/category");
+  };
+
   if (variant === "processing") {
     return (
       <div className="text-center py-12 px-6">
@@ -25,11 +36,9 @@ export function FeedEmptyState({ variant }: { variant: Variant }) {
         <p className="text-sm text-secondary mb-6 max-w-sm mx-auto">
           Set up your first topic to get started.
         </p>
-        <Link href="/onboarding/category">
-          <Button variant="primary" fullWidth={false}>
-            Get Started
-          </Button>
-        </Link>
+        <Button variant="primary" fullWidth={false} onClick={startNewTopic}>
+          Get Started
+        </Button>
       </div>
     );
   }

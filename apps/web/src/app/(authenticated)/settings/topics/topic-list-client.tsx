@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { onboardingStorage } from "@/lib/onboarding-storage";
 
 interface Topic {
   id: string;
@@ -14,17 +15,25 @@ interface Topic {
 }
 
 export function TopicListClient({ topics }: { topics: Topic[] }) {
+  const router = useRouter();
+  // Issue #113: starting a new topic must not inherit prior schema's sessionStorage
+  // draft (whats/whos/category/schemaId). clearAll() before navigating.
+  const startNewTopic = () => {
+    onboardingStorage.clearAll();
+    router.push("/onboarding/category");
+  };
   return (
     <div className="px-6 py-6 max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="font-serif text-2xl font-bold text-primary tracking-wide">My Topics</h1>
-        <Link
-          href="/onboarding/category"
-          className="text-sm font-medium text-accent flex items-center gap-1"
+        <button
+          type="button"
+          onClick={startNewTopic}
+          className="text-sm font-medium text-accent flex items-center gap-1 cursor-pointer"
         >
           <span className="material-symbols-outlined text-[18px]">add</span>
           Add Topic
-        </Link>
+        </button>
       </div>
 
       {topics.length === 0 ? (

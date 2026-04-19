@@ -17,6 +17,17 @@ export default function CategoryPage() {
     const role = ROLE_OPTIONS.find((r) => r.id === selected);
     if (!role) return;
 
+    // Issue #113 safety net: if the user changed category (either by starting a
+    // new topic or backing up and picking a different role), drop any prior
+    // whats/whos — they were entered under a different domain's prompts and
+    // examples. The "Add Topic" entry points already call clearAll(), but this
+    // guards against direct navigation, refresh, or mid-flow category changes.
+    const prior = onboardingStorage.getCategory();
+    if (prior && (prior.role !== role.id || prior.domain !== role.domain)) {
+      onboardingStorage.setNames({ whats: [], whos: [] });
+      onboardingStorage.clearSchemaId();
+    }
+
     onboardingStorage.setCategory({
       role: role.id,
       domain: role.domain,
