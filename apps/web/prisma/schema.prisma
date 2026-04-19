@@ -169,6 +169,11 @@ model CaseSchema {
   stage1QueryUsed     String?
   stage1MessagesSeen  Int?
   stage1ErrorCount    Int?
+  // User-hint discovery parallel passes. Issue #112. Stored here (not inside
+  // stage1Candidates) so the review UI can render them as distinct sections
+  // and so "no results" entries persist without polluting the domain ranking.
+  stage1UserThings    Json     @default("[]")
+  stage1UserContacts  Json     @default("[]")
 
   // Fast-discovery Stage 2 — user-confirmed domains + per-domain entity candidates. Issue #95.
   stage2ConfirmedDomains  Json?

@@ -1007,6 +1007,23 @@ export interface Stage1Result {
   queryUsed: string;
   messagesSeen: number;
   errorCount: number;
+  /** #112: per-user-what find-or-tell results. Always same length as
+   *  `inputs.whats`, including zero-match entries. */
+  userThings: Array<{
+    query: string;
+    matchCount: number;
+    topDomain: string | null;
+    topSenders: ReadonlyArray<string>;
+    errorCount: number;
+  }>;
+  /** #112: per-user-who find-or-tell results. Same semantics as userThings. */
+  userContacts: Array<{
+    query: string;
+    matchCount: number;
+    senderEmail: string | null;
+    senderDomain: string | null;
+    errorCount: number;
+  }>;
 }
 
 export async function writeStage1Result(schemaId: string, result: Stage1Result): Promise<void> {
@@ -1017,6 +1034,8 @@ export async function writeStage1Result(schemaId: string, result: Stage1Result):
       stage1QueryUsed: result.queryUsed,
       stage1MessagesSeen: result.messagesSeen,
       stage1ErrorCount: result.errorCount,
+      stage1UserThings: result.userThings as unknown as Prisma.InputJsonValue,
+      stage1UserContacts: result.userContacts as unknown as Prisma.InputJsonValue,
     },
   });
 }

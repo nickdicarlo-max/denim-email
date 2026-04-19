@@ -12,6 +12,10 @@
 import { GmailCredentialError } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverDomains } from "@/lib/discovery/domain-discovery";
+import {
+  discoverUserNamedContacts,
+  discoverUserNamedThings,
+} from "@/lib/discovery/user-hints-discovery";
 import { GmailClient } from "@/lib/gmail/client";
 import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
@@ -54,13 +58,30 @@ export const runDomainDiscovery = inngest.createFunction(
           work: async () => {
             const accessToken = await getAccessToken(userId);
             const gmail = new GmailClient(accessToken);
-            const inputs = schema.inputs as { userEmail?: string } | null;
+            const inputs = schema.inputs as {
+              userEmail?: string;
+              whats?: string[];
+              whos?: string[];
+            } | null;
             const userDomain = (inputs?.userEmail ?? "").split("@")[1]?.toLowerCase() ?? "";
-            return discoverDomains({
-              gmailClient: gmail,
-              domain: schema.domain as DomainName,
-              userDomain,
-            });
+            const whats = inputs?.whats ?? [];
+            const whos = inputs?.whos ?? [];
+
+            // #112: keyword-domain pass (current) + per-what + per-who passes
+            // run in parallel. Total wall ≈ max of the three; Gmail calls are
+            // independent. One failure in any branch is isolated inside the
+            // respective helper (see user-hints-discovery.ts — errors mark
+            // `matchCount: 0, errorCount: 1` rather than rejecting).
+            const [domains, userThings, userContacts] = await Promise.all([
+              discoverDomains({
+                gmailClient: gmail,
+                domain: schema.domain as DomainName,
+                userDomain,
+              }),
+              discoverUserNamedThings(gmail, whats, userDomain),
+              discoverUserNamedContacts(gmail, whos),
+            ]);
+            return { ...domains, userThings, userContacts };
           },
         });
       });
@@ -80,6 +101,8 @@ export const runDomainDiscovery = inngest.createFunction(
           queryUsed: result.queryUsed,
           messagesSeen: result.messagesSeen,
           errorCount: result.errorCount,
+          userThings: result.userThings,
+          userContacts: result.userContacts,
         });
         await advanceSchemaPhase({
           schemaId,
@@ -96,11 +119,17 @@ export const runDomainDiscovery = inngest.createFunction(
         candidateCount: result.candidates.length,
         messagesSeen: result.messagesSeen,
         errorCount: result.errorCount,
+        userThingsFound: result.userThings.filter((t) => t.matchCount > 0).length,
+        userThingsMissing: result.userThings.filter((t) => t.matchCount === 0).length,
+        userContactsFound: result.userContacts.filter((c) => c.matchCount > 0).length,
+        userContactsMissing: result.userContacts.filter((c) => c.matchCount === 0).length,
       });
 
       return {
         candidates: result.candidates.length,
         errorCount: result.errorCount,
+        userThings: result.userThings.length,
+        userContacts: result.userContacts.length,
       };
     } catch (err) {
       // Every auth failure path now throws GmailCredentialError -- either

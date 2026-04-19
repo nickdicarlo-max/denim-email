@@ -55,6 +55,24 @@ export interface Stage1CandidateDTO {
   count: number;
 }
 
+/** #112: per-user-what find-or-tell result surfaced on Stage 1 review. */
+export interface Stage1UserThingDTO {
+  query: string;
+  matchCount: number;
+  topDomain: string | null;
+  topSenders: ReadonlyArray<string>;
+  errorCount: number;
+}
+
+/** #112: per-user-who find-or-tell result surfaced on Stage 1 review. */
+export interface Stage1UserContactDTO {
+  query: string;
+  matchCount: number;
+  senderEmail: string | null;
+  senderDomain: string | null;
+  errorCount: number;
+}
+
 export interface Stage2DomainCandidateDTO {
   key: string;
   displayString: string;
@@ -86,6 +104,9 @@ export interface OnboardingPollingResponse {
   // Present during DISCOVERING_DOMAINS / AWAITING_DOMAIN_CONFIRMATION.
   stage1Candidates?: Stage1CandidateDTO[];
   stage1QueryUsed?: string;
+  // #112: user-hint find-or-tell results surfaced alongside stage1Candidates.
+  stage1UserThings?: Stage1UserThingDTO[];
+  stage1UserContacts?: Stage1UserContactDTO[];
   // Present during DISCOVERING_ENTITIES / AWAITING_ENTITY_CONFIRMATION.
   stage2Candidates?: Stage2PerDomainDTO[];
 }
@@ -196,6 +217,8 @@ export async function derivePollingResponse(
       phase: schema.phase,
       stage1Candidates: (schema.stage1Candidates as Stage1CandidateDTO[] | null) ?? [],
       stage1QueryUsed: schema.stage1QueryUsed ?? undefined,
+      stage1UserThings: (schema.stage1UserThings as Stage1UserThingDTO[] | null) ?? [],
+      stage1UserContacts: (schema.stage1UserContacts as Stage1UserContactDTO[] | null) ?? [],
     };
   }
 
