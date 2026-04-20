@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GmailClient } from "@/lib/gmail/client";
 import * as fetchModule from "../gmail-metadata-fetch";
-import {
-  discoverUserNamedContacts,
-  discoverUserNamedThings,
-} from "../user-hints-discovery";
+import { discoverUserNamedContacts, discoverUserNamedThings } from "../user-hints-discovery";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -104,9 +101,7 @@ describe("discoverUserNamedThings", () => {
 describe("discoverUserNamedThings — #117 pairing + safety filter", () => {
   it("paired WHAT gets topDomain from the chosen paired WHO (highest matchCount)", async () => {
     // Full-text returns noise; pairing should override with the WHO's real domain.
-    mockFetch([
-      { messageId: "1", fromHeader: "Bucknell <news@bucknell.edu>" },
-    ]);
+    mockFetch([{ messageId: "1", fromHeader: "Bucknell <news@bucknell.edu>" }]);
     const whoResults = [
       {
         query: "Ziad Allan",

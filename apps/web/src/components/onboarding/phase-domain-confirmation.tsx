@@ -110,8 +110,7 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
     }
   };
 
-  const hasAnyResults =
-    candidates.length > 0 || userThings.length > 0 || userContacts.length > 0;
+  const hasAnyResults = candidates.length > 0 || userThings.length > 0 || userContacts.length > 0;
 
   if (!hasAnyResults) {
     return (
@@ -155,9 +154,7 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
       {userContacts.length > 0 && (
         <section className="mt-8">
           <h2 className="font-serif text-lg text-primary">Your contacts</h2>
-          <p className="text-xs text-muted">
-            People you named, in the last 8 weeks of mail.
-          </p>
+          <p className="text-xs text-muted">People you named, in the last 8 weeks of mail.</p>
           <ul className="mt-3 flex flex-col gap-2">
             {userContacts.map((c) => (
               <UserContactRow
@@ -165,9 +162,7 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
                 contact={c}
                 selected={selectedContactQueries.has(c.query)}
                 submitting={status === "submitting"}
-                onToggle={() =>
-                  c.senderDomain && toggleContact(c.query, c.senderDomain)
-                }
+                onToggle={() => c.senderDomain && toggleContact(c.query, c.senderDomain)}
               />
             ))}
           </ul>
@@ -247,9 +242,7 @@ function UserThingRow({
         <span className="material-symbols-outlined text-[18px] text-muted">search_off</span>
         <div className="flex flex-1 items-center justify-between">
           <span className="font-medium text-primary">{thing.query}</span>
-          <span className="text-xs text-muted">
-            No emails found in the last 8 weeks
-          </span>
+          <span className="text-xs text-muted">No emails found in the last 8 weeks</span>
         </div>
       </li>
     );
@@ -297,9 +290,7 @@ function UserContactRow({
         <span className="material-symbols-outlined text-[18px] text-muted">search_off</span>
         <div className="flex flex-1 items-center justify-between">
           <span className="font-medium text-primary">{contact.query}</span>
-          <span className="text-xs text-muted">
-            No emails found in the last 8 weeks
-          </span>
+          <span className="text-xs text-muted">No emails found in the last 8 weeks</span>
         </div>
       </li>
     );

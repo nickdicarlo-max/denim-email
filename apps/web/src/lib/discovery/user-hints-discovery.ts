@@ -17,7 +17,7 @@
 import type { EntityGroupInput } from "@denim/types";
 import type { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
-import { fetchFromHeaders, type FromHeaderResult } from "./gmail-metadata-fetch";
+import { type FromHeaderResult, fetchFromHeaders } from "./gmail-metadata-fetch";
 import { isPublicProvider } from "./public-providers";
 
 /** Max Gmail matches fetched per user-named query. Small cap — we only need
@@ -129,8 +129,7 @@ function aggregateThingResult(
       nameCounts.set(displayName, (nameCounts.get(displayName) ?? 0) + 1);
     }
   }
-  const topDomain =
-    [...domainCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const topDomain = [...domainCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const topSenders = [...nameCounts.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
@@ -292,4 +291,4 @@ export async function discoverUserNamedContacts(
   return results;
 }
 
-export { USER_HINT_LOOKBACK_DAYS, MAX_PER_HINT };
+export { MAX_PER_HINT, USER_HINT_LOOKBACK_DAYS };
