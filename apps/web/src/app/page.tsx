@@ -3,7 +3,53 @@ import { GetStartedButton } from "@/components/landing/get-started-button";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-export default async function Home() {
+/**
+ * Copy for the sign-in-failure banner. Keyed on the `reason` param from
+ * `/auth/callback`'s errorRedirect (and, when present, the `detail` param
+ * which carries the typed `CredentialFailure.reason` for deeper classification).
+ *
+ * The callback fails closed — every failure path reaches this page, not a
+ * happy-path redirect. Before #124 we rendered nothing for these, so users
+ * saw an identical landing page after a silent failure. Now they see a
+ * specific remedy.
+ */
+function authErrorCopy(reason: string, detail?: string): { title: string; body: string } {
+  // #124: typed account_conflict — OAuth won't fix this, contact support.
+  if (reason === "CREDENTIAL_STORE_FAILED" && detail === "account_conflict") {
+    return {
+      title: "Sign-in blocked by a data conflict",
+      body: "Your Google account signed in, but a conflicting record is blocking account setup. Reconnecting won't fix it — please contact support with this error code: account_conflict.",
+    };
+  }
+  if (reason === "CREDENTIAL_STORE_FAILED") {
+    return {
+      title: "Couldn't save your Google credentials",
+      body: "Sign-in succeeded but we couldn't persist your access. Try signing in again; if the problem repeats, contact support.",
+    };
+  }
+  if (reason === "TOKEN_SHAPE_INVALID") {
+    return {
+      title: "Google didn't return the expected tokens",
+      body: "This usually means a permission was denied on the Google consent screen. Try signing in again and grant the Gmail read permission.",
+    };
+  }
+  if (reason === "EXCHANGE_FAILED") {
+    return {
+      title: "Google sign-in exchange failed",
+      body: "Try signing in again. If the problem repeats, contact support.",
+    };
+  }
+  return {
+    title: "Sign-in failed",
+    body: "Try again. If the problem repeats, contact support.",
+  };
+}
+
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   let redirectTo: string | null = null;
 
   try {
@@ -26,6 +72,16 @@ export default async function Home() {
     redirect(redirectTo);
   }
 
+  const resolvedParams = await searchParams;
+  const authError = resolvedParams.auth_error === "true";
+  const reasonParam = Array.isArray(resolvedParams.reason)
+    ? resolvedParams.reason[0]
+    : resolvedParams.reason;
+  const detailParam = Array.isArray(resolvedParams.detail)
+    ? resolvedParams.detail[0]
+    : resolvedParams.detail;
+  const authCopy = authError && reasonParam ? authErrorCopy(reasonParam, detailParam) : null;
+
   return (
     <main className="min-h-screen bg-surface flex flex-col">
       {/* Header */}
@@ -33,6 +89,15 @@ export default async function Home() {
         <span className="text-xl font-bold text-primary tracking-tight">denim</span>
         <GetStartedButton />
       </header>
+
+      {authCopy && (
+        <div className="max-w-2xl mx-auto w-full px-6 mt-4">
+          <div className="rounded-lg bg-accent-soft border border-border p-4">
+            <h2 className="font-semibold text-accent-text text-base">{authCopy.title}</h2>
+            <p className="text-sm text-accent-text mt-1">{authCopy.body}</p>
+          </div>
+        </div>
+      )}
 
       {/* Hero */}
       <section className="flex-1 flex flex-col items-center justify-center text-center px-6 pb-20">

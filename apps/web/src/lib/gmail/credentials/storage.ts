@@ -220,6 +220,14 @@ function safeJsonParse(s: string): unknown {
  * Upsert the user row with an encrypted blob. Used only by the
  * `storeCredentials` public API. Keeps the raw Prisma call isolated so
  * the service module stays focused on validation + typed-error surfacing.
+ *
+ * #124 failure shape: `where:{id}` misses when auth.users id rotated (e.g.
+ * manual Supabase Auth dashboard delete) while the public.users row carrying
+ * that email survived — the surviving row blocks `create` with P2002 on
+ * the email unique constraint. Rethrow as typed `account_conflict` so the
+ * callback's typed-error branch surfaces a useful reason to the UI instead
+ * of falling through to the generic "unexpected" path (which carries no
+ * detail and looks identical to a database outage).
  */
 export async function upsertEncryptedBlob(
   userId: string,
@@ -227,11 +235,29 @@ export async function upsertEncryptedBlob(
   blob: StoredTokenBlob,
 ): Promise<void> {
   const encrypted = encryptBlob(blob);
-  await prisma.user.upsert({
-    where: { id: userId },
-    create: { id: userId, email, googleTokens: encrypted },
-    update: { googleTokens: encrypted },
-  });
+  try {
+    await prisma.user.upsert({
+      where: { id: userId },
+      create: { id: userId, email, googleTokens: encrypted },
+      update: { googleTokens: encrypted },
+    });
+  } catch (err) {
+    // Duck-type check for P2002. Avoids a runtime import of
+    // PrismaClientKnownRequestError (version-sensitive) and is resilient
+    // to the Turbopack class-duplication class (see #107).
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code: unknown }).code === "P2002"
+    ) {
+      throw new GmailCredentialError(
+        "Email is already associated with a different account id — operator cleanup required",
+        credentialFailure("account_conflict"),
+      );
+    }
+    throw err;
+  }
 }
 
 export async function readEncryptedBlob(userId: string): Promise<string | null> {

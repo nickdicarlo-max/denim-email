@@ -28,9 +28,15 @@ export type CredentialFailureReason =
   | "scope_insufficient"
   | "revoked"
   | "refresh_failed"
-  | "decrypt_failed";
+  | "decrypt_failed"
+  // #124: auth.users id rotated (manual Supabase Auth dashboard delete, or
+  // Supabase recycling) while a public.users row with the same email survived.
+  // `prisma.user.upsert where:{id}` misses → falls to `create` → P2002 on the
+  // email unique constraint. User-level OAuth recovery does NOT fix this —
+  // the stale public.users row has to be reconciled by an operator.
+  | "account_conflict";
 
-export type CredentialRemedy = "reconnect" | "retry";
+export type CredentialRemedy = "reconnect" | "retry" | "contact_support";
 
 export interface CredentialFailure {
   reason: CredentialFailureReason;
@@ -39,9 +45,12 @@ export interface CredentialFailure {
 
 /**
  * Remedy is derived from reason so callers can't construct mismatched
- * pairs. All five current reasons map to `reconnect` — the user needs to
- * redo OAuth. `retry` is reserved for future transient failure modes
- * (e.g. Google /token temporary 5xx) that don't require re-consent.
+ * pairs. Most reasons map to `reconnect` — the user needs to redo OAuth.
+ * `retry` is reserved for future transient failure modes (e.g. Google
+ * /token temporary 5xx) that don't require re-consent.
+ * `contact_support` is for states where neither OAuth nor retry helps —
+ * currently only `account_conflict` (#124), which requires operator-side
+ * reconciliation of a stale public.users row.
  */
 export function remedyFor(reason: CredentialFailureReason): CredentialRemedy {
   switch (reason) {
@@ -51,6 +60,8 @@ export function remedyFor(reason: CredentialFailureReason): CredentialRemedy {
     case "refresh_failed":
     case "decrypt_failed":
       return "reconnect";
+    case "account_conflict":
+      return "contact_support";
   }
 }
 

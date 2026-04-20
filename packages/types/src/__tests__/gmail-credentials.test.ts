@@ -4,6 +4,7 @@ import {
   credentialFailure,
   extractCredentialFailure,
   isCredentialFailure,
+  remedyFor,
 } from "../gmail-credentials";
 
 describe("isCredentialFailure", () => {
@@ -66,5 +67,30 @@ describe("extractCredentialFailure", () => {
   it("returns undefined when credentialFailure is malformed", () => {
     const bad = { credentialFailure: { reason: "x" } }; // missing remedy
     expect(extractCredentialFailure(bad)).toBeUndefined();
+  });
+});
+
+describe("remedyFor", () => {
+  it("maps reconnect-category reasons to `reconnect`", () => {
+    expect(remedyFor("absent")).toBe("reconnect");
+    expect(remedyFor("scope_insufficient")).toBe("reconnect");
+    expect(remedyFor("revoked")).toBe("reconnect");
+    expect(remedyFor("refresh_failed")).toBe("reconnect");
+    expect(remedyFor("decrypt_failed")).toBe("reconnect");
+  });
+
+  // #124: account_conflict is NOT user-recoverable via OAuth — reconnecting
+  // would hit the same P2002. `contact_support` is the honest remedy.
+  it("maps account_conflict to `contact_support`", () => {
+    expect(remedyFor("account_conflict")).toBe("contact_support");
+  });
+});
+
+describe("credentialFailure constructor", () => {
+  it("couples account_conflict with contact_support remedy", () => {
+    expect(credentialFailure("account_conflict")).toEqual({
+      reason: "account_conflict",
+      remedy: "contact_support",
+    });
   });
 });

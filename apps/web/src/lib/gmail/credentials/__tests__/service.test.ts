@@ -215,6 +215,53 @@ describe("storeCredentials", () => {
     });
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
+
+  // #124: auth.users id rotated while a stale public.users row survived.
+  // upsert.where:{id} misses → create path → P2002 on email unique
+  // constraint. Must surface as typed account_conflict, NOT fall through to
+  // the callback's generic "unexpected" branch (which Nick hit 2026-04-20).
+  it("wraps Prisma P2002 as GmailCredentialError { account_conflict / contact_support }", async () => {
+    mocks.upsert.mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed on the fields: (`email`)"), {
+        code: "P2002",
+        meta: { target: ["email"] },
+      }),
+    );
+    const { storeCredentials } = await import("../service");
+    await expect(
+      storeCredentials({
+        userId: "u-new",
+        email: "collides@example.com",
+        accessToken: "ya29.new",
+        refreshToken: "1//rt",
+        expiresInSeconds: 3600,
+        grantedScopes: VALID_SCOPE,
+        verificationSource: "supabase_exchange",
+      }),
+    ).rejects.toMatchObject({
+      name: "GmailCredentialError",
+      credentialFailure: { reason: "account_conflict", remedy: "contact_support" },
+    });
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("rethrows non-P2002 Prisma errors unchanged (not wrapped as credential error)", async () => {
+    mocks.upsert.mockRejectedValueOnce(
+      Object.assign(new Error("Connection lost"), { code: "P1001" }),
+    );
+    const { storeCredentials } = await import("../service");
+    await expect(
+      storeCredentials({
+        userId: "u1",
+        email: "a@b.com",
+        accessToken: "ya29.new",
+        refreshToken: "1//rt",
+        expiresInSeconds: 3600,
+        grantedScopes: VALID_SCOPE,
+        verificationSource: "supabase_exchange",
+      }),
+    ).rejects.toThrow("Connection lost");
+  });
 });
 
 describe("invalidateCredentials", () => {
