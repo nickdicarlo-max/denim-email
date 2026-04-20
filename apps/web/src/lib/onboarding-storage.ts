@@ -1,3 +1,5 @@
+import type { EntityGroupInput } from "@denim/types";
+
 const KEYS = {
   category: "denim_onboarding_category",
   names: "denim_onboarding_names",
@@ -15,6 +17,12 @@ export interface OnboardingNames {
   whos: string[];
   /** #111: optional user-provided topic name. Empty string = not provided. */
   name?: string;
+  /**
+   * #117: optional WHO→WHATs pairings collected on the names page. Older
+   * saved sessions that predate this field load as undefined and the API
+   * call falls back to an empty array in the POST body.
+   */
+  groups?: EntityGroupInput[];
 }
 
 function get<T>(key: string): T | null {
