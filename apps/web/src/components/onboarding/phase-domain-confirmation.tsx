@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { OnboardingPollingResponse } from "@/lib/services/onboarding-polling";
@@ -26,6 +27,7 @@ import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 type SubmitStatus = "idle" | "submitting" | "error";
 
 export function PhaseDomainConfirmation({ response }: { response: OnboardingPollingResponse }) {
+  const router = useRouter();
   const candidates = response.stage1Candidates ?? [];
   const userThings = response.stage1UserThings ?? [];
   const userContacts = response.stage1UserContacts ?? [];
@@ -212,11 +214,22 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
         <p className="mt-3 text-sm text-overdue">{errorMessage}</p>
       )}
 
-      <div className="mt-8">
+      <div className="mt-8 flex flex-col gap-3">
         <Button onClick={submit} disabled={selected.size === 0 || status === "submitting"}>
           {status === "submitting"
             ? "Confirming…"
             : `Confirm ${selected.size} selection${selected.size === 1 ? "" : "s"}`}
+        </Button>
+        {/* #127: back-edit escape hatch. Routes the user to the names page
+            in edit mode so they can fix typos / add missed WHATs / adjust
+            pairings before Stage 1 re-runs. No client-side state mutation
+            here — the destination page loads inputs from the polling DTO. */}
+        <Button
+          variant="secondary"
+          onClick={() => router.push(`/onboarding/names?schemaId=${response.schemaId}`)}
+          disabled={status === "submitting"}
+        >
+          Back — edit topics & contacts
         </Button>
       </div>
     </div>

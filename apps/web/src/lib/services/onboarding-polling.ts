@@ -8,7 +8,7 @@
  * diagram forward. Every branch is exercised by a test — if you add a new
  * state, add a test first or the merge will silently map it to PENDING.
  */
-import type { CredentialFailure } from "@denim/types";
+import type { CredentialFailure, InterviewInput } from "@denim/types";
 import type { CaseSchema, ScanJob, ScanPhase } from "@prisma/client";
 import { logger } from "@/lib/logger";
 import { computeScanMetrics } from "./scan-metrics";
@@ -114,6 +114,11 @@ export interface OnboardingPollingResponse {
   stage1UserContacts?: Stage1UserContactDTO[];
   // Present during DISCOVERING_ENTITIES / AWAITING_ENTITY_CONFIRMATION.
   stage2Candidates?: Stage2PerDomainDTO[];
+  // #127: interview inputs surfaced while the schema is in a rewind-eligible
+  // phase so the `/onboarding/names` edit screen can pre-fill without a
+  // second endpoint. Omitted past AWAITING_DOMAIN_CONFIRMATION — past that
+  // the rewind path is blocked, so the UI has no reason to read inputs.
+  inputs?: InterviewInput;
 }
 
 /**
@@ -224,6 +229,9 @@ export async function derivePollingResponse(
       stage1QueryUsed: schema.stage1QueryUsed ?? undefined,
       stage1UserThings: (schema.stage1UserThings as Stage1UserThingDTO[] | null) ?? [],
       stage1UserContacts: (schema.stage1UserContacts as Stage1UserContactDTO[] | null) ?? [],
+      // #127: expose inputs for the edit-mode names page. Cast once here so
+      // the UI doesn't re-parse out of the generic Json column type.
+      ...(schema.inputs ? { inputs: schema.inputs as unknown as InterviewInput } : {}),
     };
   }
 

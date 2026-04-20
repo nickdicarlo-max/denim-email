@@ -1,16 +1,40 @@
 "use client";
 
-import type { EntityGroupInput } from "@denim/types";
-import { useRouter } from "next/navigation";
+import type { EntityGroupInput, InterviewInput } from "@denim/types";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DOMAIN_CONFIGS, type DomainId, ROLE_OPTIONS } from "@/components/interview/domain-config";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { onboardingStorage } from "@/lib/onboarding-storage";
+import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
+
+/**
+ * #117 pairings from groups[] — extracted so both new-session sessionStorage
+ * rehydration and #127 edit-mode server rehydration use the same shape.
+ */
+function pairingsFromGroups(groups?: ReadonlyArray<EntityGroupInput>): Map<string, Set<string>> {
+  const restored = new Map<string, Set<string>>();
+  if (!groups) return restored;
+  for (const group of groups) {
+    for (const who of group.whos) {
+      const bucket = restored.get(who) ?? new Set<string>();
+      for (const w of group.whats) bucket.add(w);
+      restored.set(who, bucket);
+    }
+  }
+  return restored;
+}
 
 export default function NamesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // #127: when present, edit mode — load inputs from the existing schema
+  // (via the polling endpoint) instead of the sessionStorage draft, and
+  // submit via PATCH /inputs instead of POST /start.
+  const editingSchemaId = searchParams.get("schemaId");
+
   const [domain, setDomain] = useState<DomainId | null>(null);
   const [roleLabel, setRoleLabel] = useState("");
   const [roleIcon, setRoleIcon] = useState("");
@@ -27,10 +51,63 @@ export default function NamesPage() {
   // (groups[]); Map/Set makes toggles cheap in-component.
   const [pairings, setPairings] = useState<Map<string, Set<string>>>(new Map());
 
+  // #127: edit-mode load state and submit state. Kept local to this page
+  // so a failed PATCH doesn't mutate the server-side schema.
+  const [editLoadState, setEditLoadState] = useState<"loading" | "ready" | "error" | null>(
+    editingSchemaId ? "loading" : null,
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   const whatInputRef = useRef<HTMLInputElement>(null);
   const whoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // #127 edit-mode load: skip sessionStorage entirely, pull the schema's
+    // persisted inputs off the polling endpoint. This page is the single
+    // editor; rewriting the sessionStorage draft here would contaminate a
+    // subsequent fresh-onboarding session.
+    if (editingSchemaId) {
+      let cancelled = false;
+      (async () => {
+        try {
+          const res = await authenticatedFetch(`/api/onboarding/${editingSchemaId}`);
+          if (!res.ok) {
+            throw new Error(`Failed to load schema (${res.status})`);
+          }
+          const body = (await res.json()) as {
+            data: { inputs?: InterviewInput; phase: string };
+          };
+          if (cancelled) return;
+          const inputs = body.data.inputs;
+          if (!inputs) {
+            // Server-side phase gate is the source of truth; if inputs are
+            // not surfaced we can't safely edit. Show an error rather than
+            // silently failing to pre-fill.
+            setEditLoadState("error");
+            return;
+          }
+          setDomain(inputs.domain as DomainId);
+          const role = ROLE_OPTIONS.find((r) => r.id === inputs.role);
+          if (role) {
+            setRoleLabel(role.label);
+            setRoleIcon(role.materialIcon);
+          }
+          setTopicName(inputs.name ?? "");
+          setWhats(inputs.whats);
+          setWhos(inputs.whos);
+          setPairings(pairingsFromGroups(inputs.groups));
+          setEditLoadState("ready");
+        } catch {
+          if (!cancelled) setEditLoadState("error");
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // New-session path: category + sessionStorage draft rehydrate.
     const cat = onboardingStorage.getCategory();
     if (!cat) {
       router.replace("/onboarding/category");
@@ -43,26 +120,14 @@ export default function NamesPage() {
       setRoleIcon(role.materialIcon);
     }
 
-    // Restore previously saved names if user navigates back
     const saved = onboardingStorage.getNames();
     if (saved) {
       setWhats(saved.whats);
       setWhos(saved.whos);
       if (saved.name) setTopicName(saved.name);
-      // #117: rehydrate pairings from saved groups
-      if (saved.groups && saved.groups.length > 0) {
-        const restored = new Map<string, Set<string>>();
-        for (const group of saved.groups) {
-          for (const who of group.whos) {
-            const bucket = restored.get(who) ?? new Set<string>();
-            for (const w of group.whats) bucket.add(w);
-            restored.set(who, bucket);
-          }
-        }
-        setPairings(restored);
-      }
+      setPairings(pairingsFromGroups(saved.groups));
     }
-  }, [router]);
+  }, [router, editingSchemaId]);
 
   const dc = domain ? DOMAIN_CONFIGS[domain] : null;
 
@@ -136,8 +201,43 @@ export default function NamesPage() {
     return out;
   }, [whos, whats, pairings]);
 
-  function handleContinue() {
+  async function handleContinue() {
     const trimmedName = topicName.trim();
+
+    // #127 edit mode: PATCH existing schema, server rewinds Stage 1, then
+    // route back to the observer page where polling will render either
+    // DISCOVERING_DOMAINS (spinner) or, if it's quick, the fresh review.
+    if (editingSchemaId) {
+      if (!domain) return; // ready-state gate, should be unreachable
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const res = await authenticatedFetch(`/api/onboarding/${editingSchemaId}/inputs`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            role: ROLE_OPTIONS.find((r) => r.label === roleLabel)?.id ?? "",
+            domain,
+            whats,
+            whos,
+            goals: [],
+            groups,
+            ...(trimmedName ? { name: trimmedName } : {}),
+          }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(body?.error ?? `Save failed (${res.status})`);
+        }
+        router.push(`/onboarding/${editingSchemaId}`);
+      } catch (err) {
+        setSubmitError(err instanceof Error ? err.message : "Save failed");
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    // New-session path: sessionStorage draft → connect page → POST /start.
     onboardingStorage.setNames({
       whats,
       whos,
@@ -147,6 +247,31 @@ export default function NamesPage() {
     router.push("/onboarding/connect");
   }
 
+  // #127 edit-mode loading/error states take precedence over the normal
+  // render. Nothing is interactive until inputs are hydrated.
+  if (editingSchemaId && editLoadState !== "ready") {
+    return (
+      <div className="flex flex-1 items-center justify-center px-4 py-8">
+        {editLoadState === "error" ? (
+          <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+            <p className="font-serif text-lg text-primary">Couldn&apos;t load your topic</p>
+            <p className="text-sm text-muted">
+              The edit page needs the current interview inputs, but the server didn&apos;t return
+              them. Your topic may have progressed past the editable phase.
+            </p>
+            <Button onClick={() => router.push(`/onboarding/${editingSchemaId}`)}>
+              Back to topic
+            </Button>
+          </div>
+        ) : (
+          <span className="material-symbols-outlined text-[32px] text-accent animate-spin">
+            progress_activity
+          </span>
+        )}
+      </div>
+    );
+  }
+
   if (!dc) return null;
 
   return (
@@ -154,11 +279,16 @@ export default function NamesPage() {
       <OnboardingProgress currentStep={1} totalSteps={5} />
 
       <div className="w-full max-w-2xl mt-8">
-        {/* Context badge */}
+        {/* Context badge — in edit mode, routes back to the observer rather
+            than the category page so the user can abandon edits safely. */}
         <div className="flex justify-center mb-8">
           <button
             type="button"
-            onClick={() => router.push("/onboarding/category")}
+            onClick={() =>
+              router.push(
+                editingSchemaId ? `/onboarding/${editingSchemaId}` : "/onboarding/category",
+              )
+            }
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium cursor-pointer hover:brightness-95 transition-all"
           >
             <span className="material-symbols-outlined text-[18px]">arrow_back</span>
@@ -312,14 +442,21 @@ export default function NamesPage() {
           </div>
         )}
 
-        {/* Continue button */}
+        {/* Continue / Save button */}
         {whats.length > 0 && (
           <div className="mt-8">
-            <Button onClick={handleContinue}>Continue</Button>
+            <Button onClick={handleContinue} disabled={submitting}>
+              {editingSchemaId
+                ? submitting
+                  ? "Saving…"
+                  : "Save changes & re-run discovery"
+                : "Continue"}
+            </Button>
+            {submitError && <p className="mt-3 text-sm text-overdue">{submitError}</p>}
           </div>
         )}
 
-        <p className="text-sm text-muted text-center mt-8">Step 2 of 5</p>
+        {!editingSchemaId && <p className="text-sm text-muted text-center mt-8">Step 2 of 5</p>}
       </div>
     </div>
   );
