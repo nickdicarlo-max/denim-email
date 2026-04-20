@@ -77,6 +77,11 @@ const MAX_SUBJECT_LEN = 200;
 export interface SubjectInput {
   subject: string;
   frequency: number;
+  /**
+   * #102: sender email address attached to this subject. Optional; present
+   * for school_parent Pattern C corpus mining. Property extractor ignores it.
+   */
+  senderEmail?: string;
 }
 
 export interface PropertyCandidate {

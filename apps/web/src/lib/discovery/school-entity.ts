@@ -1,13 +1,17 @@
 /**
- * Stage 2 school_parent entity extraction (issue #95, spec Section 4).
+ * Stage 2 school_parent entity extraction (issue #95, spec Section 4; #102).
  *
- * Two independent patterns:
+ * Three independent patterns:
  *  - Pattern A (institutions): "St Agnes", "Saint Agnes", "St. Agnes",
  *    "Lanier Middle", "Vail Mountain School", "First Baptist Church",
  *    "Sidwell Friends School", "Lincoln Charter", etc.
  *  - Pattern B (activities/teams): "U11 Soccer", "Pia Ballet",
  *    "Cosmos Soccer", "Adams Lacrosse", "Varsity Cross Country",
  *    "FRC Robotics", "Westfield Debate".
+ *  - Pattern C (#102, corpus mining): proper-noun n-grams that repeat
+ *    across ≥ 3 subjects, filtered against an event-verb stopword set.
+ *    Catches activity-platform notifications (TeamSnap, GameChanger,
+ *    ClassDojo) where the team name repeats but matches neither A nor B.
  *
  * Pattern A has TWO sub-branches: a religious-prefix branch that matches
  * "St/Saint/Jewish + name" WITHOUT requiring an institution suffix (so
@@ -15,13 +19,31 @@
  * REQUIRES an institution suffix (School, Academy, Charter, ...) so
  * "First Baptist Church" works but random "First Baptist" in prose doesn't.
  *
+ * When `options.pairedWhoAddresses` is supplied (from #117 Stage 1 pairing),
+ * Pattern C runs once in full-view (all subjects) plus once per paired WHO
+ * (subjects filtered to that WHO's senderEmail); narrow-view candidates get
+ * tagged with `sourcedFromWho` + `relatedWhat` so downstream UI / clustering
+ * can surface provenance. Unpaired schemas run full-view only.
+ *
+ * Cross-pattern dedup preference on key collision: A > B > C. Pattern A/B
+ * are more precise when they fire; Pattern C owns a candidate only when
+ * neither A nor B extracted the same normalized key.
+ *
  * ReDoS safety: fixed-length literal alternations, no nested quantifiers,
  * 200-char subject cap.
  */
 
+import { mineFrequentPhrases } from "@denim/engine";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { dedupByLevenshtein } from "./levenshtein-dedup";
 import type { SubjectInput } from "./property-entity";
+
+/**
+ * #102: alias — `SubjectInput` now optionally carries `senderEmail` for
+ * Pattern C narrow-view scoping. Kept as a separate name at the school-entity
+ * public API boundary so call sites reading the Pattern C path are explicit.
+ */
+export type SubjectInputWithSender = SubjectInput;
 
 const INSTITUTION_SUFFIX_ALT = [
   "Day School",
@@ -135,7 +157,23 @@ export interface SchoolCandidate {
   displayString: string;
   frequency: number;
   autoFixed: boolean;
-  pattern: "A" | "B";
+  pattern: "A" | "B" | "C";
+  /** #102: paired-WHO attribution when Pattern C came from narrow-view. */
+  sourcedFromWho?: string;
+  /** #102: paired WHAT (topic) this candidate was sourced under. */
+  relatedWhat?: string;
+}
+
+export interface PairedWhoAddress {
+  senderEmail: string;
+  pairedWhat: string;
+  pairedWho: string;
+}
+
+export interface ExtractSchoolOptions {
+  /** #102 + #117: list of paired-WHO senderEmail ↔ topic mappings. When
+   *  non-empty, Pattern C runs once full-view and once per paired WHO. */
+  pairedWhoAddresses?: PairedWhoAddress[];
 }
 
 function normalizeKey(display: string): string {
@@ -147,7 +185,55 @@ function normalizeKey(display: string): string {
     .trim();
 }
 
-export function extractSchoolCandidates(subjects: SubjectInput[]): SchoolCandidate[] {
+/** Pattern C: mine repeating proper-noun n-grams over a subject subset. */
+function minePatternC(
+  subjectsSlice: ReadonlyArray<{ subject: string; frequency: number }>,
+  tags: { sourcedFromWho?: string; relatedWhat?: string } = {},
+): SchoolCandidate[] {
+  if (subjectsSlice.length === 0) return [];
+  const mined = mineFrequentPhrases(subjectsSlice);
+  return mined.map((m) => ({
+    key: normalizeKey(m.phrase),
+    displayString: m.phrase,
+    frequency: m.frequency,
+    autoFixed: false,
+    pattern: "C" as const,
+    ...(tags.sourcedFromWho ? { sourcedFromWho: tags.sourcedFromWho } : {}),
+    ...(tags.relatedWhat ? { relatedWhat: tags.relatedWhat } : {}),
+  }));
+}
+
+/** Dedup Pattern C output internally. When the same normalized key appears
+ *  under both a narrow-view (tagged) and full-view (untagged) entry, prefer
+ *  the tagged one so paired-WHO attribution survives. Otherwise keep the
+ *  higher-frequency entry. */
+function dedupPatternC(candidates: SchoolCandidate[]): SchoolCandidate[] {
+  const byKey = new Map<string, SchoolCandidate>();
+  for (const c of candidates) {
+    const existing = byKey.get(c.key);
+    if (!existing) {
+      byKey.set(c.key, c);
+      continue;
+    }
+    // Prefer the tagged (narrow-view) entry when both exist.
+    const existingTagged = Boolean(existing.sourcedFromWho);
+    const candidateTagged = Boolean(c.sourcedFromWho);
+    if (candidateTagged && !existingTagged) {
+      byKey.set(c.key, c);
+    } else if (!candidateTagged && existingTagged) {
+      // keep existing
+    } else {
+      // Both tagged or both untagged — keep higher frequency.
+      if (c.frequency > existing.frequency) byKey.set(c.key, c);
+    }
+  }
+  return [...byKey.values()];
+}
+
+export function extractSchoolCandidates(
+  subjects: SubjectInputWithSender[],
+  options?: ExtractSchoolOptions,
+): SchoolCandidate[] {
   type Raw = {
     input: { key: string; displayString: string; frequency: number };
     pattern: "A" | "B";
@@ -181,7 +267,84 @@ export function extractSchoolCandidates(subjects: SubjectInput[]): SchoolCandida
     for (const d of deduped) output.push({ ...d, pattern });
   }
 
-  return output
+  // Pattern C — corpus frequency mining (#102).
+  const patternCRaw: SchoolCandidate[] = [];
+
+  // Full-view pass: always runs.
+  const fullSubjects = subjects.map((s) => ({ subject: s.subject, frequency: s.frequency }));
+  patternCRaw.push(...minePatternC(fullSubjects));
+
+  // Narrow-view passes: one per paired WHO when pairings exist.
+  const pairings = options?.pairedWhoAddresses ?? [];
+  if (pairings.length > 0) {
+    for (const p of pairings) {
+      const needle = p.senderEmail.toLowerCase();
+      const slice = subjects
+        .filter((s) => (s.senderEmail ?? "").toLowerCase() === needle)
+        .map((s) => ({ subject: s.subject, frequency: s.frequency }));
+      if (slice.length === 0) continue;
+      patternCRaw.push(
+        ...minePatternC(slice, {
+          sourcedFromWho: p.pairedWho,
+          relatedWhat: p.pairedWhat,
+        }),
+      );
+    }
+  }
+
+  // Dedup Pattern C output internally, then Levenshtein-dedup on display.
+  const patternCDeduped = dedupPatternC(patternCRaw);
+  // Levenshtein pass operates on bare shape; we re-attach pattern C tags
+  // from the closest-matching entry post-dedup.
+  const lvInput = patternCDeduped.map((c) => ({
+    key: c.key,
+    displayString: c.displayString,
+    frequency: c.frequency,
+  }));
+  const lvOut = dedupByLevenshtein(lvInput);
+  const tagByKey = new Map(patternCDeduped.map((c) => [c.key, c] as const));
+  const patternC: SchoolCandidate[] = lvOut.map((d) => {
+    const src = tagByKey.get(d.key);
+    return {
+      ...d,
+      pattern: "C" as const,
+      ...(src?.sourcedFromWho ? { sourcedFromWho: src.sourcedFromWho } : {}),
+      ...(src?.relatedWhat ? { relatedWhat: src.relatedWhat } : {}),
+    };
+  });
+  output.push(...patternC);
+
+  // Cross-pattern dedup: A > B > C on normalized-key collisions. Preserves
+  // the deterministic-signal entry when multiple patterns hit the same key.
+  const crossDeduped = new Map<string, SchoolCandidate>();
+  const rank = (p: "A" | "B" | "C") => (p === "A" ? 0 : p === "B" ? 1 : 2);
+  for (const c of output) {
+    const existing = crossDeduped.get(c.key);
+    if (!existing) {
+      crossDeduped.set(c.key, c);
+      continue;
+    }
+    if (rank(c.pattern) < rank(existing.pattern)) {
+      // Incoming is more-preferred pattern — keep it but carry over the
+      // higher frequency (Pattern C on a dominant entity can legitimately
+      // count more distinct subjects than the A/B regex match did).
+      crossDeduped.set(c.key, {
+        ...c,
+        frequency: Math.max(c.frequency, existing.frequency),
+      });
+    } else if (rank(c.pattern) === rank(existing.pattern)) {
+      // Same pattern — keep higher frequency.
+      if (c.frequency > existing.frequency) crossDeduped.set(c.key, c);
+    } else {
+      // Existing is more-preferred; just bump its frequency upward.
+      crossDeduped.set(c.key, {
+        ...existing,
+        frequency: Math.max(c.frequency, existing.frequency),
+      });
+    }
+  }
+
+  return [...crossDeduped.values()]
     .sort((a, b) => b.frequency - a.frequency)
     .slice(0, ONBOARDING_TUNABLES.stage2.topNEntities);
 }

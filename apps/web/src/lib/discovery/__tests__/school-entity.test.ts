@@ -46,15 +46,19 @@ describe("extractSchoolCandidates — Pattern B (activities)", () => {
 });
 
 describe("extractSchoolCandidates — shared", () => {
-  it("merges casing/punctuation variants of St Agnes", () => {
+  it("merges casing/punctuation variants of St Agnes (Pattern A)", () => {
     const result = extractSchoolCandidates([
       subject("St Agnes news"),
       subject("St. Agnes news"),
       subject("Saint Agnes news"),
     ]);
-    const stagnesGroup = result.filter((r) => /agnes/i.test(r.displayString));
-    expect(stagnesGroup).toHaveLength(1);
-    expect(stagnesGroup[0].frequency).toBe(3);
+    // Pattern A merges all three variants into a single `st agnes` entry.
+    // Pattern C may independently surface a collateral phrase like
+    // "Agnes news" (freq=3) — that's acceptable; it has a distinct key
+    // and downstream Levenshtein / user review handles it.
+    const patternA = result.filter((r) => r.pattern === "A" && /agnes/i.test(r.displayString));
+    expect(patternA).toHaveLength(1);
+    expect(patternA[0].frequency).toBe(3);
   });
 
   it("no capture when subject matches neither pattern", () => {
@@ -99,5 +103,93 @@ describe("extractSchoolCandidates — regex v2 expanded vocabulary", () => {
     const t0 = Date.now();
     extractSchoolCandidates([{ subject: pathological, frequency: 1 }]);
     expect(Date.now() - t0).toBeLessThan(50);
+  });
+});
+
+describe("extractSchoolCandidates — Pattern C (corpus mining, #102)", () => {
+  const teamsnapSubjects = [
+    "New game: ZSA U11/12 Girls Spring 2026 Competitive Rise )) vs. Rise ECNL",
+    "New event: Practice",
+    "Updated ZSA U11/12 Girls Spring 2026 Competitive Rise )) Event",
+    "Event Reminder: Practice, March 29, 4:30 PM",
+    "Updated ZSA U11/12 Girls Spring 2026 Competitive Rise )) Game",
+    "New game: ZSA U11/12 Girls Spring 2026 Competitive Rise )) vs. Houston Select",
+    "Updated ZSA U11/12 Girls Spring 2026 Competitive Rise )) Practice",
+    "Event Reminder: Practice",
+  ].map((s) => ({ subject: s, frequency: 1, senderEmail: "donotreply@email.teamsnap.com" }));
+
+  it("surfaces ZSA team phrase with pattern 'C' on a TeamSnap corpus", () => {
+    const result = extractSchoolCandidates(teamsnapSubjects);
+    const c = result.find((r) => /ZSA.*Competitive\s+Rise/.test(r.displayString));
+    expect(c).toBeDefined();
+    expect(c?.pattern).toBe("C");
+    expect(c?.frequency).toBeGreaterThanOrEqual(3);
+  });
+
+  it("tags sourcedFromWho + relatedWhat when WHO is paired", () => {
+    const result = extractSchoolCandidates(teamsnapSubjects, {
+      pairedWhoAddresses: [
+        {
+          senderEmail: "donotreply@email.teamsnap.com",
+          pairedWhat: "soccer",
+          pairedWho: "Ziad Allan",
+        },
+      ],
+    });
+    const c = result.find((r) => /ZSA.*Competitive\s+Rise/.test(r.displayString));
+    expect(c).toBeDefined();
+    expect(c?.sourcedFromWho).toBe("Ziad Allan");
+    expect(c?.relatedWhat).toBe("soccer");
+  });
+
+  it("unpaired fallback produces Pattern C without sourcedFromWho tags", () => {
+    const result = extractSchoolCandidates(teamsnapSubjects);
+    const c = result.find((r) => /ZSA.*Competitive\s+Rise/.test(r.displayString));
+    expect(c).toBeDefined();
+    expect(c?.sourcedFromWho).toBeUndefined();
+    expect(c?.relatedWhat).toBeUndefined();
+  });
+
+  it("cross-pattern collision prefers Pattern A label on same key", () => {
+    // St Agnes repeated ≥ 3 times with institution suffix — Pattern A catches
+    // it AND Pattern C's "St Agnes School" phrase surfaces at freq 3. Expect
+    // the merged entry to be pattern 'A' per A > B > C preference.
+    const result = extractSchoolCandidates([
+      { subject: "St Agnes School event this week", frequency: 1 },
+      { subject: "St Agnes School fundraiser", frequency: 1 },
+      { subject: "St Agnes School auction", frequency: 1 },
+      { subject: "St Agnes School meeting", frequency: 1 },
+    ]);
+    // There should be at least one St-Agnes-keyed candidate, and it should
+    // be pattern A (institution regex), not C (corpus mining).
+    const stAgnes = result.filter((r) => r.key.startsWith("st agnes"));
+    expect(stAgnes.length).toBeGreaterThan(0);
+    const stAgnesShortKey = stAgnes.find((r) => r.key === "st agnes");
+    if (stAgnesShortKey) {
+      expect(stAgnesShortKey.pattern).toBe("A");
+    }
+  });
+
+  it("narrow-view filter respects senderEmail match (case-insensitive)", () => {
+    const mixed = [
+      ...teamsnapSubjects,
+      {
+        subject: "Totally unrelated newsletter about tigers",
+        frequency: 1,
+        senderEmail: "other@example.com",
+      },
+    ];
+    const result = extractSchoolCandidates(mixed, {
+      pairedWhoAddresses: [
+        {
+          senderEmail: "DONOTREPLY@email.teamsnap.com", // uppercase on purpose
+          pairedWhat: "soccer",
+          pairedWho: "Ziad Allan",
+        },
+      ],
+    });
+    const c = result.find((r) => /ZSA.*Competitive\s+Rise/.test(r.displayString));
+    expect(c).toBeDefined();
+    expect(c?.sourcedFromWho).toBe("Ziad Allan");
   });
 });
