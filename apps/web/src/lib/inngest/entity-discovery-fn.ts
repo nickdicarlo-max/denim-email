@@ -48,6 +48,7 @@ export const runEntityDiscovery = inngest.createFunction(
             stage2ConfirmedDomains: true,
             stage1UserContacts: true,
             stage1ConfirmedUserContactQueries: true,
+            inputs: true,
           },
         }),
       );
@@ -107,6 +108,43 @@ export const runEntityDiscovery = inngest.createFunction(
         userSeedsByDomain.set(c.senderDomain, bucket);
       }
 
+      // #102: resolve Stage 1 per-topic pairings into senderEmail targets
+      // for Pattern C narrow-view mining. Reads `inputs.groups` (populated
+      // by #117 onboarding) and cross-references against `stage1UserContacts`
+      // to pull the senderEmail Stage 1 discovered for each paired WHO.
+      // When `groups` is empty (property / unpaired schemas), this list is
+      // empty and Pattern C runs full-view only — zero behavior change.
+      const schemaInputs = (schema.inputs as { groups?: Array<{ whats: string[]; whos: string[] }> } | null) ?? null;
+      const groups = schemaInputs?.groups ?? [];
+      const pairedWhoAddresses: Array<{
+        senderEmail: string;
+        pairedWhat: string;
+        pairedWho: string;
+      }> = [];
+      if (groups.length > 0) {
+        // Build contact-name → senderEmail lookup from Stage 1 results.
+        // Match is name-equality on the `query` field; WHOs the user typed
+        // must match the query string stored on `stage1UserContacts`.
+        const whoToEmail = new Map<string, string>();
+        for (const c of userContacts) {
+          if (!c.query || !c.senderEmail) continue;
+          whoToEmail.set(c.query, c.senderEmail);
+        }
+        for (const g of groups) {
+          for (const who of g.whos) {
+            const email = whoToEmail.get(who);
+            if (!email) continue;
+            for (const what of g.whats) {
+              pairedWhoAddresses.push({
+                senderEmail: email,
+                pairedWhat: what,
+                pairedWho: who,
+              });
+            }
+          }
+        }
+      }
+
       // Parallel fan-out, one step.run per domain. Inngest memoizes each
       // step, so a retry only re-runs the failed one. Per-domain errors
       // are caught inside the step so one domain's Gmail hiccup can't
@@ -124,6 +162,8 @@ export const runEntityDiscovery = inngest.createFunction(
                 gmailClient: gmail,
                 schemaDomain: schema.domain as DomainName,
                 confirmedDomain,
+                pairedWhoAddresses:
+                  pairedWhoAddresses.length > 0 ? pairedWhoAddresses : undefined,
               });
               // Prepend user-named seeds so they appear first in the
               // review UI. Dedup by key to avoid a derived candidate

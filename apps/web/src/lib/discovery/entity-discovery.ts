@@ -22,6 +22,15 @@ export interface DiscoverEntitiesInput {
   gmailClient: GmailClient;
   schemaDomain: DomainName;
   confirmedDomain: string;
+  /**
+   * #102: Stage 1 paired-WHO → senderEmail mappings for school_parent
+   * Pattern C narrow-view scoping. Ignored by property / agency shapes.
+   */
+  pairedWhoAddresses?: Array<{
+    senderEmail: string;
+    pairedWhat: string;
+    pairedWho: string;
+  }>;
 }
 
 export interface EntityCandidate {
@@ -41,22 +50,35 @@ export interface DiscoverEntitiesOutput {
   errorCount: number;
 }
 
+interface SubjectRow {
+  subject: string;
+  /** Bare sender email parsed from the `From` header (lowercased). */
+  senderEmail: string;
+}
+
+function parseSenderEmail(fromHeader: string): string {
+  const angle = fromHeader.match(/<([^>]+)>/);
+  if (angle) return angle[1].trim().toLowerCase();
+  const bare = fromHeader.match(/[^\s<>]+@[^\s<>]+/);
+  return bare ? bare[0].toLowerCase() : "";
+}
+
 async function fetchSubjectsAndDisplayNames(
   client: GmailClient,
   confirmedDomain: string,
-): Promise<{ subjects: string[]; displayNames: string[]; errorCount: number }> {
+): Promise<{ rows: SubjectRow[]; displayNames: string[]; errorCount: number }> {
   // Stage 2 reuses stage1 lookback + batch size; only maxMessagesPerDomain
   // is stage2-specific (see onboarding-tunables.ts file-level comment).
   const q = `from:*@${confirmedDomain} newer_than:${ONBOARDING_TUNABLES.stage1.lookbackDays}d`;
   const ids = await client.listMessageIds(q, ONBOARDING_TUNABLES.stage2.maxMessagesPerDomain);
-  const subjects: string[] = [];
+  const rows: SubjectRow[] = [];
   const displayNames: string[] = [];
   let errorCount = 0;
 
   const batchSize = ONBOARDING_TUNABLES.stage1.fetchBatchSize;
   for (let i = 0; i < ids.length; i += batchSize) {
     const batch = ids.slice(i, i + batchSize);
-    const rows = await Promise.all(
+    const fetched = await Promise.all(
       batch.map(async (id) => {
         try {
           return await client.getMessageMetadata(id, ["Subject", "From"]);
@@ -66,30 +88,31 @@ async function fetchSubjectsAndDisplayNames(
         }
       }),
     );
-    for (const row of rows) {
+    for (const row of fetched) {
       if (!row) continue;
       const s = row.payload.headers.find((h) => h.name.toLowerCase() === "subject")?.value ?? "";
       const f = row.payload.headers.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
-      if (s) subjects.push(s);
+      if (s) rows.push({ subject: s, senderEmail: parseSenderEmail(f) });
       if (f) displayNames.push(f.replace(/<[^>]+>/, "").trim());
     }
   }
-  return { subjects, displayNames, errorCount };
+  return { rows, displayNames, errorCount };
 }
 
 export async function discoverEntitiesForDomain(
   input: DiscoverEntitiesInput,
 ): Promise<DiscoverEntitiesOutput> {
   const shape = getDomainShape(input.schemaDomain);
-  const { subjects, displayNames, errorCount } = await fetchSubjectsAndDisplayNames(
+  const { rows, displayNames, errorCount } = await fetchSubjectsAndDisplayNames(
     input.gmailClient,
     input.confirmedDomain,
   );
+  const subjectsScanned = rows.length;
 
   switch (shape.stage2Algorithm) {
     case "property-address": {
       const candidates = extractPropertyCandidates(
-        subjects.map((s) => ({ subject: s, frequency: 1 })),
+        rows.map((r) => ({ subject: r.subject, frequency: 1 })),
       );
       return {
         algorithm: "property-address",
@@ -99,13 +122,21 @@ export async function discoverEntitiesForDomain(
           frequency: c.frequency,
           autoFixed: c.autoFixed,
         })),
-        subjectsScanned: subjects.length,
+        subjectsScanned,
         errorCount,
       };
     }
     case "school-two-pattern": {
+      // #102: thread senderEmail + paired-WHO addresses into Pattern C.
       const candidates = extractSchoolCandidates(
-        subjects.map((s) => ({ subject: s, frequency: 1 })),
+        rows.map((r) => ({
+          subject: r.subject,
+          frequency: 1,
+          senderEmail: r.senderEmail,
+        })),
+        input.pairedWhoAddresses && input.pairedWhoAddresses.length > 0
+          ? { pairedWhoAddresses: input.pairedWhoAddresses }
+          : undefined,
       );
       return {
         algorithm: "school-two-pattern",
@@ -114,9 +145,13 @@ export async function discoverEntitiesForDomain(
           displayString: c.displayString,
           frequency: c.frequency,
           autoFixed: c.autoFixed,
-          meta: { pattern: c.pattern },
+          meta: {
+            pattern: c.pattern,
+            ...(c.sourcedFromWho ? { sourcedFromWho: c.sourcedFromWho } : {}),
+            ...(c.relatedWhat ? { relatedWhat: c.relatedWhat } : {}),
+          },
         })),
-        subjectsScanned: subjects.length,
+        subjectsScanned,
         errorCount,
       };
     }
@@ -131,7 +166,7 @@ export async function discoverEntitiesForDomain(
           {
             key: derived.authoritativeDomain,
             displayString: derived.displayLabel,
-            frequency: subjects.length,
+            frequency: subjectsScanned,
             autoFixed: false,
             meta: {
               authoritativeDomain: derived.authoritativeDomain,
@@ -140,7 +175,7 @@ export async function discoverEntitiesForDomain(
             },
           },
         ],
-        subjectsScanned: subjects.length,
+        subjectsScanned,
         errorCount,
       };
     }
