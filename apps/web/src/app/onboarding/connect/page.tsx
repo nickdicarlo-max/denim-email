@@ -122,7 +122,9 @@ export default function ConnectPage() {
               domain: category.domain,
               whats: names.whats,
               whos: names.whos,
-              groups: [],
+              // #117: forward the optional WHO→WHATs pairings collected on
+              // the names page. Empty array = legacy (unpaired) behavior.
+              groups: names.groups ?? [],
               goals: [],
               ...(names.name ? { name: names.name } : {}),
               ...(category.customDescription
