@@ -179,8 +179,8 @@ export function PhaseEntityConfirmation({ response }: { response: OnboardingPoll
     <div className="w-full max-w-2xl mx-auto">
       <h1 className="font-serif text-2xl text-primary">Confirm what to track</h1>
       <p className="text-muted text-sm mt-1">
-        Things are topics Denim organizes emails into. Contacts are people you asked us to find.
-        You can rename any of them inline.
+        Things are topics Denim organizes emails into. Contacts are people you asked us to find. You
+        can rename any of them inline.
       </p>
 
       <div className="mt-6 flex flex-col gap-6">
@@ -251,7 +251,12 @@ function DomainGroup({
         <ul className="flex flex-col gap-2">
           {group.candidates.map((candidate) => (
             <CandidateRow
-              key={candidate.key}
+              // #119: prefix with confirmedDomain to guarantee uniqueness
+              // across sibling DomainGroups. `picks`/`labelEdits` remain
+              // keyed by `candidate.key` because identityKey semantics are
+              // (schemaId, identityKey, type) unique — the React key only
+              // needs to be unique within this render tree.
+              key={`${group.confirmedDomain}-${candidate.key}`}
               candidate={candidate}
               picked={picks.has(candidate.key)}
               editedLabel={labelEdits[candidate.key]}
@@ -318,9 +323,7 @@ function CandidateRow({
       {(senderEmail || userSeeded || candidate.autoFixed) && (
         <div className="flex items-center gap-2 pl-7 text-xs text-muted">
           {senderEmail && <span className="font-mono">{senderEmail}</span>}
-          {userSeeded && (
-            <span className="text-upcoming-text font-medium">· Added by you</span>
-          )}
+          {userSeeded && <span className="text-upcoming-text font-medium">· Added by you</span>}
           {candidate.autoFixed && (
             <span className="uppercase tracking-wide text-accent" title="Variants merged">
               · merged
@@ -335,11 +338,11 @@ function CandidateRow({
 function KindBadge({ kind }: { kind: Kind }) {
   const label = kind === "PRIMARY" ? "Thing" : "Contact";
   const style =
-    kind === "PRIMARY"
-      ? "bg-accent-soft text-accent-text"
-      : "bg-upcoming-soft text-upcoming-text";
+    kind === "PRIMARY" ? "bg-accent-soft text-accent-text" : "bg-upcoming-soft text-upcoming-text";
   return (
-    <span className={`text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5 ${style}`}>
+    <span
+      className={`text-[10px] uppercase tracking-wide font-semibold rounded px-1.5 py-0.5 ${style}`}
+    >
       {label}
     </span>
   );
