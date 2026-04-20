@@ -9,7 +9,7 @@
  * Gmail 10,000 req/100sec cap. Priority 120 (interactive — user watches spinner).
  */
 
-import { extractCredentialFailure } from "@denim/types";
+import { type EntityGroupInput, extractCredentialFailure } from "@denim/types";
 import type { DomainName } from "@/lib/config/domain-shapes";
 import { discoverDomains } from "@/lib/discovery/domain-discovery";
 import {
@@ -62,25 +62,31 @@ export const runDomainDiscovery = inngest.createFunction(
               userEmail?: string;
               whats?: string[];
               whos?: string[];
+              groups?: EntityGroupInput[];
             } | null;
             const userDomain = (inputs?.userEmail ?? "").split("@")[1]?.toLowerCase() ?? "";
             const whats = inputs?.whats ?? [];
             const whos = inputs?.whos ?? [];
+            const groups = inputs?.groups ?? [];
 
-            // #112: keyword-domain pass (current) + per-what + per-who passes
-            // run in parallel. Total wall ≈ max of the three; Gmail calls are
-            // independent. One failure in any branch is isolated inside the
-            // respective helper (see user-hints-discovery.ts — errors mark
-            // `matchCount: 0, errorCount: 1` rather than rejecting).
-            const [domains, userThings, userContacts] = await Promise.all([
+            // #112/#117: keyword-domain pass + per-who pass run in parallel.
+            // Per-what pass waits for the per-who results so paired WHATs can
+            // attribute their topDomain from the corresponding WHO's result
+            // (#117). Small wall-clock cost only when the user has WHOs — if
+            // `whos` is empty, `userContacts` resolves to `[]` immediately
+            // and the pairing path is a no-op.
+            const [domains, userContacts] = await Promise.all([
               discoverDomains({
                 gmailClient: gmail,
                 domain: schema.domain as DomainName,
                 userDomain,
               }),
-              discoverUserNamedThings(gmail, whats, userDomain),
               discoverUserNamedContacts(gmail, whos),
             ]);
+            const userThings = await discoverUserNamedThings(gmail, whats, userDomain, {
+              whoResults: userContacts,
+              groups,
+            });
             return { ...domains, userThings, userContacts };
           },
         });
