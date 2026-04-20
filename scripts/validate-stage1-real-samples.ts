@@ -253,13 +253,13 @@ const STAGE2_EXPECTED: Stage2Expectation[] = [
     domain: "school_parent",
     confirmedDomain: "email.teamsnap.com",
     algorithmHint:
-      "school-two-pattern: (A) institution regex (religious-prefix or suffix-bearing) + (B) activity regex (e.g., 'U11 Soccer', 'FRC Robotics'). KNOWN MISS on TeamSnap: TeamSnap subjects are event notifications ('Practice', 'Game Reminder') that embed the team name WITHOUT a sport keyword (the team does soccer, but the subject says 'Practice'). The team surfaces later via Pass 2 expansion / entity enrichment, not Stage 2. This fixture is kept as a regression signal: if Stage 2 ever DOES match 'ZSA U11/12' here, it means school extraction widened — verify intentional.",
+      "school-three-pattern (#102): (A) institution regex (religious-prefix or suffix-bearing), (B) activity regex (e.g., 'U11 Soccer', 'FRC Robotics'), (C) corpus frequency mining. Pattern C surfaces the repeating proper-noun phrase 'ZSA U11/12 Girls Spring 2026 Competitive Rise' from 10+ subjects. Pre-#102 this fixture was scaffolded to fail (A/B don't match TeamSnap event-notification subjects); with Pattern C it should now pass.",
     expectedEntities: [
       {
         displayMatch: /ZSA.*U11.*Girls/,
         minFrequency: 5,
         evidence:
-          "10+ subjects contain 'ZSA U11/12 Girls Spring 2026 Competitive Rise' (Updated event ×5, New game ×2). EXPECTED TO FAIL in Stage 2 — see algorithmHint.",
+          "10+ subjects contain 'ZSA U11/12 Girls Spring 2026 Competitive Rise' (Updated event ×5, New game ×2). Pattern C (#102) catches repeating proper-noun n-grams.",
       },
     ],
   },
