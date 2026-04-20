@@ -70,9 +70,48 @@ export const POST = withAuth(async ({ userId, request }) => {
 
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
-      select: { id: true, userId: true, phase: true, domain: true, name: true },
+      select: {
+        id: true,
+        userId: true,
+        phase: true,
+        domain: true,
+        name: true,
+        // #121: needed to map confirmed SECONDARY entities to their Stage 1
+        // senderEmail for the aliases column. Cheap — same JSON column the
+        // polling response already reads.
+        stage1UserContacts: true,
+      },
     });
     assertResourceOwnership(schema, userId, "Schema");
+
+    // #121: build a sender-email lookup keyed by (a) Stage 1 contact query
+    // and (b) the identityKey convention `@<senderEmail>` used by the
+    // entity-discovery function. The entity-confirm payload arrives with
+    // the identityKey intact even when the user renamed the displayLabel,
+    // so the `@`-prefix path is the robust fallback. Query-based lookup is
+    // the spec-preferred primary so renames still land their alias.
+    const userContacts =
+      (schema!.stage1UserContacts as Array<{
+        query: string;
+        senderEmail: string | null;
+      }> | null) ?? [];
+    const queryToEmail = new Map<string, string>();
+    for (const c of userContacts) {
+      if (c.query && c.senderEmail) queryToEmail.set(c.query, c.senderEmail);
+    }
+
+    const augmentedEntities = body.confirmedEntities.map((e) => {
+      if (e.kind !== "SECONDARY") return e;
+      // Primary lookup: match displayLabel against stage1UserContacts.query.
+      let senderEmail = queryToEmail.get(e.displayLabel);
+      // Fallback: identityKey convention `@<senderEmail>` (see
+      // entity-discovery-fn.ts seed generation). Survives user renames.
+      if (!senderEmail && e.identityKey.startsWith("@")) {
+        senderEmail = e.identityKey.slice(1);
+      }
+      if (!senderEmail) return e;
+      return { ...e, aliases: [senderEmail] };
+    });
 
     const committed = await prisma.$transaction(async (tx) => {
       const { count } = await tx.caseSchema.updateMany({
@@ -80,7 +119,7 @@ export const POST = withAuth(async ({ userId, request }) => {
         data: { phase: "PROCESSING_SCAN", phaseUpdatedAt: new Date() },
       });
       if (count === 0) return false;
-      await persistConfirmedEntities(tx, schemaId!, body.confirmedEntities);
+      await persistConfirmedEntities(tx, schemaId!, augmentedEntities);
       // Issue #109: Stage 1/2 flow doesn't generate clusteringConfig or
       // summaryLabels (the hypothesis flow did). Seed deterministic
       // per-domain defaults here so the scan pipeline can read them.
@@ -88,13 +127,7 @@ export const POST = withAuth(async ({ userId, request }) => {
       // Issue #111: upgrade the "Setting up..." placeholder to a real name
       // when the user didn't provide one at the interview step. No-op if the
       // user supplied a name (persisted via createSchemaStub).
-      await seedSchemaName(
-        tx,
-        schemaId!,
-        schema!.name,
-        schema!.domain,
-        body.confirmedEntities,
-      );
+      await seedSchemaName(tx, schemaId!, schema!.name, schema!.domain, body.confirmedEntities);
       await tx.onboardingOutbox.create({
         data: {
           schemaId: schemaId!,

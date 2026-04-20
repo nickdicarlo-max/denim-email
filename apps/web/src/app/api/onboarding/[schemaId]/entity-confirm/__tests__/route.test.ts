@@ -73,6 +73,7 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
       phase: "AWAITING_ENTITY_CONFIRMATION",
       domain: "agency",
       name: "Setting up...",
+      stage1UserContacts: [],
     });
     mocks.outboxCreate.mockResolvedValue({});
     mocks.outboxUpdate.mockResolvedValue({});
@@ -138,7 +139,18 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
       where: { id: "s1", phase: "AWAITING_ENTITY_CONFIRMATION" },
       data: expect.objectContaining({ phase: "PROCESSING_SCAN" }),
     });
-    expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(expect.anything(), "s1", entities);
+    // #121: PRIMARY passes through untouched; SECONDARY with `@`-prefixed
+    // identityKey gets aliases populated from the senderEmail suffix.
+    expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(expect.anything(), "s1", [
+      { displayLabel: "3910 Bucknell", identityKey: "3910 bucknell", kind: "PRIMARY" },
+      {
+        displayLabel: "Anthropic",
+        identityKey: "@anthropic.com",
+        kind: "SECONDARY",
+        secondaryTypeName: "Vendor",
+        aliases: ["anthropic.com"],
+      },
+    ]);
     expect(mocks.seedSchemaDefaults).toHaveBeenCalledWith(expect.anything(), "s1", "agency");
     expect(mocks.seedSchemaName).toHaveBeenCalledWith(
       expect.anything(),
@@ -160,5 +172,41 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
         data: { schemaId: "s1", userId: "user-1" },
       }),
     );
+  });
+
+  it("#121: populates aliases from stage1UserContacts query lookup (preferred over @-prefix)", async () => {
+    mocks.findUnique.mockResolvedValueOnce({
+      id: "s1",
+      userId: "user-1",
+      phase: "AWAITING_ENTITY_CONFIRMATION",
+      domain: "school_parent",
+      name: "My Schema",
+      // Query-based lookup — the user typed "Coach Ziad" as a contact; Stage 1
+      // resolved it to `donotreply@teamsnap.com`. Even if the user renamed
+      // the displayLabel on the review screen, the identityKey `@<email>`
+      // would fall back to the same email — but here we verify the primary
+      // path (query match) fires.
+      stage1UserContacts: [{ query: "Coach Ziad", senderEmail: "donotreply@teamsnap.com" }],
+    });
+    mocks.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const entities = [
+      {
+        displayLabel: "Coach Ziad",
+        identityKey: "@donotreply@teamsnap.com",
+        kind: "SECONDARY" as const,
+      },
+    ];
+    const res = await POST(makeRequest("s1", { confirmedEntities: entities }));
+    expect(res.status).toBe(200);
+
+    expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(expect.anything(), "s1", [
+      expect.objectContaining({
+        displayLabel: "Coach Ziad",
+        identityKey: "@donotreply@teamsnap.com",
+        kind: "SECONDARY",
+        aliases: ["donotreply@teamsnap.com"],
+      }),
+    ]);
   });
 });

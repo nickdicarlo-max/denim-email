@@ -1099,6 +1099,16 @@ export interface ConfirmedEntity {
   identityKey: string;
   kind: "PRIMARY" | "SECONDARY";
   secondaryTypeName?: string;
+  /**
+   * #121: sender-email aliases populated for SECONDARY entities whose
+   * `identityKey` resolves to a Stage 1 `senderEmail`. Powers the relevance-
+   * gate sender-bypass in `extraction.ts::resolveEntity` when the display
+   * name varies across sends (e.g. `Ziad Allan` vs `ZSA U11/12 Girls`) but
+   * the underlying sender email is stable.
+   *
+   * Empty / undefined → no alias merge performed; the bulk update path runs.
+   */
+  aliases?: string[];
 }
 
 /**
@@ -1111,10 +1121,16 @@ export interface ConfirmedEntity {
  * here is felt.
  *
  * Semantics match an upsert-with-update loop:
- *   1. createMany(skipDuplicates) inserts new rows with autoDetected=false.
+ *   1. createMany(skipDuplicates) inserts new rows with autoDetected=false
+ *      and the caller-supplied `aliases` (default `[]`).
  *   2. updateMany refreshes `name` + `isActive` on pre-existing rows (auto-
  *      discovered entities the user is now explicitly confirming). Scoped to
  *      the schemaId so there is no cross-tenant risk.
+ *   3. #121: entities with non-empty `aliases` take a per-row raw-SQL update
+ *      that merges the new aliases into the existing JSONB array and
+ *      deduplicates. Only SECONDARY entities with a resolved senderEmail
+ *      take this path — usually a handful, keeping the critical-path cost
+ *      bounded.
  *
  * No-op on an empty array.
  */
@@ -1132,17 +1148,29 @@ export async function persistConfirmedEntities(
       identityKey: e.identityKey,
       type: e.kind,
       secondaryTypeName: e.secondaryTypeName,
+      aliases: (e.aliases ?? []) as unknown as Prisma.InputJsonValue,
       autoDetected: false,
       isActive: true,
     })),
     skipDuplicates: true,
   });
 
-  // Group by display label so one updateMany refreshes every row that shares
-  // a label. In practice labels are usually distinct, making this N small
-  // statements; still strictly fewer round-trips than a per-row upsert loop.
-  const byLabel = new Map<string, ConfirmedEntity[]>();
+  // Partition: entities without aliases go through the fast bulk path
+  // (grouped updateMany by label), entities with aliases take the JSONB
+  // merge path so existing auto-discovered aliases aren't clobbered.
+  const withAliases: ConfirmedEntity[] = [];
+  const withoutAliases: ConfirmedEntity[] = [];
   for (const e of entities) {
+    if (e.aliases && e.aliases.length > 0) withAliases.push(e);
+    else withoutAliases.push(e);
+  }
+
+  // Bulk path — group by display label so one updateMany refreshes every row
+  // that shares a label. In practice labels are usually distinct, making this
+  // N small statements; still strictly fewer round-trips than a per-row
+  // upsert loop.
+  const byLabel = new Map<string, ConfirmedEntity[]>();
+  for (const e of withoutAliases) {
     const bucket = byLabel.get(e.displayLabel) ?? [];
     bucket.push(e);
     byLabel.set(e.displayLabel, bucket);
@@ -1155,6 +1183,28 @@ export async function persistConfirmedEntities(
       },
       data: { name: label, isActive: true },
     });
+  }
+
+  // Alias-merge path — one raw UPDATE per entity. Uses JSONB concat + a
+  // DISTINCT subquery to dedupe so re-confirming the same SECONDARY doesn't
+  // grow the aliases array unboundedly. Parameterized via `Prisma.sql` — no
+  // user string interpolated into the query body.
+  for (const e of withAliases) {
+    await tx.$executeRaw`
+      UPDATE "Entity"
+      SET
+        "name" = ${e.displayLabel},
+        "isActive" = true,
+        "aliases" = (
+          SELECT COALESCE(jsonb_agg(DISTINCT v), '[]'::jsonb)
+          FROM jsonb_array_elements_text(
+            "aliases" || to_jsonb(${e.aliases as string[]}::text[])
+          ) AS t(v)
+        )
+      WHERE "schemaId" = ${schemaId}
+        AND "identityKey" = ${e.identityKey}
+        AND "type"::text = ${e.kind}
+    `;
   }
 }
 
