@@ -271,6 +271,7 @@ function UserThingRow({
         <span className="font-medium text-primary">{thing.query}</span>
         <span className="text-xs text-accent-text">
           {thing.matchCount} email{thing.matchCount === 1 ? "" : "s"} from {thing.topDomain}
+          {thing.sourcedFromWho ? ` (via ${thing.sourcedFromWho})` : ""}
         </span>
       </label>
     </li>
