@@ -236,9 +236,9 @@ export default function NamesPage() {
             <p className="text-muted text-sm mt-1">
               Optional. Just a few names to help us find the rest.
             </p>
-            <p className="text-muted text-sm mt-1">
-              If a person focuses on one topic, tap it below. If they help with several, leave
-              blank.
+            <p className="text-primary text-sm mt-2 font-medium">
+              If a person focuses on specific topics, tap them below. If they help with everything,
+              leave them unpaired.
             </p>
 
             <div className="mt-4 flex gap-2">
@@ -269,7 +269,7 @@ export default function NamesPage() {
                 {whos.map((item) => {
                   const selectedWhats = pairings.get(item) ?? new Set<string>();
                   return (
-                    <div key={item} className="flex flex-col gap-2">
+                    <div key={item} className="flex flex-col gap-3 rounded-lg bg-surface-low p-4">
                       <span className="inline-flex w-fit items-center gap-1.5 px-3 py-1.5 rounded-full bg-upcoming-soft text-upcoming-text text-sm font-medium">
                         {item}
                         <button
@@ -281,8 +281,10 @@ export default function NamesPage() {
                           <span className="material-symbols-outlined text-[16px]">close</span>
                         </button>
                       </span>
-                      <div className="flex flex-wrap items-center gap-2 pl-1">
-                        <span className="text-xs text-muted">focuses on:</span>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm text-primary font-medium">
+                          Tap topics {item} focuses on:
+                        </span>
                         {whats.map((w) => {
                           const isSelected = selectedWhats.has(w);
                           return (
@@ -293,8 +295,8 @@ export default function NamesPage() {
                               aria-pressed={isSelected}
                               className={
                                 isSelected
-                                  ? "inline-flex items-center px-3 py-1 rounded-full bg-accent-soft text-accent-text text-xs font-medium cursor-pointer hover:brightness-95 transition-all"
-                                  : "inline-flex items-center px-3 py-1 rounded-full bg-surface-mid text-muted text-xs font-medium cursor-pointer hover:brightness-95 transition-all"
+                                  ? "inline-flex items-center px-3 py-1.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium cursor-pointer hover:brightness-95 transition-all"
+                                  : "inline-flex items-center px-3 py-1.5 rounded-full bg-surface-highest text-primary text-sm font-medium border border-border cursor-pointer hover:bg-surface-high transition-all"
                               }
                             >
                               {w}
