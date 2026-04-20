@@ -165,6 +165,8 @@ export const runEntityDiscovery = inngest.createFunction(
                 schemaDomain: schema.domain as DomainName,
                 confirmedDomain,
                 pairedWhoAddresses: pairedWhoAddresses.length > 0 ? pairedWhoAddresses : undefined,
+                schemaId,
+                userId,
               });
               // Prepend user-named seeds so they appear first in the
               // review UI. Dedup by key to avoid a derived candidate
