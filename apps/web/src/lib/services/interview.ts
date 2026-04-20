@@ -1015,6 +1015,8 @@ export interface Stage1Result {
     topDomain: string | null;
     topSenders: ReadonlyArray<string>;
     errorCount: number;
+    /** #117: optional paired WHO name that supplied topDomain/matchCount. */
+    sourcedFromWho?: string;
   }>;
   /** #112: per-user-who find-or-tell results. Same semantics as userThings. */
   userContacts: Array<{

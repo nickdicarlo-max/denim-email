@@ -62,6 +62,11 @@ export interface Stage1UserThingDTO {
   topDomain: string | null;
   topSenders: ReadonlyArray<string>;
   errorCount: number;
+  /**
+   * #117: name of the paired WHO whose `from:` result supplied `topDomain`
+   * and `matchCount` for this entry. Absent on full-text-only results.
+   */
+  sourcedFromWho?: string;
 }
 
 /** #112: per-user-who find-or-tell result surfaced on Stage 1 review. */

@@ -38,6 +38,13 @@ export interface UserThingResult {
   topSenders: ReadonlyArray<string>;
   /** Per-query Gmail error count (non-fatal). Same shape as `fetchFromHeaders`. */
   errorCount: number;
+  /**
+   * #117: name of the paired WHO whose `from:` result supplied `topDomain`
+   * and `matchCount` for this entry. Absent when the WHAT was not paired or
+   * fell through to the full-text search (e.g. every paired WHO had zero
+   * matches).
+   */
+  sourcedFromWho?: string;
 }
 
 export interface UserContactResult {
