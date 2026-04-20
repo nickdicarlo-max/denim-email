@@ -67,12 +67,13 @@ export const runEntityDiscovery = inngest.createFunction(
       // "Your contacts" selections. Cross-reference the confirmed-query
       // list against the Stage 1 discovery payload so we get the full
       // senderEmail / senderDomain context back.
-      const userContacts = (schema.stage1UserContacts as Array<{
-        query: string;
-        matchCount: number;
-        senderEmail: string | null;
-        senderDomain: string | null;
-      }> | null) ?? [];
+      const userContacts =
+        (schema.stage1UserContacts as Array<{
+          query: string;
+          matchCount: number;
+          senderEmail: string | null;
+          senderDomain: string | null;
+        }> | null) ?? [];
       const confirmedQueries = new Set(
         (schema.stage1ConfirmedUserContactQueries as string[] | null) ?? [],
       );
@@ -114,7 +115,8 @@ export const runEntityDiscovery = inngest.createFunction(
       // to pull the senderEmail Stage 1 discovered for each paired WHO.
       // When `groups` is empty (property / unpaired schemas), this list is
       // empty and Pattern C runs full-view only — zero behavior change.
-      const schemaInputs = (schema.inputs as { groups?: Array<{ whats: string[]; whos: string[] }> } | null) ?? null;
+      const schemaInputs =
+        (schema.inputs as { groups?: Array<{ whats: string[]; whos: string[] }> } | null) ?? null;
       const groups = schemaInputs?.groups ?? [];
       const pairedWhoAddresses: Array<{
         senderEmail: string;
@@ -162,8 +164,7 @@ export const runEntityDiscovery = inngest.createFunction(
                 gmailClient: gmail,
                 schemaDomain: schema.domain as DomainName,
                 confirmedDomain,
-                pairedWhoAddresses:
-                  pairedWhoAddresses.length > 0 ? pairedWhoAddresses : undefined,
+                pairedWhoAddresses: pairedWhoAddresses.length > 0 ? pairedWhoAddresses : undefined,
               });
               // Prepend user-named seeds so they appear first in the
               // review UI. Dedup by key to avoid a derived candidate

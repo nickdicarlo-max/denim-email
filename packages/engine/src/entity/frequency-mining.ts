@@ -87,7 +87,7 @@ const MAX_SUBJECT_LEN = 200;
 // Punctuation characters that split tokens. Preserve alphanumeric inner
 // punctuation like `U11/12` (slash kept inside token) but split on list
 // delimiters, quotes, brackets, and end punctuation.
-const SPLIT_CHARS = /[\s:(),;!?"[\]|.\-]+/;
+const SPLIT_CHARS = /[\s:(),;!?"[\]|.-]+/;
 
 /**
  * Tokenize a subject into display tokens.

@@ -99,7 +99,7 @@ describe("extractSchoolCandidates — regex v2 expanded vocabulary", () => {
   });
 
   it("ReDoS guard: 500-char subject completes under 50ms", () => {
-    const pathological = "Varsity " + "Ab Cd Ef Gh Ij ".repeat(60);
+    const pathological = `Varsity ${"Ab Cd Ef Gh Ij ".repeat(60)}`;
     const t0 = Date.now();
     extractSchoolCandidates([{ subject: pathological, frequency: 1 }]);
     expect(Date.now() - t0).toBeLessThan(50);

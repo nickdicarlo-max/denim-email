@@ -6,10 +6,7 @@
  * I/O-free, so these are literal strings — same signal, zero file ops.
  */
 import { describe, expect, it } from "vitest";
-import {
-  mineFrequentPhrases,
-  SCHOOL_EVENT_STOPWORDS,
-} from "../entity/frequency-mining";
+import { mineFrequentPhrases, SCHOOL_EVENT_STOPWORDS } from "../entity/frequency-mining";
 
 function subjects(list: string[]) {
   return list.map((s) => ({ subject: s }));
