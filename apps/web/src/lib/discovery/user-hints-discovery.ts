@@ -14,6 +14,7 @@
  * `writeStage1Result`.
  */
 
+import type { EntityGroupInput } from "@denim/types";
 import type { GmailClient } from "@/lib/gmail/client";
 import { logger } from "@/lib/logger";
 import { fetchFromHeaders, type FromHeaderResult } from "./gmail-metadata-fetch";
@@ -90,6 +91,24 @@ function buildContactQuery(who: string): string {
   return `from:"${quoted}" newer_than:${USER_HINT_LOOKBACK_DAYS}d`;
 }
 
+/**
+ * #117 safety filter — drop obvious marketing/newsletter subdomains and
+ * cross-domain `.edu` noise from the full-text path. Paired WHATs no
+ * longer depend on this path (their topDomain comes from the WHO's
+ * `from:` result), so this is residual hygiene for unpaired WHATs.
+ *
+ * Keeps `email.*` / `mail.*` intact — activity platforms like TeamSnap
+ * use them (`email.teamsnap.com`).
+ */
+function isNoiseDomain(domain: string, userDomain: string): boolean {
+  if (domain.startsWith("news.")) return true;
+  if (domain.startsWith("alerts.")) return true;
+  if (domain.startsWith("t.")) return true;
+  // Cross-domain .edu filter — skip unless the user is themselves on .edu.
+  if (domain.endsWith(".edu") && !userDomain.endsWith(".edu")) return true;
+  return false;
+}
+
 function aggregateThingResult(
   query: string,
   rows: ReadonlyArray<FromHeaderResult>,
@@ -104,6 +123,7 @@ function aggregateThingResult(
     if (!domain) continue;
     if (isPublicProvider(domain)) continue;
     if (domain === userDomain) continue;
+    if (isNoiseDomain(domain, userDomain)) continue;
     domainCounts.set(domain, (domainCounts.get(domain) ?? 0) + 1);
     if (displayName) {
       nameCounts.set(displayName, (nameCounts.get(displayName) ?? 0) + 1);
@@ -145,18 +165,63 @@ function aggregateContactResult(
   };
 }
 
+/**
+ * #117: pick the paired WHO (if any) whose `from:` result should drive this
+ * WHAT's topDomain. Returns `null` when the WHAT is unpaired OR every paired
+ * WHO returned zero matches (caller falls back to the full-text aggregate).
+ */
+function chooseSourcedWho(
+  what: string,
+  groups: ReadonlyArray<EntityGroupInput>,
+  whoResults: ReadonlyArray<UserContactResult>,
+): UserContactResult | null {
+  // Collect every paired WHO across all groups that contain this WHAT.
+  const pairedWhoNames = new Set<string>();
+  for (const group of groups) {
+    if (group.whats.includes(what)) {
+      for (const who of group.whos) pairedWhoNames.add(who);
+    }
+  }
+  if (pairedWhoNames.size === 0) return null;
+
+  const candidates = whoResults.filter((w) => pairedWhoNames.has(w.query));
+  if (candidates.length === 0) return null;
+
+  // Highest matchCount wins; ties break by first-seen (Array.reduce).
+  const best = candidates.reduce(
+    (acc, cur) => (cur.matchCount > acc.matchCount ? cur : acc),
+    candidates[0],
+  );
+  return best.matchCount > 0 ? best : null;
+}
+
 export async function discoverUserNamedThings(
   client: GmailClient,
   whats: ReadonlyArray<string>,
   userDomain: string,
+  options?: {
+    /** Paired WHO results from `discoverUserNamedContacts`. Used to attribute
+     *  `topDomain`/`matchCount` for WHATs that appear in `groups`. */
+    whoResults: ReadonlyArray<UserContactResult>;
+    /** Paired groups from the interview input. Empty = today's behavior. */
+    groups: ReadonlyArray<EntityGroupInput>;
+  },
 ): Promise<UserThingResult[]> {
   if (whats.length === 0) return [];
+  const groups = options?.groups ?? [];
+  const whoResults = options?.whoResults ?? [];
   const results = await Promise.all(
     whats.map(async (what) => {
       const query = buildThingQuery(what);
+      let fullTextResult: UserThingResult;
       try {
         const fetched = await fetchFromHeaders(client, query, MAX_PER_HINT);
-        return aggregateThingResult(what, fetched.results, fetched.errorCount, userDomain);
+        fullTextResult = aggregateThingResult(
+          what,
+          fetched.results,
+          fetched.errorCount,
+          userDomain,
+        );
       } catch (err) {
         // One failed hint should not kill the entire Stage 1 pass. Log + mark
         // as 0-match so the UI surfaces "no results" rather than omitting.
@@ -166,7 +231,7 @@ export async function discoverUserNamedThings(
           query: what,
           error: err instanceof Error ? err.message : String(err),
         });
-        return {
+        fullTextResult = {
           query: what,
           matchCount: 0,
           topDomain: null,
@@ -174,6 +239,23 @@ export async function discoverUserNamedThings(
           errorCount: 1,
         };
       }
+
+      // #117: if this WHAT is paired and the paired WHO has real matches,
+      // override topDomain/matchCount from the WHO's result. Fall back to
+      // the full-text aggregate (safety-filtered) when no paired WHO has
+      // matches — keeps today's "find it or tell me" contract intact.
+      const sourced = chooseSourcedWho(what, groups, whoResults);
+      if (sourced && sourced.senderDomain) {
+        return {
+          query: what,
+          matchCount: sourced.matchCount,
+          topDomain: sourced.senderDomain,
+          topSenders: fullTextResult.topSenders,
+          errorCount: fullTextResult.errorCount,
+          sourcedFromWho: sourced.query,
+        };
+      }
+      return fullTextResult;
     }),
   );
   return results;

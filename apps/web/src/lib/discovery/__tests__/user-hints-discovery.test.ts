@@ -101,6 +101,145 @@ describe("discoverUserNamedThings", () => {
   });
 });
 
+describe("discoverUserNamedThings — #117 pairing + safety filter", () => {
+  it("paired WHAT gets topDomain from the chosen paired WHO (highest matchCount)", async () => {
+    // Full-text returns noise; pairing should override with the WHO's real domain.
+    mockFetch([
+      { messageId: "1", fromHeader: "Bucknell <news@bucknell.edu>" },
+    ]);
+    const whoResults = [
+      {
+        query: "Ziad Allan",
+        matchCount: 12,
+        senderEmail: "ziad@email.teamsnap.com",
+        senderDomain: "email.teamsnap.com",
+        errorCount: 0,
+      },
+    ];
+    const groups = [{ whats: ["soccer"], whos: ["Ziad Allan"] }];
+    const [r] = await discoverUserNamedThings(gmail, ["soccer"], "gmail.com", {
+      whoResults,
+      groups,
+    });
+    expect(r.topDomain).toBe("email.teamsnap.com");
+    expect(r.matchCount).toBe(12);
+    expect(r.sourcedFromWho).toBe("Ziad Allan");
+  });
+
+  it("picks highest-matchCount WHO when multiple paired WHOs exist", async () => {
+    mockFetch([]);
+    const whoResults = [
+      {
+        query: "Alice",
+        matchCount: 3,
+        senderEmail: "a@foo.com",
+        senderDomain: "foo.com",
+        errorCount: 0,
+      },
+      {
+        query: "Bob",
+        matchCount: 11,
+        senderEmail: "b@bar.com",
+        senderDomain: "bar.com",
+        errorCount: 0,
+      },
+    ];
+    const groups = [{ whats: ["soccer"], whos: ["Alice", "Bob"] }];
+    const [r] = await discoverUserNamedThings(gmail, ["soccer"], "x.com", {
+      whoResults,
+      groups,
+    });
+    expect(r.sourcedFromWho).toBe("Bob");
+    expect(r.topDomain).toBe("bar.com");
+    expect(r.matchCount).toBe(11);
+  });
+
+  it("falls back to full-text when every paired WHO has 0 matches", async () => {
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@teamsnap.example>" },
+      { messageId: "2", fromHeader: "<b@teamsnap.example>" },
+    ]);
+    const whoResults = [
+      {
+        query: "Ziad",
+        matchCount: 0,
+        senderEmail: null,
+        senderDomain: null,
+        errorCount: 0,
+      },
+    ];
+    const groups = [{ whats: ["soccer"], whos: ["Ziad"] }];
+    const [r] = await discoverUserNamedThings(gmail, ["soccer"], "x.com", {
+      whoResults,
+      groups,
+    });
+    expect(r.topDomain).toBe("teamsnap.example");
+    expect(r.matchCount).toBe(2);
+    expect(r.sourcedFromWho).toBeUndefined();
+  });
+
+  it("empty groups → identical output to unpaired call (regression)", async () => {
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@foo.com>" },
+      { messageId: "2", fromHeader: "<b@foo.com>" },
+    ]);
+    const withOptions = await discoverUserNamedThings(gmail, ["x"], "y.com", {
+      whoResults: [],
+      groups: [],
+    });
+
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@foo.com>" },
+      { messageId: "2", fromHeader: "<b@foo.com>" },
+    ]);
+    const without = await discoverUserNamedThings(gmail, ["x"], "y.com");
+
+    expect(withOptions).toEqual(without);
+    expect(withOptions[0].sourcedFromWho).toBeUndefined();
+  });
+
+  it("safety filter drops news.*, alerts.*, t.* subdomains", async () => {
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@news.bloomberg.com>" },
+      { messageId: "2", fromHeader: "<b@alerts.example.com>" },
+      { messageId: "3", fromHeader: "<c@t.marketing.com>" },
+      { messageId: "4", fromHeader: "<d@legit.com>" },
+    ]);
+    const [r] = await discoverUserNamedThings(gmail, ["anything"], "x.com");
+    expect(r.topDomain).toBe("legit.com");
+  });
+
+  it("safety filter drops .edu when user domain isn't .edu", async () => {
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@bucknell.edu>" },
+      { messageId: "2", fromHeader: "<b@bucknell.edu>" },
+      { messageId: "3", fromHeader: "<c@real.com>" },
+    ]);
+    const [r] = await discoverUserNamedThings(gmail, ["soccer"], "gmail.com");
+    expect(r.topDomain).toBe("real.com");
+  });
+
+  it("safety filter keeps .edu when user domain IS .edu", async () => {
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@bucknell.edu>" },
+      { messageId: "2", fromHeader: "<b@bucknell.edu>" },
+      { messageId: "3", fromHeader: "<c@real.com>" },
+    ]);
+    const [r] = await discoverUserNamedThings(gmail, ["soccer"], "stanford.edu");
+    expect(r.topDomain).toBe("bucknell.edu");
+  });
+
+  it("safety filter KEEPS email.* and mail.* subdomains", async () => {
+    mockFetch([
+      { messageId: "1", fromHeader: "<a@email.teamsnap.com>" },
+      { messageId: "2", fromHeader: "<b@email.teamsnap.com>" },
+      { messageId: "3", fromHeader: "<c@mail.activity.org>" },
+    ]);
+    const [r] = await discoverUserNamedThings(gmail, ["soccer"], "gmail.com");
+    expect(r.topDomain).toBe("email.teamsnap.com");
+  });
+});
+
 describe("discoverUserNamedContacts", () => {
   it("identifies the dominant sender address for a who that hits", async () => {
     mockFetch([
