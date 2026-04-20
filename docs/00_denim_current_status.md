@@ -1,6 +1,6 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-19 Afternoon (Sprint planning + seven-issue cleanup + infra slice + Stage 2 UX polish — all on `feature/perf-quality-sprint`. Closed 6 shipped/dupe issues with commit-pointer comments (#30, #77, #78, #82, #104, #106). Shipped **#108** (register `inngest/function.failed` in DenimEvents so `onFailure` handlers validate), **#107** (duck-typed `extractCredentialFailure` that survives Turbopack cross-package module duplication, +6 regression tests), **#112 Tier 2 + #115** bundled (new minimal JSONB column `stage1ConfirmedUserContactQueries`; `runEntityDiscovery` reads it + `stage1UserContacts` to seed pre-confirmed SECONDARY candidates; Stage 2 review rewritten with Thing/Contact badges, grouped-by-domain headers, `Added by you` pills, per-domain empty-state copy). Filed **#116** as breadcrumb for a one-off Turbopack CSS worker crash on `/feed` during restart (Windows `0xc0000142` init failure; not code-related). Open count 48 → 40; 328 unit tests passing across 4 workspaces. Next: pick a new slice post-reboot — candidates are #93 entity-robustness aliases (Bucknell overmatch fix), #38 Eval Session 2, #72 CI integration + Playwright, or #32 Gmail sample data for rapid testing.)
+Last updated: 2026-04-19 Evening (Compound E2E-driven fix on `feature/perf-quality-sprint`: **#117** Stage 1 per-whats pairing + safety hygiene, **#102** Pattern C corpus frequency mining, **#119** property address suffix-aware dedup, **#121** SECONDARY alias population. **21 new commits**, **364 unit tests passing** across 4 workspaces (+36 this session). Closed **#93** / **#109** / **#118** as superseded / verified / subsumed. Filed **#120** / **#121** / **#122** / **#123** with DB-forensic evidence from live E2E runs on Girls Activities (`01KPM0R4QS72E8B1M0A1BDJWYC`) + North 40 Partners (`01KPM07ZBZG9570XKJZTVB9N2A`) schemas. Open count 40 → 43. Next: live E2E re-run to verify the compound, then **#123** tag-score investigation (likely proximate root cause of #86 case over-fragmentation — every MERGE scored exactly at threshold with `tagScore: 0` despite `tagMatchScore=15` configured).)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
 
@@ -1085,6 +1085,94 @@ Flagged for a future cleanup sweep (not this slice):
 1. **Fresh E2E verification** — DB wipe + delete Supabase Auth row + fresh Google OAuth, then drive Stage 1 + Stage 2. Expected qualitative wins: (a) Farrukh explicitly shows on Stage 2 review as a pre-checked SECONDARY with "Added by you" pill; (b) clear `Thing` / `Contact` badges per row; (c) `Inside <domain>` headers; (d) no more bare `portfolioproadvisors` row. If Stage 1 user-whos section shows no user-named contacts and Stage 2 has no "Added by you" entries, something is wrong — possibly the `stage1ConfirmedUserContactQueries` persistence isn't firing.
 2. **Pick next slice from one of**: (a) #93 entity-robustness aliases (Bucknell overmatch fix, unblocks #91 verification run), (b) #38 Eval Session 2 (now safe to measure post-#115), (c) #72 CI integration + Playwright (pre-external-user investment), (d) #32 Gmail sample data for rapid testing (iteration speed multiplier). Agent 2's recommendation: (a) + (b) as a pair — entity robustness then eval.
 3. **Stale-issue cleanup** (cheap housekeeping): close or re-scope #99, #66, #91 per the agent-2 flags above.
+
+---
+
+## 2026-04-19 Evening Session — Compound E2E-driven fix: #117 + #102 + #119 + #121
+
+Post-reboot. Cleared `.next` cache after a second Turbopack CSS-worker crash (`0xc0000142`, same shape as #116 — non-code Windows DLL init failure; restart cleared it). Ran two fresh onboarding E2Es back-to-back: Girls Activities (school_parent) + North 40 Partners (property). Both completed the pipeline. Output quality was bad in instructive ways — deep DB-forensic analysis surfaced four distinct bugs plus three new process concerns. Four fixes shipped tonight in sequence via background sub-agents; three deferred for tomorrow.
+
+### Live E2E outcomes — the baseline for diagnosis
+
+| Schema | Domain | Emails | Cases | Notable |
+|---|---|---:|---:|---|
+| `01KPM0R4QS72E8B1M0A1BDJWYC` Girls Activities | school_parent | 200 | **1** | 158 excluded, 38 orphans; the 1 case titled "ZSA U11/12 Girls…" but linked to wrong PRIMARY `Game at Academy`; only 4 of ~50 soccer emails made it in |
+| `01KPM07ZBZG9570XKJZTVB9N2A` North 40 Partners | property | 200 | **48** | 21 PRIMARY entities including 8 short/long duplicate pairs; cases over-fragmented (851 Peavy: 9 cases, avg 1.4 emails; 3910 Bucknell: 7; 205 Freedom Trail: 6) |
+
+### Findings in priority order
+
+1. **Stage 1 per-whats query picks wrong top domain.** Girls inputs `whats: ["soccer", "guitar", "lanier", "dance", "st agnes"]` produced `soccer → bucknell.edu` (alumni newsletter, 10 matches), `dance → news.bloomberg.com` (Matt Levine, 3). User confirmed all three in Stage 2. Root cause: `discoverUserNamedThings` runs Gmail full-text on generic words + picks top sender domain by count. Plus a hidden design gap — `InterviewInput.groups` (typed as "the source of truth" for WHO↔WHAT pairing in `packages/types/src/schema.ts:6`) was never populated by onboarding UI or read by discovery. User insight during design: "Ziad Allan = soccer" is private knowledge the AI can't infer, but the data model was built to carry it.
+
+2. **Stage 2 school extraction misses TeamSnap-style event-notification subjects.** Pre-existing #102. Critical design pivot during brainstorming: instead of hand-writing per-platform regex (fragile, manual — "this won't advance the mission" per Nick), mine the corpus statistically. N-gram frequency + event-verb stopword filter. `ZSA U11/12 Girls Spring 2026 Competitive Rise` emerges from repetition across ≥3 subjects; `New event: Practice` filters out because all-stopword. Domain-agnostic: works for GameChanger / ClassDojo / any platform where the entity name repeats.
+
+3. **Stage 2 property address dedup** fails on street-suffix variants. `851 Peavy` + `851 Peavy Road` stay separate because Levenshtein distance (4) exceeds threshold (2). Same root cause produced the React duplicate-key console warning at `phase-entity-confirmation.tsx:253` — two candidates post-dedup carrying the identical key `"1906 crockett st"` rendered at once. Filed as **#119**.
+
+4. **Relevance gate was mostly firing correctly for the wrong reason.** #118 investigation showed 158 excluded emails broke down as: 41 gmail.com (threaded noise, correctly excluded) + 83 from wrong-schema domains (`portfolioproadvisors.com`, `judgefite.com`, `lilviv.com` — not even soccer-adjacent; see finding 8 below) + 12 legitimate TeamSnap exclusions + 22 marketing/newsletter noise. The 12 TeamSnap exclusions were because display name `ZSA U11/12 Girls…` didn't fuzzy-match the (wrong) confirmed entities `Game at Academy` + `ziad allan`. **After #117 fixes scope + #102 extracts the real team name as a PRIMARY, those 12 would match via fuzzy-match on display name → sender-bypass fires → included.** Closed **#118** as subsumed; two narrower residual concerns split into **#121** + **#122**.
+
+5. **Residual robustness: `persistConfirmedEntities` never populates `aliases`.** All 4 SECONDARY entities across today's runs had `aliases: []` despite `identityKey` containing the sender email (e.g. `@timothybishop@judgefite.com`). Sender-bypass in `resolveEntity` depends on display-name-only matching as a result; email-local-part matching never fires. Filed as **#121**.
+
+6. **Case over-splitting within a single entity** — 851 Peavy had 9 cases (1.4 emails/case), 3910 Bucknell had 7. `Repair Invoices (3) + Rekey Invoice (1) + Yard Work Invoice (1) + Electrical & Plumbing Repairs (1) + Invoices from Krystin Jernigan (1)` all obviously belong together. Re-scoped **#86** (Day-2 → Day-1 over-splitting) with fresh evidence comment.
+
+7. **Every MERGE decision has `tagScore: 0`.** Only 3 MERGEs fired across 48 property cases, all scoring exactly 30 (threshold): `subjectScore 20 + actorScore 10 + tagScore 0`. Property `tagMatchScore=15` is configured but contributed nothing. If tags fired as designed on repair-stream emails, they'd score ≥45 and merge. Filed as **#123** — most likely proximate root cause of the fragmentation in finding 6.
+
+8. **Bidirectional cross-schema email leakage.** Property scan pool has 53 `email.teamsnap.com` + 40 `portfolioproadvisors.com` emails. Girls scan pool has 39 `portfolioproadvisors.com` + 26 `judgefite.com` + 18 `lilviv.com`. **Every schema pulls from every other user-schema.** Filed as **#122** (re-scoped from one-way during investigation).
+
+### Ships — 21 commits on `feature/perf-quality-sprint`
+
+Both implementation sub-agents ran in background while the next ticket's design continued in foreground. Specs were committed to `docs/superpowers/specs/` ahead of implementation (#117 as `2026-04-19-issue-117-stage1-pairing-and-hygiene.md`, #102 as `2026-04-19-issue-102-pattern-c-corpus-mining.md`) plus a combined `2026-04-20-issues-119-121-implementation.md` plan for the final pair.
+
+| Issue | Commits (oldest → newest) | Summary |
+|---|---|---|
+| **#117** Stage 1 per-whats pairing + safety hygiene | `73e3eac` plan → `afa9d03` biome | 9 commits. `InterviewInput.groups` populated by onboarding UI (inline `Map<who, Set<what>>` rendered as pairing pill chips under each WHO); consumed by `discoverUserNamedThings` which gains `{whoResults, groups}` options. Paired WHAT attribution comes from paired WHO's `from:` query — no extra Gmail calls, same parallel plan. Safety filter drops `news.*`, `alerts.*`, `t.*`, non-user `.edu`. `sourcedFromWho` threaded from discovery through polling DTO to domain-confirmation UI row copy (`via <name>`). |
+| **#102** Pattern C corpus frequency mining | `f98afee` plan → `2405ad0` biome | 7 commits. New pure algorithm in `packages/engine/src/entity/frequency-mining.ts` — zero I/O, 15 unit tests against real-subject fixtures. Pattern C runs alongside Pattern A (institutions) + B (activity+team) in `school-entity.ts`; cross-pattern `A > B > C` preference on normalized-key collisions. When paired WHO addresses are available, narrow-view mining tags candidates with `sourcedFromWho` + `relatedWhat` (the latter defers to #66 for actual UI grouping). **Real-corpus validator flipped from NOT FOUND to `ZSA U11/12 Girls Spring 2026 Competitive Rise (freq=7)`.** |
+| **#119** Property address suffix-aware dedup | `6245449` → `e016113` → `ea154fc` | 3 commits. `dedupByLevenshtein` gains optional `stripTrailingSuffixes` — regex strips `Drive\|Dr\|Road\|Rd\|Street\|St\|Trail\|Tr\|Avenue\|Ave\|Lane\|Ln\|Court\|Ct\|Place\|Pl\|Way\|Blvd\|Boulevard` from end of the key only; Levenshtein runs on stripped form; longest observed display wins. `property-entity.ts` passes a property-specific suffix list; school/agency/Pattern C unaffected. Root-cause fix to the React duplicate-key warning (same issue); UI `${confirmedDomain}-${candidate.key}` prefix is a belt-and-suspenders second layer. |
+| **#121** Populate SECONDARY aliases | `0285ed1` | 1 commit. Entity-confirm route augments each SECONDARY with `aliases: [senderEmail]` resolved via `stage1UserContacts` query-map lookup, with `@<senderEmail>` identityKey-prefix fallback. `persistConfirmedEntities` split: PRIMARIES + aliases-less SECONDARIES stay on bulk `updateMany` fast path; SECONDARIES with aliases take a per-row raw-SQL path (`jsonb_array_elements_text` + `jsonb_agg(DISTINCT …)`) to merge and de-dupe while preserving any prior auto-discovered aliases. |
+
+### Issue hygiene
+
+**Closed this session:**
+- **#93** (5-phase entity robustness plan) — superseded by #94 (Phase 1 domain docs) + #95 (rebuild). Closed with a per-phase map of what replaced what.
+- **#109** (Phase 4 cutover gap — `clusteringConfig` seeding) — verified by tonight's runs both completing with populated config (property `mergeThreshold=30`, school_parent `mergeThreshold=35`).
+- **#118** (relevance gate over-exclusion) — subsumed by #117 + #102 after empirical re-analysis of the 158 excluded emails. Close comment carries the sender-domain breakdown + display-name split table.
+
+**Filed this session:**
+- **#117** Stage 1 per-whats — **shipped**
+- **#119** Property address dedup — **shipped**
+- **#120** Evaluation: compare Pattern A/B/C during next hypothesis-generation touch — deferred
+- **#121** Populate sender aliases on `persistConfirmedEntities` — **shipped**
+- **#122** Cross-schema email leakage (updated with bidirectional evidence after first discovery)
+- **#123** Clustering `tagScore` returns 0 on every MERGE despite `tagMatchScore=15`
+
+**Broadened / updated in place:**
+- **#100** Stage 1 agency aggregator ranking — broadened to cross-domain (comment + evidence from Girls `bucknell.edu` + `news.bloomberg.com` repro)
+- **#102** — pre-shipment comment with live-production reproduction (promoted from validator-only)
+- **#86** — re-scoped comment: Day-2 framing was wrong; Day-1 over-splitting is the real issue, with fresh fragmentation evidence and #123 cross-reference
+
+**Net open count:** 40 → 43 (+3). Close rate: 3. File rate: 6 (1 deferred as eval ticket).
+
+### Test + type state at session end
+
+- Typecheck clean across all 4 workspaces
+- Unit tests: **364 passing** (types 11 + engine 106 + ai 52 + web 195) — **+36 new** across Pattern C (15), pairing (8), suffix-dedup (6), alias-population (3), misc (4)
+- Biome clean on touched files
+- Integration tests + Playwright not run (dev server not available this session; stubs in place as `describe.skip`)
+
+### Deferred to tomorrow
+
+1. **Live E2E re-run** — Girls + Property on the same Gmail account, verifying the #117+#102+#119+#121 compound. Expected: TeamSnap emails cleanly routed under `ZSA U11/12 Girls Spring 2026 Competitive Rise` PRIMARY (tagged `sourcedFromWho: "Ziad Allan"`, `relatedWhat: "soccer"`), property addresses consolidated short/long, no `bucknell.edu` / `news.bloomberg.com` in Stage 2 confirmed scope, zero React console warnings on Stage 2 render.
+2. **#123** Tag-score investigation (diagnosis-first). Most likely proximate root cause of #86 over-fragmentation — fix this before #86.
+3. **#86** Case over-splitting (after #123). Re-scoped framing.
+4. **#122** Cross-schema leakage investigation — now confirmed bidirectional and systemic.
+
+### Deviations / findings from the implementation agents
+
+- **`InterviewInputSchema` already accepted `groups`.** #117 spec's "extend Zod body schema" was a no-op; agent verified and moved on.
+- **`buildHypothesisPrompt` already reads `input.groups`.** Same pattern — the hypothesis prompt side was already wired, just never fed with non-empty groups.
+- **`UserThingResult` stayed in `apps/web/src/lib/discovery/`** (not moved to `packages/types` as the spec speculated). It's a discovery-layer DTO, not a shared interface. Polling DTO in `onboarding-polling.ts` got the same field.
+- **`Entity.aliases` is a `Json` column, not a Postgres array.** #121 agent used `jsonb_array_elements_text` + `jsonb_agg(DISTINCT …)` with a parameterized `$executeRaw` for merge.
+- **`dedupByLevenshtein` lives in `apps/web/src/lib/discovery/`**, not `@denim/engine`. #119 agent correctly identified and left it in place — no I/O, no boundary violation, relocation would be scope creep.
+- **React duplicate-key warning root-caused to the dedup failure itself:** `1906 Crockett St` and `1906 Crockett Street` both normalized to the same React key (`"1906 crockett st"`) but Levenshtein distance (4) exceeded the long-string threshold (2), so dedup never merged them — two candidates with identical keys rendered at once. Suffix-aware dedup fixes both the fragmentation AND the warning in one change.
+- One collateral Pattern C candidate surfaces on the real corpus: `Event Reminder Practice April PM (freq=3)`. `April` and `PM` pass the proper-noun gate. Not a regression — user dismisses at Stage 2 review. Noise-tuning deferred to future eval work (#120).
 
 ---
 
