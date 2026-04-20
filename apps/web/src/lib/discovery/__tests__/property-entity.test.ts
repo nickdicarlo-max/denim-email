@@ -86,4 +86,52 @@ describe("extractPropertyCandidates", () => {
   it("regex v2: normalizeAddressKey collapses Dr and Drive to same key", () => {
     expect(normalizeAddressKey("2310 Healey Drive")).toBe(normalizeAddressKey("2310 Healey Dr"));
   });
+
+  // #119: short/long suffix pair dedup. Before the fix these produced two
+  // candidates each because "851 Peavy" and "851 Peavy Road" generated
+  // different normalized keys.
+  describe("#119 short/long suffix pair dedup", () => {
+    it("851 Peavy + 851 Peavy Road → one candidate (longest form wins)", () => {
+      const result = extractPropertyCandidates([
+        subject("851 Peavy balance"),
+        subject("851 Peavy Road maintenance"),
+      ]);
+      expect(result).toHaveLength(1);
+      expect(result[0].displayString).toBe("851 Peavy Road");
+      expect(result[0].frequency).toBe(2);
+    });
+
+    it("collapses all 8 short/long pairs from the 2026-04-19 property run", () => {
+      const result = extractPropertyCandidates([
+        subject("Fw: 851 Peavy repair"),
+        subject("851 Peavy Road inspection"),
+        subject("1501 Sylvan statement"),
+        subject("1501 Sylvan Drive maintenance"),
+        subject("1906 Crockett repair"),
+        subject("1906 Crockett Street closing"),
+        subject("205 Freedom renewal"),
+        subject("205 Freedom Trail payment"),
+        subject("2109 Meadfoot lease"),
+        subject("2109 Meadfoot Road invoice"),
+        subject("2310 Healey balance"),
+        subject("2310 Healey Drive receipt"),
+        subject("3910 Bucknell inspection"),
+        subject("3910 Bucknell Drive maintenance"),
+        subject("1206 Fairmont statement"),
+        subject("1206 Fairmont Street balance"),
+      ]);
+      // Each of the 8 pairs collapses to 1 entry.
+      expect(result).toHaveLength(8);
+      const displays = new Set(result.map((r) => r.displayString));
+      // Verbose form wins on each merge.
+      expect(displays).toContain("851 Peavy Road");
+      expect(displays).toContain("1501 Sylvan Drive");
+      expect(displays).toContain("1906 Crockett Street");
+      expect(displays).toContain("205 Freedom Trail");
+      expect(displays).toContain("2109 Meadfoot Road");
+      expect(displays).toContain("2310 Healey Drive");
+      expect(displays).toContain("3910 Bucknell Drive");
+      expect(displays).toContain("1206 Fairmont Street");
+    });
+  });
 });

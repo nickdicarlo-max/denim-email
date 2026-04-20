@@ -17,6 +17,38 @@
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
 import { dedupByLevenshtein } from "./levenshtein-dedup";
 
+/**
+ * #119: street-suffix tokens stripped from end-of-string by the Levenshtein
+ * dedup. Collapses "851 Peavy" and "851 Peavy Road" into one candidate. Only
+ * applies when end-anchored; a token in the middle of a string is preserved.
+ */
+const STREET_SUFFIXES: ReadonlyArray<string> = [
+  "Drive",
+  "Dr",
+  "Road",
+  "Rd",
+  "Street",
+  "St",
+  "Trail",
+  "Tr",
+  "Trl",
+  "Avenue",
+  "Ave",
+  "Lane",
+  "Ln",
+  "Court",
+  "Ct",
+  "Place",
+  "Pl",
+  "Way",
+  "Blvd",
+  "Boulevard",
+  "Terrace",
+  "Ter",
+  "Highway",
+  "Hwy",
+];
+
 export const STREET_TYPE_NORMALIZE: Record<string, string> = {
   street: "St",
   st: "St",
@@ -116,7 +148,11 @@ export function extractPropertyCandidates(subjects: SubjectInput[]): PropertyCan
       });
     }
   }
-  const deduped = dedupByLevenshtein(raw);
+  // #119: pass the street-suffix list so "851 Peavy" and "851 Peavy Road"
+  // collapse (different grouping keys, one merged output). Without the
+  // option, the two variants would land in separate buckets and never be
+  // compared. The longest observed form wins as the canonical display.
+  const deduped = dedupByLevenshtein(raw, { stripTrailingSuffixes: STREET_SUFFIXES });
   return deduped
     .sort((a, b) => b.frequency - a.frequency)
     .slice(0, ONBOARDING_TUNABLES.stage2.topNEntities);
