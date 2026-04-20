@@ -20,3 +20,5 @@ export {
   timeDecayMultiplier,
 } from "./clustering/scoring";
 export { fuzzyMatch, jaro, jaroWinkler, resolveEntity } from "./entity/matching";
+export type { FrequencyCandidate, MineOptions } from "./entity/frequency-mining";
+export { mineFrequentPhrases, SCHOOL_EVENT_STOPWORDS } from "./entity/frequency-mining";
