@@ -60,7 +60,7 @@ export default async function Home({
 
     if (user) {
       const schemaCount = await prisma.caseSchema.count({
-        where: { userId: user.id },
+        where: { userId: user.id, status: { not: "ABANDONED" } },
       });
       redirectTo = schemaCount > 0 ? "/feed" : "/onboarding/category";
     }

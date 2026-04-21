@@ -173,7 +173,9 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      const schemaCount = await prisma.caseSchema.count({ where: { userId: user.id } });
+      const schemaCount = await prisma.caseSchema.count({
+        where: { userId: user.id, status: { not: "ABANDONED" } },
+      });
       const dest = schemaCount > 0 ? "/feed" : "/onboarding/category";
       logger.info({
         service: "auth",

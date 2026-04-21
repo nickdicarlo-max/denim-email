@@ -12,7 +12,7 @@ export default async function TopicsPage() {
   if (!user) redirect("/");
 
   const schemas = await prisma.caseSchema.findMany({
-    where: { userId: user.id },
+    where: { userId: user.id, status: { not: "ABANDONED" } },
     select: {
       id: true,
       name: true,
