@@ -3,6 +3,7 @@
 import type { EntityGroupInput, InterviewInput } from "@denim/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ulid } from "ulid";
 import { DOMAIN_CONFIGS, type DomainId, ROLE_OPTIONS } from "@/components/interview/domain-config";
 import { OnboardingProgress } from "@/components/onboarding/progress";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,7 @@ import { authenticatedFetch } from "@/lib/supabase/authenticated-fetch";
 
 /**
  * #117 pairings from groups[] — extracted so both new-session sessionStorage
- * rehydration and #127 edit-mode server rehydration use the same shape.
+ * rehydration and #130 edit-mode server rehydration use the same shape.
  */
 function pairingsFromGroups(groups?: ReadonlyArray<EntityGroupInput>): Map<string, Set<string>> {
   const restored = new Map<string, Set<string>>();
@@ -30,10 +31,12 @@ function pairingsFromGroups(groups?: ReadonlyArray<EntityGroupInput>): Map<strin
 export default function NamesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  // #127: when present, edit mode — load inputs from the existing schema
-  // (via the polling endpoint) instead of the sessionStorage draft, and
-  // submit via PATCH /inputs instead of POST /start.
-  const editingSchemaId = searchParams.get("schemaId");
+  // #130: when `?from=<oldSchemaId>` is present, edit mode — load inputs
+  // from the existing schema (via the polling endpoint) instead of the
+  // sessionStorage draft. On Save, POST /start with a fresh schemaId AND
+  // `abandonSchemaId: fromSchemaId` so the old row is atomically flipped
+  // to ABANDONED while the new one starts fresh. No in-place rewind.
+  const fromSchemaId = searchParams.get("from");
 
   const [domain, setDomain] = useState<DomainId | null>(null);
   const [roleLabel, setRoleLabel] = useState("");
@@ -51,10 +54,10 @@ export default function NamesPage() {
   // (groups[]); Map/Set makes toggles cheap in-component.
   const [pairings, setPairings] = useState<Map<string, Set<string>>>(new Map());
 
-  // #127: edit-mode load state and submit state. Kept local to this page
-  // so a failed PATCH doesn't mutate the server-side schema.
+  // #130: edit-mode load state and submit state. Kept local to this page
+  // so a failed POST /start doesn't mutate the server-side old schema.
   const [editLoadState, setEditLoadState] = useState<"loading" | "ready" | "error" | null>(
-    editingSchemaId ? "loading" : null,
+    fromSchemaId ? "loading" : null,
   );
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -63,15 +66,15 @@ export default function NamesPage() {
   const whoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // #127 edit-mode load: skip sessionStorage entirely, pull the schema's
+    // #130 edit-mode load: skip sessionStorage entirely, pull the schema's
     // persisted inputs off the polling endpoint. This page is the single
     // editor; rewriting the sessionStorage draft here would contaminate a
     // subsequent fresh-onboarding session.
-    if (editingSchemaId) {
+    if (fromSchemaId) {
       let cancelled = false;
       (async () => {
         try {
-          const res = await authenticatedFetch(`/api/onboarding/${editingSchemaId}`);
+          const res = await authenticatedFetch(`/api/onboarding/${fromSchemaId}`);
           if (!res.ok) {
             throw new Error(`Failed to load schema (${res.status})`);
           }
@@ -127,7 +130,7 @@ export default function NamesPage() {
       if (saved.name) setTopicName(saved.name);
       setPairings(pairingsFromGroups(saved.groups));
     }
-  }, [router, editingSchemaId]);
+  }, [router, fromSchemaId]);
 
   const dc = domain ? DOMAIN_CONFIGS[domain] : null;
 
@@ -204,32 +207,38 @@ export default function NamesPage() {
   async function handleContinue() {
     const trimmedName = topicName.trim();
 
-    // #127 edit mode: PATCH existing schema, server rewinds Stage 1, then
-    // route back to the observer page where polling will render either
-    // DISCOVERING_DOMAINS (spinner) or, if it's quick, the fresh review.
-    if (editingSchemaId) {
+    // #130 edit mode: create a fresh schema with the edited inputs and
+    // atomically abandon the old one. No rewind — every schema progresses
+    // forward, single-writer CAS contract preserved. Old schema's
+    // in-flight Inngest runs finish into a dead row (harmless).
+    if (fromSchemaId) {
       if (!domain) return; // ready-state gate, should be unreachable
+      const newSchemaId = ulid();
       setSubmitting(true);
       setSubmitError(null);
       try {
-        const res = await authenticatedFetch(`/api/onboarding/${editingSchemaId}/inputs`, {
-          method: "PATCH",
+        const res = await authenticatedFetch(`/api/onboarding/start`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            role: ROLE_OPTIONS.find((r) => r.label === roleLabel)?.id ?? "",
-            domain,
-            whats,
-            whos,
-            goals: [],
-            groups,
-            ...(trimmedName ? { name: trimmedName } : {}),
+            schemaId: newSchemaId,
+            abandonSchemaId: fromSchemaId,
+            inputs: {
+              role: ROLE_OPTIONS.find((r) => r.label === roleLabel)?.id ?? "",
+              domain,
+              whats,
+              whos,
+              goals: [],
+              groups,
+              ...(trimmedName ? { name: trimmedName } : {}),
+            },
           }),
         });
         if (!res.ok) {
           const body = (await res.json().catch(() => null)) as { error?: string } | null;
           throw new Error(body?.error ?? `Save failed (${res.status})`);
         }
-        router.push(`/onboarding/${editingSchemaId}`);
+        router.push(`/onboarding/${newSchemaId}`);
       } catch (err) {
         setSubmitError(err instanceof Error ? err.message : "Save failed");
         setSubmitting(false);
@@ -247,9 +256,9 @@ export default function NamesPage() {
     router.push("/onboarding/connect");
   }
 
-  // #127 edit-mode loading/error states take precedence over the normal
+  // #130 edit-mode loading/error states take precedence over the normal
   // render. Nothing is interactive until inputs are hydrated.
-  if (editingSchemaId && editLoadState !== "ready") {
+  if (fromSchemaId && editLoadState !== "ready") {
     return (
       <div className="flex flex-1 items-center justify-center px-4 py-8">
         {editLoadState === "error" ? (
@@ -259,7 +268,7 @@ export default function NamesPage() {
               The edit page needs the current interview inputs, but the server didn&apos;t return
               them. Your topic may have progressed past the editable phase.
             </p>
-            <Button onClick={() => router.push(`/onboarding/${editingSchemaId}`)}>
+            <Button onClick={() => router.push(`/onboarding/${fromSchemaId}`)}>
               Back to topic
             </Button>
           </div>
@@ -285,9 +294,7 @@ export default function NamesPage() {
           <button
             type="button"
             onClick={() =>
-              router.push(
-                editingSchemaId ? `/onboarding/${editingSchemaId}` : "/onboarding/category",
-              )
+              router.push(fromSchemaId ? `/onboarding/${fromSchemaId}` : "/onboarding/category")
             }
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-accent-soft text-accent-text text-sm font-medium cursor-pointer hover:brightness-95 transition-all"
           >
@@ -446,7 +453,7 @@ export default function NamesPage() {
         {whats.length > 0 && (
           <div className="mt-8">
             <Button onClick={handleContinue} disabled={submitting}>
-              {editingSchemaId
+              {fromSchemaId
                 ? submitting
                   ? "Saving…"
                   : "Save changes & re-run discovery"
@@ -456,7 +463,7 @@ export default function NamesPage() {
           </div>
         )}
 
-        {!editingSchemaId && <p className="text-sm text-muted text-center mt-8">Step 2 of 5</p>}
+        {!fromSchemaId && <p className="text-sm text-muted text-center mt-8">Step 2 of 5</p>}
       </div>
     </div>
   );
