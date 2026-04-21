@@ -212,6 +212,7 @@ enum SchemaStatus {
   ACTIVE        // Normal operation
   PAUSED        // User paused scanning
   ARCHIVED      // Cancelled onboarding or user-archived — excluded from active lists
+  ABANDONED     // User clicked Back → edit, replaced this row with a new schema (#130)
 }
 
 
