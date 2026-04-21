@@ -124,7 +124,8 @@ export const POST = withAuth(async ({ userId, request }) => {
     // route.
     return NextResponse.json(
       {
-        error: "This endpoint was removed by issue #95. Use /api/onboarding/:schemaId/entity-confirm.",
+        error:
+          "This endpoint was removed by issue #95. Use /api/onboarding/:schemaId/entity-confirm.",
         code: 410,
         type: "GONE",
       },

@@ -13,7 +13,7 @@ import type {
   SchemaHypothesis,
 } from "@denim/types";
 import { ExternalAPIError } from "@denim/types";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { CLUSTERING_TUNABLES } from "@/lib/config/clustering-tunables";
 import {
