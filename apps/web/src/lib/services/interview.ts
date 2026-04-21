@@ -1066,51 +1066,6 @@ export async function writeStage2Result(schemaId: string, result: Stage2Result):
 }
 
 /**
- * #127: CAS-style rewind. Replace `inputs`, drop Stage 1 output, and send the
- * phase back to `DISCOVERING_DOMAINS` so Stage 1 can re-run with the new
- * interview data. Allowed only while the schema is in `DISCOVERING_DOMAINS`
- * or `AWAITING_DOMAIN_CONFIRMATION` — past that, entity discovery has
- * happened and the rewind would silently invalidate downstream state.
- *
- * Single transaction / single writer — interview.ts owns `CaseSchema`
- * writes per the table-ownership contract. Returns the rows-updated count;
- * 0 means the phase gate rejected (caller renders 409).
- */
-export async function rewindSchemaInputs(
-  tx: Prisma.TransactionClient,
-  schemaId: string,
-  inputs: InterviewInput,
-): Promise<number> {
-  const userProvidedName = inputs.name?.trim();
-  const { count } = await tx.caseSchema.updateMany({
-    where: {
-      id: schemaId,
-      phase: { in: ["DISCOVERING_DOMAINS", "AWAITING_DOMAIN_CONFIRMATION"] },
-    },
-    data: {
-      inputs: inputs as unknown as Prisma.InputJsonValue,
-      domain: inputs.domain,
-      // #111 semantics: user-provided name wins; empty reverts to stub.
-      name: userProvidedName || "Setting up...",
-      // Null out Stage 1 output. The UI already reads these, so leaving
-      // stale values behind would render the old review alongside a
-      // DISCOVERING_DOMAINS spinner. `Prisma.JsonNull` clears JSONB columns
-      // to the JSON null value — reads come back as `null`, which both DTO
-      // readers already treat as "no stage1 data yet".
-      stage1Candidates: Prisma.JsonNull,
-      stage1QueryUsed: null,
-      stage1MessagesSeen: null,
-      stage1ErrorCount: null,
-      stage1UserThings: Prisma.JsonNull,
-      stage1UserContacts: Prisma.JsonNull,
-      phase: "DISCOVERING_DOMAINS",
-      phaseUpdatedAt: new Date(),
-    },
-  });
-  return count;
-}
-
-/**
  * CAS-style write: persist confirmed domains AND advance the phase in a
  * single row update. Returns the number of rows updated — 0 means the phase
  * gate didn't match (TOCTOU or double-submit), and the caller should treat
