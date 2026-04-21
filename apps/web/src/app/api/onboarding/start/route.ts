@@ -73,6 +73,15 @@ const StartBodySchema = z.object({
   // a bug, not a well-formed id.
   schemaId: z.string().min(10),
   inputs: InterviewInputSchema,
+  /**
+   * #130: when the user clicks Back → edit topics & contacts on an
+   * existing DRAFT schema, the names page POSTs /start with a fresh
+   * `schemaId` AND carries the old id here. The start transaction
+   * atomically flips the old row to `status = "ABANDONED"` in the same
+   * commit as the new stub creation. CAS-gated on userId + status =
+   * DRAFT so cross-user or post-scan rows cannot be abandoned.
+   */
+  abandonSchemaId: z.string().min(10).optional(),
 });
 
 /**
@@ -103,7 +112,7 @@ function accepted(schemaId: string, idempotent: boolean): NextResponse {
 export const POST = withAuth(async ({ userId, request }) => {
   try {
     const body = StartBodySchema.parse(await request.json());
-    const { schemaId, inputs } = body;
+    const { schemaId, inputs, abandonSchemaId } = body;
 
     // -----------------------------------------------------------------
     // Pre-flight: verify the user has stored Gmail credentials before
@@ -165,6 +174,18 @@ export const POST = withAuth(async ({ userId, request }) => {
             payload: { schemaId, userId } as Prisma.InputJsonValue,
           },
         });
+        // #130: Atomically abandon the old schema when the caller is
+        // restarting from a Back-edit. CAS-gated — only DRAFT rows owned
+        // by this user can flip. A 0-row update is silent (old schema
+        // was already past DRAFT, belongs to another user, or the client
+        // passed a stale id). Best-effort abandonment is correct here:
+        // the new schema starts fresh regardless.
+        if (abandonSchemaId) {
+          await tx.caseSchema.updateMany({
+            where: { id: abandonSchemaId, userId, status: "DRAFT" },
+            data: { status: "ABANDONED" },
+          });
+        }
       });
     } catch (createError) {
       if (!isUniqueConstraintViolation(createError)) {
