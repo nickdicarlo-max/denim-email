@@ -490,6 +490,26 @@ The cost (~2 minutes of parallel dispatch + ~5 minutes of reading the returns) i
 
 ---
 
+## 2026-04-21: Third CAS-second-writer bug — rewind primitive was wrong
+
+**Context:** Issue #127 (2026-04-20) added `PATCH /api/onboarding/:schemaId/inputs` so a user could Back-button from the Stage 1 review screen, fix a WHAT typo, and Save without a full wipe + OAuth round-trip. The PATCH called `rewindSchemaInputs` which set `CaseSchema.phase = "DISCOVERING_DOMAINS"` directly (not through `advanceSchemaPhase`) and re-emitted `onboarding.domain-discovery.requested`. It worked exactly once — then broke.
+
+### Bug 8 (caught in live E2E): `runDomainDiscovery` silently skips after a rewind
+
+**Symptom:** During live E2E on 2026-04-21, the user started schema `01KPR8Z0…`, walked to Stage 1 review, clicked Back → edit → Save. Inngest logs showed the first `runDomainDiscovery` run completed in 9 seconds (correct). The second run, triggered by the PATCH's re-emit, finished in 0.5 seconds with an empty output and no DB writes. The observer page polled `DISCOVERING_DOMAINS` for 15+ minutes with no error anywhere.
+
+**Root cause:** `runDomainDiscovery` (`apps/web/src/lib/inngest/domain-discovery-fn.ts:54`) guards on `advanceSchemaPhase({ from: "PENDING", to: "DISCOVERING_DOMAINS" })`. After `rewindSchemaInputs` set phase to `DISCOVERING_DOMAINS` directly, the CAS `from` guard rejected (`from=PENDING` no longer matched `phase=DISCOVERING_DOMAINS`), `advanceSchemaPhase` returned `"skipped"`, and the function returned `{ skipped: true }` without running any Gmail work.
+
+**Rule re-affirmed (third data point, after Bug 3 2026-04-09 and the near-miss idempotency patterns #6/#11):** **Each `from → to` CAS transition must have exactly one writer, and it must be the CAS helper — not a direct `updateMany` that sets `phase`.** `rewindSchemaInputs` was a second writer for `→ DISCOVERING_DOMAINS`. Patching the CAS `from` to accept both `PENDING` and `DISCOVERING_DOMAINS` would have masked the issue for this pair while leaving the class of bug wide open for the next rewind.
+
+**Fix (shipped as issue #130):** Remove the rewind primitive. The Back-edit button now routes to `/onboarding/names?from=<oldSchemaId>`. Saving POSTs `/api/onboarding/start` with a fresh schemaId AND `abandonSchemaId: <oldSchemaId>`. The start route's existing `$transaction` gains one `updateMany` that flips the old row from `DRAFT` → `ABANDONED`. New enum value; zero migration risk. All list/count queries exclude ABANDONED. The `/inputs` route and `rewindSchemaInputs` service are deleted.
+
+**Why this is structural, not a patch:** After #130, schema phases only move forward. There is no rewind primitive; there is no second-writer path. Every CAS `from → to` pair retains a single writer. New features that would otherwise "roll back" a schema must instead create a new schema — the `abandonSchemaId` pattern is the template.
+
+**Meta:** This was caught by running the live E2E (mid-test, the Stage 1 reload hung for 15+ minutes). A unit test couldn't have caught it because the unit-tested `rewindSchemaInputs` does exactly what it claims (flips phase + nulls stage1). The interaction bug is only visible once Inngest dispatches the downstream function and the CAS owner silently skips. Integration coverage via the live-E2E shakedown remains the only defense for this class until we add a cross-function CAS-ownership test harness. Secondary lesson, recorded 2026-04-21 and saved as a feedback memory: never diagnose a 404 or a silent stall as "dev server related" without pasting the concrete file evidence (compiled route directory, generated `.next/dev/types/validator.ts` contents, etc.) — two days of loose diagnosis on the Turbopack stale-cache issue preceded the actual root-cause dig for this bug.
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
@@ -639,6 +659,28 @@ new column should be `Array<identityKey>` (marker set) instead — the source
 column is the record store, the new column is the pointer set. Applies to user-
 confirmation markers, calibration selections, feedback flags, anything that
 records "which existing thing did the user pick."
+
+### 12. "Direct `updateMany` on a CAS-owned column"
+
+If a route or service sets `phase`, `status`, or any column whose transitions
+are guarded by a CAS helper (`advanceSchemaPhase`, `advanceScanPhase`) via a
+plain `updateMany`/`update`, it is a second writer by definition — even if it's
+"only a reset" or "only a rewind." The downstream CAS owner will silently skip
+when its `from` guard no longer matches. All instances of this class (Bug 3
+2026-04-09, and Bug 8 2026-04-21) shipped past tests and were caught only in
+live E2E.
+
+**Check:** For every column that has a CAS helper, grep for direct writes:
+```
+grep -rn "updateMany.*phase:\|update.*phase:" apps/web/src/
+```
+Every hit should be inside the CAS helper OR have a comment explaining why the
+caller is bypassing it (e.g. the DELETE route explicitly nulls phase on
+cancellation). **"Rewind" is never a valid reason — create a new row instead.**
+If a feature appears to require rewinding a schema/scan row (e.g. an "edit and
+restart" UX), the correct primitive is to create a NEW row and flip the old
+row's `status` to a terminal value (ABANDONED, ARCHIVED), then let the old row's
+in-flight work finish into a dead row. See the #130 refactor for the template.
 
 ---
 
