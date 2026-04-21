@@ -220,13 +220,14 @@ export function PhaseDomainConfirmation({ response }: { response: OnboardingPoll
             ? "Confirming…"
             : `Confirm ${selected.size} selection${selected.size === 1 ? "" : "s"}`}
         </Button>
-        {/* #127: back-edit escape hatch. Routes the user to the names page
-            in edit mode so they can fix typos / add missed WHATs / adjust
-            pairings before Stage 1 re-runs. No client-side state mutation
-            here — the destination page loads inputs from the polling DTO. */}
+        {/* #130: back-edit escape hatch. Routes the user to the names page
+            pre-filled with this schema's inputs (loaded server-side via
+            the existing polling endpoint). Saving creates a fresh schema
+            and abandons this one — no in-place rewind, no CAS-ownership
+            risk. */}
         <Button
           variant="secondary"
-          onClick={() => router.push(`/onboarding/names?schemaId=${response.schemaId}`)}
+          onClick={() => router.push(`/onboarding/names?from=${response.schemaId}`)}
           disabled={status === "submitting"}
         >
           Back — edit topics & contacts
