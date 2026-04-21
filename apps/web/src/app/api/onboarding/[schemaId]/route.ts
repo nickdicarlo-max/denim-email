@@ -74,9 +74,30 @@ export const POST = withAuth(async ({ userId, request }) => {
     const schemaId = extractOnboardingSchemaId(request);
     const schema = await prisma.caseSchema.findUnique({
       where: { id: schemaId },
-      select: { id: true, userId: true, phase: true },
+      select: { id: true, userId: true, phase: true, status: true },
     });
     assertResourceOwnership(schema, userId, "Schema");
+
+    // #130: schema was replaced by Back → edit restart. Caller has moved
+    // to a new schemaId; tell them in a typed way so the UI can stop
+    // submitting and navigate (differs from the #95-era 410 below in the
+    // `type` field so clients can distinguish).
+    if (schema.status === "ABANDONED") {
+      logger.info({
+        service: "onboarding",
+        operation: "deprecated-confirm.abandoned",
+        userId,
+        schemaId,
+      });
+      return NextResponse.json(
+        {
+          error: "This schema was replaced by a fresh edit. Poll the new schemaId instead.",
+          code: 410,
+          type: "SCHEMA_ABANDONED",
+        },
+        { status: 410 },
+      );
+    }
 
     // New-flow phases OR downstream terminal states — stale client retry
     // lands here; treat as already-confirmed so the UI stops submitting.
@@ -129,9 +150,11 @@ export const DELETE = withAuth(async ({ userId, request }) => {
     });
     assertResourceOwnership(schema, userId, "Schema");
 
-    // Idempotent: if the schema is already archived, don't re-emit the
-    // cancellation event.
-    if (schema.status === "ARCHIVED") {
+    // Idempotent: if the schema is already archived or abandoned, don't
+    // re-emit the cancellation event. #130: ABANDONED rows are already
+    // out of active lists; treating them as already-cancelled is the
+    // right contract for a DELETE.
+    if (schema.status === "ARCHIVED" || schema.status === "ABANDONED") {
       return NextResponse.json({
         data: { schemaId, status: "already-cancelled" },
       });

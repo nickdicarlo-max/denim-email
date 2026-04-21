@@ -29,7 +29,11 @@ export type OnboardingPhase =
   | "AWAITING_REVIEW"
   | "COMPLETED"
   | "NO_EMAILS_FOUND"
-  | "FAILED";
+  | "FAILED"
+  // #130: row was replaced by a new schema via Back → edit. Terminal —
+  // client should stop polling and navigate to the replacement schemaId
+  // (already in the URL bar from the names-page router.push on Save).
+  | "ABANDONED";
 
 export interface OnboardingProgress {
   emailsTotal?: number;
@@ -163,6 +167,15 @@ export async function derivePollingResponse(
     progress: {} as OnboardingProgress,
     updatedAt,
   };
+
+  // #130 Terminal: schema was replaced by a new schema on edit. Tells the
+  // observer page to stop polling; the client already has the replacement
+  // schemaId from the names-page router.push after Save. Wins over every
+  // phase-based branch below — a row can be ABANDONED from any pre-scan
+  // phase. No stage1/stage2 fields leak on the terminal response.
+  if (schema.status === "ABANDONED") {
+    return { ...base, phase: "ABANDONED" };
+  }
 
   // Terminal: user confirmed review, schema is live.
   if (schema.status === "ACTIVE") {

@@ -144,3 +144,36 @@ describe("derivePollingResponse — regression guards", () => {
     expect(res.stage2Candidates).toBeUndefined();
   });
 });
+
+describe("derivePollingResponse — ABANDONED (issue #130)", () => {
+  it("returns phase=ABANDONED when schema.status is ABANDONED", async () => {
+    const schema = baseSchema({
+      status: "ABANDONED",
+      // phase can be anything — ABANDONED is a row-level terminal that
+      // must short-circuit regardless of what phase the row was stuck on
+      // when the user replaced it.
+      phase: "DISCOVERING_DOMAINS",
+    });
+
+    const res = await derivePollingResponse(schema, null);
+
+    expect(res.phase).toBe("ABANDONED");
+    expect(res.schemaId).toBe("s1");
+  });
+
+  it("ABANDONED wins over AWAITING_DOMAIN_CONFIRMATION even with stage1 data present", async () => {
+    const schema = baseSchema({
+      status: "ABANDONED",
+      phase: "AWAITING_DOMAIN_CONFIRMATION",
+      stage1Candidates: [
+        { domain: "example.com", count: 5 },
+      ] as unknown as CaseSchema["stage1Candidates"],
+    });
+
+    const res = await derivePollingResponse(schema, null);
+
+    expect(res.phase).toBe("ABANDONED");
+    // Terminal should not leak stage data; keeps the client contract clean.
+    expect(res.stage1Candidates).toBeUndefined();
+  });
+});
