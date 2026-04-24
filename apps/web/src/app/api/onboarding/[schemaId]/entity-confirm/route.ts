@@ -217,31 +217,37 @@ export const POST = withAuth(async ({ userId, request }) => {
       return { ...base, aliases: [senderEmail] };
     });
 
-    const committed = await prisma.$transaction(async (tx) => {
-      const { count } = await tx.caseSchema.updateMany({
-        where: { id: schemaId!, phase: "AWAITING_ENTITY_CONFIRMATION" },
-        data: { phase: "PROCESSING_SCAN", phaseUpdatedAt: new Date() },
-      });
-      if (count === 0) return false;
-      await persistConfirmedEntities(tx, schemaId!, augmentedEntities);
-      // Issue #109: Stage 1/2 flow doesn't generate clusteringConfig or
-      // summaryLabels (the hypothesis flow did). Seed deterministic
-      // per-domain defaults here so the scan pipeline can read them.
-      await seedSchemaDefaults(tx, schemaId!, schema!.domain);
-      // Issue #111: upgrade the "Setting up..." placeholder to a real name
-      // when the user didn't provide one at the interview step. No-op if the
-      // user supplied a name (persisted via createSchemaStub).
-      await seedSchemaName(tx, schemaId!, schema!.name, schema!.domain, body.confirmedEntities);
-      await tx.onboardingOutbox.create({
-        data: {
-          schemaId: schemaId!,
-          userId,
-          eventName: "onboarding.review.confirmed",
-          payload: { schemaId, userId } as Prisma.InputJsonValue,
-        },
-      });
-      return true;
-    });
+    const committed = await prisma.$transaction(
+      async (tx) => {
+        const { count } = await tx.caseSchema.updateMany({
+          where: { id: schemaId!, phase: "AWAITING_ENTITY_CONFIRMATION" },
+          data: { phase: "PROCESSING_SCAN", phaseUpdatedAt: new Date() },
+        });
+        if (count === 0) return false;
+        await persistConfirmedEntities(tx, schemaId!, augmentedEntities);
+        // Issue #109: Stage 1/2 flow doesn't generate clusteringConfig or
+        // summaryLabels (the hypothesis flow did). Seed deterministic
+        // per-domain defaults here so the scan pipeline can read them.
+        await seedSchemaDefaults(tx, schemaId!, schema!.domain);
+        // Issue #111: upgrade the "Setting up..." placeholder to a real name
+        // when the user didn't provide one at the interview step. No-op if the
+        // user supplied a name (persisted via createSchemaStub).
+        await seedSchemaName(tx, schemaId!, schema!.name, schema!.domain, body.confirmedEntities);
+        await tx.onboardingOutbox.create({
+          data: {
+            schemaId: schemaId!,
+            userId,
+            eventName: "onboarding.review.confirmed",
+            payload: { schemaId, userId } as Prisma.InputJsonValue,
+          },
+        });
+        return true;
+      },
+      // Real inboxes with many confirmed entities can push the linkEntityGroups
+      // parallel writes past Prisma's 5s default. 30s covers production-scale
+      // confirm payloads without masking genuine lock contention.
+      { timeout: 30_000 },
+    );
 
     if (!committed) {
       return NextResponse.json(
