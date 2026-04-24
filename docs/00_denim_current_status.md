@@ -1,8 +1,87 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-23 (Phase 5 Round 1 + Phase 6 Rounds 2+3 complete on `feature/perf-quality-sprint`. Review-screen rebuilt around user WHATs (A2 hierarchy, B1 first-class discoveries, truthful frequencies, three render states per WHAT). Pipeline wiring landed for paired-WHO routing: `linkEntityGroups` helper (new `apps/web/src/lib/services/link-entity-groups.ts`) plumbs `EntityGroup` + `Entity.groupId` + `Entity.associatedPrimaryIds` through the Phase-2/3 `persistConfirmedEntities` flow, fixing orphan-entity bug; tolerant name resolver handles the common case where the confirm flow canonicalises user-typed short strings ("851 Peavy" → "851 Peavy Road"). New `Email.candidatePrimaryIds` column + `apps/web/src/lib/services/thread-adjacency.ts` helper records ambiguous-sender candidate lists during extraction and resolves them via thread-sibling adjacency at cluster time — turns silent-drop into honest-defer for any N:M paired WHO. **All three locked schemas (property 7/7, school_parent 3/3, agency 3/3) pass the full eval gate end-to-end** with 0 off-topic cases and 0 synthesis failures. 182 web-app tests green (+10 new for 7a/7b). Issue #130 captured for the deferred zero-match-hint re-scan cron. Not yet: visual review of confirm screens + feed, live Gmail `--refresh-cache` run.) Previous: 2026-04-22 Late (Full eval harness + Phase 3A/3B/4 complete on `feature/perf-quality-sprint`. Stage 1 + Stage 2 + full synthesis all drive through production code against 417-sample corpus, one schema at a time, with content-hash AI response cache. 3 schemas ran end-to-end. **5 production bugs surfaced and fixed via the eval loop** (Zod null, Gemini "≥3 subjects" rule, FixtureGmailClient query parser, `"Entity"` raw SQL table name, eval harness fanout drift). Scoped monorepo tightening: `domain-aggregator`, `public-providers`, `FromHeaderResult` moved to `@denim/engine/discovery`; `stage2-fanout.ts` extracted so Inngest fn + eval harness share one orchestration path. **Case-topics-vs-subject-line-noise insight quantified:** agency produced 67 cases from 105 extractions with only 25% multi-email rate — clear evidence that sender-domain-clustering surfaces subject fragments as pseudo-cases. Deferred to Phase 5. 309 tests green; Part B synthesis burned ~$1.60 across three first-runs.) Previous: 2026-04-19 Evening (Compound E2E-driven fix on `feature/perf-quality-sprint`: **#117** Stage 1 per-whats pairing + safety hygiene, **#102** Pattern C corpus frequency mining, **#119** property address suffix-aware dedup, **#121** SECONDARY alias population. **21 new commits**, **364 unit tests passing** across 4 workspaces (+36 this session). Closed **#93** / **#109** / **#118** as superseded / verified / subsumed. Filed **#120** / **#121** / **#122** / **#123** with DB-forensic evidence from live E2E runs on Girls Activities (`01KPM0R4QS72E8B1M0A1BDJWYC`) + North 40 Partners (`01KPM07ZBZG9570XKJZTVB9N2A`) schemas. Open count 40 → 43. Next: live E2E re-run to verify the compound, then **#123** tag-score investigation (likely proximate root cause of #86 case over-fragmentation — every MERGE scored exactly at threshold with `tagScore: 0` despite `tagMatchScore=15` configured).)
+Last updated: 2026-04-24 (First successful **live-Gmail end-to-end** run on `feature/perf-quality-sprint`. North 40 Partners property schema (`01KQ0J2XWVGPAQCHQ5DEFK7VF8`): 194 emails discovered, 111 extracted, 50 cases synthesised in **4 min 47 s** post-confirm — under the 5-min SLA. **9 of 12 portfolio properties** routed correctly (vs 6/12 in fixture), including 1501 Sylvan and 3305 Cardinal that fixture-eval gate-sim had rejected. Three commits landed in-session: `df7752d` flips `/api/feed` `includeResolved` default to true so RESOLVED/NO_ACTION cases render greyed-out (existing `CaseCard` opacity-60 styling was already wired, only the API filter was suppressing them); `c39cfbc` bumps the entity-confirm Prisma transaction timeout from 5 s → 30 s after live confirm 500'd at 5184 ms with 26 entities (linkEntityGroups parallel writes scale with payload, fixture's 3-7 entities never tripped it); `44afd35` closes **#131** with a `PairedField` Zod schema that coerces Gemini's `sourced_from_who` / `related_what` across all observed shapes (string | null | string[]). 188 web-app tests green (+6 schema-shape regression tests). **Eval-report scorecard on the live schema: 4 PASS / 1 WARN / 1 FAIL** — exclusion 42.8 %, orphan rate 0 %, merge-records present, case-splitting ran; 60 % singleton rate (WARN) and 0 % displayTags coverage (FAIL — same fingerprint as #123, every merge scored exactly 30.0 = threshold floor with tagScore 0). The pipeline gains are real but tag-scoring is the next blocker for a meaningful leap in case quality. Previous: 2026-04-23 (Phase 5 Round 1 + Phase 6 Rounds 2+3 complete on `feature/perf-quality-sprint`. Review-screen rebuilt around user WHATs (A2 hierarchy, B1 first-class discoveries, truthful frequencies, three render states per WHAT). Pipeline wiring landed for paired-WHO routing: `linkEntityGroups` helper (new `apps/web/src/lib/services/link-entity-groups.ts`) plumbs `EntityGroup` + `Entity.groupId` + `Entity.associatedPrimaryIds` through the Phase-2/3 `persistConfirmedEntities` flow, fixing orphan-entity bug; tolerant name resolver handles the common case where the confirm flow canonicalises user-typed short strings ("851 Peavy" → "851 Peavy Road"). New `Email.candidatePrimaryIds` column + `apps/web/src/lib/services/thread-adjacency.ts` helper records ambiguous-sender candidate lists during extraction and resolves them via thread-sibling adjacency at cluster time — turns silent-drop into honest-defer for any N:M paired WHO. **All three locked schemas (property 7/7, school_parent 3/3, agency 3/3) pass the full eval gate end-to-end** with 0 off-topic cases and 0 synthesis failures. 182 web-app tests green (+10 new for 7a/7b). Issue #130 captured for the deferred zero-match-hint re-scan cron. Not yet: visual review of confirm screens + feed, live Gmail `--refresh-cache` run.) Previous: 2026-04-22 Late (Full eval harness + Phase 3A/3B/4 complete on `feature/perf-quality-sprint`. Stage 1 + Stage 2 + full synthesis all drive through production code against 417-sample corpus, one schema at a time, with content-hash AI response cache. 3 schemas ran end-to-end. **5 production bugs surfaced and fixed via the eval loop** (Zod null, Gemini "≥3 subjects" rule, FixtureGmailClient query parser, `"Entity"` raw SQL table name, eval harness fanout drift). Scoped monorepo tightening: `domain-aggregator`, `public-providers`, `FromHeaderResult` moved to `@denim/engine/discovery`; `stage2-fanout.ts` extracted so Inngest fn + eval harness share one orchestration path. **Case-topics-vs-subject-line-noise insight quantified:** agency produced 67 cases from 105 extractions with only 25% multi-email rate — clear evidence that sender-domain-clustering surfaces subject fragments as pseudo-cases. Deferred to Phase 5. 309 tests green; Part B synthesis burned ~$1.60 across three first-runs.) Previous: 2026-04-19 Evening (Compound E2E-driven fix on `feature/perf-quality-sprint`: **#117** Stage 1 per-whats pairing + safety hygiene, **#102** Pattern C corpus frequency mining, **#119** property address suffix-aware dedup, **#121** SECONDARY alias population. **21 new commits**, **364 unit tests passing** across 4 workspaces (+36 this session). Closed **#93** / **#109** / **#118** as superseded / verified / subsumed. Filed **#120** / **#121** / **#122** / **#123** with DB-forensic evidence from live E2E runs on Girls Activities (`01KPM0R4QS72E8B1M0A1BDJWYC`) + North 40 Partners (`01KPM07ZBZG9570XKJZTVB9N2A`) schemas. Open count 40 → 43. Next: live E2E re-run to verify the compound, then **#123** tag-score investigation (likely proximate root cause of #86 case over-fragmentation — every MERGE scored exactly at threshold with `tagScore: 0` despite `tagMatchScore=15` configured).)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
+
+## 2026-04-24 Session — First live-Gmail E2E + three in-session production fixes
+
+The pipeline ran end-to-end against a real Gmail inbox for the first time. North 40 Partners property schema (`01KQ0J2XWVGPAQCHQ5DEFK7VF8`), user `nick.dicarlo@gmail.com`. Three latent bugs surfaced during the run; all three fixed and committed before the run completed.
+
+### Live-run timeline (UTC)
+
+| Step | Time | Duration | Notes |
+|---|---|---|---|
+| Domain confirm | 20:15:10 | 601 ms | 2 domains confirmed (judgefite.com, lilviv.com) |
+| Stage 2 entity discovery | 20:15:32 | — | judgefite.com: 4-entity Gemini batch dropped via Zod (issue #131); lilviv.com clean |
+| Entity confirm — first attempts | 20:18-20:19 | 5184 ms | **500 — Prisma transaction timeout** at default 5 s. linkEntityGroups parallel writes for 26 entities exceeded budget. |
+| ↳ Fix landed | 20:23:24 | — | `c39cfbc` bumped tx timeout to 30 s. |
+| Entity confirm — successful retry | 20:23:24 | <30 s | 26 entities persisted via linkEntityGroups; phase advanced to PROCESSING_SCAN. |
+| runScan handoff | 20:24:04 | — | scanJobId `cmodcycx800eoj0qe7l0iyb1q`, 194 emails. |
+| fanOutExtraction | 20:24:04 | — | 10 batches. |
+| Gemini extraction | — | avg 5.5 s / call (17 calls) | 194 → 111 processed / 83 excluded / 0 failed. |
+| extractionComplete | 20:25:16 | ~72 s after fanout | |
+| coarseCluster | 20:25:42 | 26.0 s | 50 cases created, 3 merges (all at score 30.0 — threshold floor). |
+| splitCoarseClusters | 20:27:05 | 81.3 s | Claude case-splitting; 0 splits, 0 merges produced (the call returned but didn't change anything). |
+| Synthesis (50 cases) | — | avg 5.7 s / case (parallel) | total 286 s. |
+| **runOnboardingPipeline.completed** | 20:28:51 | — | Total post-confirm: **4 min 47 s** ✅ under 5-min SLA |
+
+### Three in-session fixes
+
+| SHA | Issue | Fix |
+|---|---|---|
+| `df7752d` | Feed hides past cases | `/api/feed` `includeResolved` default flipped to `true`. CaseCard's `opacity-60` muted styling for `status===RESOLVED` was already in place — only the API filter was suppressing past-time cases. Now agency's Stallion + Rhodes Data cases (both `RESOLVED`/`NO_ACTION`) render greyed-out at the bottom of the feed instead of disappearing silently. Opt out via `?includeResolved=false`. |
+| `c39cfbc` | 500 on entity-confirm | Prisma `$transaction` `{ timeout: 30_000 }` on the entity-confirm path. Fixture-eval payloads (3-7 entities) never tripped 5 s; live inbox (26 entities × `linkEntityGroups` parallel writes) consistently did. |
+| `44afd35` | **#131** Zod array | New `PairedField` schema in `entity-discovery.ts` accepts `string \| string[] \| null` and coerces to `string \| null` at the trust boundary. 6 unit tests cover happy/null/array/empty/missing + loud-failure rejects. Issue #131 closed. |
+
+### Eval-report scorecard — live schema
+
+`docs/test-results/eval-2026-04-24-north_40_april_24_2026-{included,excluded}.csv`
+
+| Check | Result | Detail |
+|---|---|---|
+| Exclusion rate | PASS | 42.8 % (83/194) — all `relevance:low` |
+| Orphan rate | PASS | 0.0 % — every entity-assigned email landed in a case |
+| Merge clusters > 0 | PASS | 3 merges (every one scored exactly 30.0 — threshold floor) |
+| Case-splitting ran | PASS | 1 PipelineIntelligence row written |
+| Singleton rate | **WARN** | 60 % (30/50). Real legit singletons mixed with under-merged repair-invoice clusters (5× 851 Peavy invoices, 4× 3910 Bucknell invoices, 3× 205 Freedom Trail invoices — all should have merged). |
+| Tag coverage | **FAIL** | 0/50 cases have `displayTags` — same fingerprint as **#123**. Tag scoring is silently zero, so merge-score collapses to subject + actor only (= 30.0 threshold). |
+
+**Diagnosis confirmed:** the singleton over-fragmentation and 30.0-floor merge scores are the same root-cause symptom — tags are not being scored. **#123 is the highest-leverage next fix.**
+
+### Entity coverage vs portfolio (12-property CSV)
+
+| Property | CSV emails | This run | |
+|---|---:|---:|---|
+| 3910 Bucknell | 39 | 22 | ✅ |
+| 2310 Healey | 90 | 23 | ✅ |
+| 205 Freedom Trail | 121 | 16 | ✅ |
+| 851 Peavy | 28 | 13 | ✅ |
+| 1501 Sylvan | 29 | 10 | ✅ (fixture had 2; first-class now) |
+| 1906 Crockett | 149 | 4 | ✅ — but very low coverage; 56-d lookback likely cutting tail |
+| 2109 Meadfoot | 60 | 3 | ✅ |
+| 3305 Cardinal | 22 | 2 | ✅ (fixture gate-sim had rejected; live picked up) |
+| 2919 Sunset Point | 46 | 1 | ✅ barely |
+| 1206 Fairmont | 105 | 0 | ❌ entity created, no emails matched |
+| 2909 Hunters Point | 41 | 0 | ❌ |
+| 2707 Jackson | 28 | 0 | ❌ NER mis-parsed as "2707 Jackson, Melissa" |
+
+9 of 12 routed (vs 6/12 in fixture). Three open gaps: (a) Crockett under-coverage suggests the property domain wants a longer lookback than 56 d, (b) Fairmont/Hunters Point have entity rows but zero email matches — clustering or extraction routing miss, (c) `2707 Jackson, Melissa` is an NER bug worth filing.
+
+### Open follow-ups
+
+- **#123 tag-score investigation** — proven again as the singleton/under-merge root cause. Top-priority next fix.
+- **Property domain lookback** — 56 d is too short for Crockett (149 → 4). Consider `propertyLookbackDays = 180`.
+- **Fairmont / Hunters Point zero-email entities** — discovered as PRIMARIES but no emails routed. Worth a probe: is it Stage 2 frequency=0 vs extraction-routing miss?
+- **`2707 Jackson, Melissa` NER bug** — file as separate issue.
+- **Live-Gmail eval should become a regular gate** — see "Locking in gains" design below.
+
+### Entry points for the next session
+
+- Live schemaId: `01KQ0J2XWVGPAQCHQ5DEFK7VF8` (still browsable at `/feed?schema=01KQ0J2XWVGPAQCHQ5DEFK7VF8`).
+- Eval CSVs: `docs/test-results/eval-2026-04-24-north_40_april_24_2026-{included,excluded}.csv` (25 cols, pivot-friendly).
+- Eval-report regenerator: `cd apps/web && npx tsx scripts/eval-report.ts --schema-id <id>`.
+- Three live-fix commits: `df7752d`, `c39cfbc`, `44afd35` on `feature/perf-quality-sprint` (pushed).
 
 ## 2026-04-22 Session — Onboarding Eval Harness + First Visual Review
 
