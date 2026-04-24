@@ -105,18 +105,32 @@ export interface DiscoverEntitiesOutput {
  * EntityCandidate; a malformed response falls through to an empty-candidate
  * result plus an errorCount bump, never crashes the whole Stage 2 run.
  */
+// Gemini's per-entity output for `sourced_from_who` / `related_what` drifts
+// across runs: sometimes a single string, sometimes `null`, sometimes an
+// array of strings (live-inbox judgefite.com run, 2026-04-24, issue #131).
+// Coerce all three shapes to a single string-or-null at the trust boundary
+// so downstream code stays simple.
+const PairedField = z
+  .union([z.string(), z.array(z.string()), z.null()])
+  .optional()
+  .transform((v) => {
+    if (v == null) return null;
+    if (Array.isArray(v)) return v[0] ?? null;
+    return v;
+  });
+
 const GeminiEntitySchema = z.object({
   name: z.string().min(1).max(200),
   kind: z.enum(["team", "property", "project", "person", "account", "other"]).default("other"),
   approximate_count: z.number().int().min(1),
   aliases: z.array(z.string()).default([]),
-  // Gemini sometimes returns `null` (not omitted) for these optional paired
-  // fields. `.optional()` alone rejects `null`; allow both absent and null.
-  sourced_from_who: z.string().nullable().optional(),
-  related_what: z.string().nullable().optional(),
+  sourced_from_who: PairedField,
+  related_what: PairedField,
 });
 
-const GeminiResponseSchema = z.object({
+// Exported only so the parser-shape tests can exercise the schema directly
+// (issue #131 regression coverage). Not part of the public API.
+export const GeminiResponseSchema = z.object({
   entities: z.array(GeminiEntitySchema).max(50),
 });
 
