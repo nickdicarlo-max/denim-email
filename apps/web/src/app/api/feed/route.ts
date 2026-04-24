@@ -7,7 +7,9 @@ import { prisma } from "@/lib/prisma";
 export const GET = withAuth(async ({ userId, request }) => {
   try {
     const url = new URL(request.url);
-    const includeResolved = url.searchParams.get("includeResolved") === "true";
+    // Default: include RESOLVED cases, rendered greyed out via CaseCard's
+    // status===RESOLVED muted styling. Opt out with ?includeResolved=false.
+    const includeResolved = url.searchParams.get("includeResolved") !== "false";
 
     const schemas = await prisma.caseSchema.findMany({
       where: { userId, status: { in: ["ACTIVE", "ONBOARDING"] } },
