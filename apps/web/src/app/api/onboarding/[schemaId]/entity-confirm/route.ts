@@ -80,6 +80,12 @@ export const POST = withAuth(async ({ userId, request }) => {
         // senderEmail for the aliases column. Cheap — same JSON column the
         // polling response already reads.
         stage1UserContacts: true,
+        // Phase 3 — stage2Candidates carries each candidate's origin-
+        // determining meta (pattern, source, discoveryScore). We use it to
+        // label Entity rows so the feed chip row can render user hints vs
+        // discoveries distinctly.
+        stage2Candidates: true,
+        stage1UserThings: true,
       },
     });
     assertResourceOwnership(schema, userId, "Schema");
@@ -100,8 +106,106 @@ export const POST = withAuth(async ({ userId, request }) => {
       if (c.query && c.senderEmail) queryToEmail.set(c.query, c.senderEmail);
     }
 
+    // Phase 3 — build a key→meta lookup from the stored stage2Candidates so
+    // we can attribute each confirmed entity's origin + discoveryScore. The
+    // candidates JSON is a list of per-domain blocks each with
+    // `{ confirmedDomain, algorithm, candidates: [{ key, meta, ... }] }`.
+    type CandidateMeta = {
+      pattern?: string;
+      source?: string;
+      kind?: string;
+      discoveryScore?: number;
+    };
+    const stage2Blocks =
+      (schema!.stage2Candidates as Array<{
+        algorithm?: string;
+        candidates: Array<{ key: string; displayString?: string; meta?: CandidateMeta }>;
+      }> | null) ?? [];
+    const keyToCandidate = new Map<
+      string,
+      { algorithm?: string; meta?: CandidateMeta; displayString?: string }
+    >();
+    for (const block of stage2Blocks) {
+      for (const c of block.candidates ?? []) {
+        keyToCandidate.set(c.key, {
+          algorithm: block.algorithm,
+          meta: c.meta,
+          displayString: c.displayString,
+        });
+      }
+    }
+    const userThings = (schema!.stage1UserThings as Array<{ query: string }> | null) ?? [];
+    // Tokenised user-hint queries. A confirmed entity is treated as a
+    // USER_HINT if ANY user query's tokens are all contained in the
+    // entity's display label tokens — handles the common case where Gemini
+    // normalises "3910 Bucknell" to "3910 Bucknell Drive" (street-type
+    // variant expansion is explicitly allowed per property.md §5
+    // "Aliases to GENERATE: Street-type variants (Dr/Drive/...)").
+    function tokens(s: string): string[] {
+      return s
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .split(/\s+/)
+        .filter((t) => t.length >= 2);
+    }
+    const userHintTokenSets: string[][] = userThings
+      .map((t) => tokens(t.query ?? ""))
+      .filter((arr) => arr.length > 0);
+    function matchesUserHint(displayLabel: string): boolean {
+      const labelTokens = new Set(tokens(displayLabel));
+      for (const hintTokens of userHintTokenSets) {
+        if (hintTokens.every((t) => labelTokens.has(t))) return true;
+      }
+      return false;
+    }
+
+    function resolveOrigin(e: z.infer<typeof ConfirmedEntitySchema>): {
+      origin: NonNullable<Parameters<typeof persistConfirmedEntities>[2][number]["origin"]>;
+      discoveryScore?: number;
+    } {
+      const lookup = keyToCandidate.get(e.identityKey);
+      const meta = lookup?.meta;
+      const algorithm = lookup?.algorithm;
+
+      // User-typed WHAT that matches a Stage 1 hint → USER_HINT (PRIMARY).
+      if (e.kind === "PRIMARY" && matchesUserHint(e.displayLabel)) {
+        return { origin: "USER_HINT" };
+      }
+      // SECONDARY seeded from user Q4 contacts → USER_SEEDED.
+      if (e.kind === "SECONDARY" && meta?.source === "user_named") {
+        return { origin: "USER_SEEDED" };
+      }
+      // Stage 2 algorithm-driven sources.
+      if (meta?.pattern === "short-circuit" || algorithm === "pair-short-circuit") {
+        return {
+          origin: "STAGE2_SHORT_CIRCUIT",
+          discoveryScore: meta?.discoveryScore,
+        };
+      }
+      if (meta?.pattern === "agency-domain-derive" || algorithm === "agency-domain-derive") {
+        return {
+          origin: "STAGE2_AGENCY_DOMAIN",
+          discoveryScore: meta?.discoveryScore,
+        };
+      }
+      if (meta?.pattern === "gemini" || algorithm === "gemini-subject-pass") {
+        return {
+          origin: "STAGE2_GEMINI",
+          discoveryScore: meta?.discoveryScore,
+        };
+      }
+      // Fallback — no lookup match. Treat PRIMARY as Gemini (default), SECONDARY
+      // as seeded (conservative).
+      return {
+        origin: e.kind === "SECONDARY" ? "USER_SEEDED" : "STAGE2_GEMINI",
+      };
+    }
+
     const augmentedEntities = body.confirmedEntities.map((e) => {
-      if (e.kind !== "SECONDARY") return e;
+      const { origin, discoveryScore } = resolveOrigin(e);
+      const base = { ...e, origin, discoveryScore };
+      if (e.kind !== "SECONDARY") return base;
       // Primary lookup: match displayLabel against stage1UserContacts.query.
       let senderEmail = queryToEmail.get(e.displayLabel);
       // Fallback: identityKey convention `@<senderEmail>` (see
@@ -109,8 +213,8 @@ export const POST = withAuth(async ({ userId, request }) => {
       if (!senderEmail && e.identityKey.startsWith("@")) {
         senderEmail = e.identityKey.slice(1);
       }
-      if (!senderEmail) return e;
-      return { ...e, aliases: [senderEmail] };
+      if (!senderEmail) return base;
+      return { ...base, aliases: [senderEmail] };
     });
 
     const committed = await prisma.$transaction(async (tx) => {

@@ -15,10 +15,10 @@
  */
 
 import type { EntityGroupInput } from "@denim/types";
-import type { GmailClient } from "@/lib/gmail/client";
+import type { GmailClientLike } from "@/lib/gmail/types";
 import { logger } from "@/lib/logger";
 import { type FromHeaderResult, fetchFromHeaders } from "./gmail-metadata-fetch";
-import { isPublicProvider } from "./public-providers";
+import { isPublicProvider } from "@denim/engine";
 
 /** Max Gmail matches fetched per user-named query. Small cap — we only need
  *  enough to pick a top sender + show a representative count. */
@@ -195,7 +195,7 @@ function chooseSourcedWho(
 }
 
 export async function discoverUserNamedThings(
-  client: GmailClient,
+  client: GmailClientLike,
   whats: ReadonlyArray<string>,
   userDomain: string,
   options?: {
@@ -261,7 +261,7 @@ export async function discoverUserNamedThings(
 }
 
 export async function discoverUserNamedContacts(
-  client: GmailClient,
+  client: GmailClientLike,
   whos: ReadonlyArray<string>,
 ): Promise<UserContactResult[]> {
   if (whos.length === 0) return [];

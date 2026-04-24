@@ -380,6 +380,13 @@ model Entity {
   aliasConfidence          Float?       // 0-1 confidence this is an alias
   aliasReason              String?      // Why this is considered an alias
 
+  // Phase 3 (2026-04-23): track WHERE the entity came from so the feed chip
+  // row can render user hints first (origin=USER_HINT) vs discovered
+  // entities (STAGE1_TRIANGULATED / STAGE2_* / MID_SCAN / FEEDBACK_RULE),
+  // and rank discoveries by the compounding-signal score that surfaced them.
+  origin          EntityOrigin @default(STAGE2_GEMINI)
+  discoveryScore  Int?
+
   // Relationships
   emails        Email[]                 // Emails assigned to this entity (primary only)
   cases         Case[]                  // Cases scoped to this entity (primary only)
@@ -398,6 +405,21 @@ model Entity {
 enum EntityType {
   PRIMARY       // Boundary: "Property", "Client", "Project"
   SECONDARY     // Signal: "Vendor", "Opposing Counsel", "Contractor"
+}
+
+// Provenance of an Entity row — which pipeline stage + algorithm produced it.
+// Consumed by the feed chip row (user-hint chips render first, then confirmed
+// discoveries sorted by `discoveryScore` descending) and by the review screen
+// so users can see "this entity came from your hints" vs "Denim found this".
+enum EntityOrigin {
+  USER_HINT               // User typed it on Q3 of the interview (WHAT) — highest-trust PRIMARY
+  USER_SEEDED             // User typed a WHO on Q4 — highest-trust SECONDARY (contact)
+  STAGE1_TRIANGULATED     // Stage 1 compounding-signal scorer surfaced the sender's domain
+  STAGE2_SHORT_CIRCUIT    // 04-22 Layer 1 — user's paired WHAT attributed to a single-sender domain
+  STAGE2_AGENCY_DOMAIN    // Agency-specific domain-derive — one PRIMARY per confirmed domain
+  STAGE2_GEMINI           // Gemini subject-pass discovered it on a confirmed domain
+  MID_SCAN                // Created during the deep-scan extraction (#76 fallback)
+  FEEDBACK_RULE           // Created by an explicit feedback-loop rule (§9 authoritative corrections)
 }
 
 
@@ -461,6 +483,13 @@ model Email {
   // Entity detection results (all entities mentioned, not just assigned)
   detectedEntities  Json   @default("[]") // [{ name, type, confidence }]
   isInternal        Boolean @default(false) // Sender is from an internal domain
+
+  // #130 — sender-fallback disambiguation list. Populated by extraction's
+  // Stage 5 when the sender is a known SECONDARY with >1 associated primaries
+  // and content (subject / summary) did not disambiguate. cluster.ts reads
+  // this + threadId to resolve via thread-adjacency: if any sibling email in
+  // the same thread landed on one of these primaries, adopt that one here.
+  candidatePrimaryIds  Json  @default("[]") // String array of Entity.id
 
   // --- ATTACHMENT INVENTORY ---
   // Summary counts for quick filtering; details in EmailAttachment table

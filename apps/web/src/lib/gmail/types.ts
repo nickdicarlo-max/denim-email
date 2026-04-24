@@ -43,3 +43,24 @@ export interface ScanDiscovery {
   senders: string[];
   label: string;
 }
+
+/**
+ * Structural interface for Stage 1 + Stage 2 discovery. Both the real
+ * `GmailClient` and `FixtureGmailClient` satisfy this subset so eval harnesses
+ * and offline validators can drive the real discovery code paths without
+ * touching the Gmail API.
+ *
+ * Keep this intentionally narrow — add a method only when the discovery code
+ * genuinely needs it. Broader responsibilities (full-body fetch, pacing,
+ * attachments) stay on the concrete `GmailClient`.
+ */
+export interface GmailClientLike {
+  listMessageIds(query: string, maxResults: number): Promise<string[]>;
+  getMessageMetadata(
+    messageId: string,
+    headerNames?: string[],
+  ): Promise<{
+    id: string;
+    payload: { headers: Array<{ name: string; value: string }> };
+  }>;
+}

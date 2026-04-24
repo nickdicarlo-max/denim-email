@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateDomains } from "../domain-aggregator";
+import { aggregateDomains } from "../discovery/domain-aggregator";
 
 const sample = [
   { messageId: "1", fromHeader: "A <a@portfolioproadvisors.com>" },

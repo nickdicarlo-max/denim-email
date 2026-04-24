@@ -8,11 +8,11 @@
 >
 > Onboarding is a 3-stage flow modeled on **The Control Surface** (Nick's other product, NOT this repo):
 >
-> 1. **Domain confirmation (~5 sec)** — Gmail `format: 'metadata'` query with a per-domain keyword list, parallel `Promise.all` of ~500 From-header fetches, group by sender domain, drop generic providers (`@gmail.com` etc.), top 3. **Zero AI.** Pure regex + counting. User confirms the relevant domain(s).
-> 2. **Entity confirmation (~6 sec)** — `from:*@<confirmed-domain>` query in parallel, regex-extract entity shapes from subjects, Levenshtein dedup, top 20. **Zero AI.** User confirms entities.
-> 3. **Deep scan (~5 min, background)** — Gemini extraction + Claude clustering + case synthesis on confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
+> 1. **Domain confirmation (~5 sec)** — Surface candidate sender domains where multiple signals (user hints, paired-WHO triangulation, sender volume in the lookback window) indicate the user actively corresponds about this schema's topic. **Zero AI in this hot path.** User confirms which domains are relevant.
+> 2. **Entity confirmation (~6 sec)** — Produce the PRIMARY entities the user should track for each confirmed domain. Short-circuit when the pairing is unambiguous (single paired WHO + single paired WHAT); use semantic entity extraction otherwise. Every candidate must pass the per-domain §5 alias-prohibition rules. User confirms the list.
+> 3. **Deep scan (~5 min, background)** — Extract, cluster, and synthesize cases on the confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
 >
-> The per-domain spec files specify what makes Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.**
+> The per-domain spec files specify the GOALS that make Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.** Procedures (exact Gmail queries, keyword lists, regex, thresholds, top-N counts) live in code and tunables — see each file's §9 Implementation pointers.
 >
 > ### The 6 principles
 >
@@ -48,78 +48,50 @@ The user works at an agency or consulting firm that serves external client compa
 
 **Source-of-truth pointer:** `apps/web/src/components/interview/domain-config.ts` (the `DOMAIN_CONFIGS.agency` block + `ROLE_OPTIONS[id="agency"]`). **Note: the current code's WHAT placeholder is `"Acme Corp rebrand"` (an engagement, not a company) — this misled at least one real test user (the 2026-04-15 Consulting run). Update the code to match this spec when the next code-touching task in this domain lands.**
 
-## 3. Stage 1 — Domain Discovery (~5 sec)
+## 3. Stage 1 — Domain Confirmation
 
-> **Status: LOCKED 2026-04-16.** Keyword list extended after validation against a local inbox sample (19 emails from 3 known-agency senders across two client domains). Original formal-consulting vocabulary produced 0/19 subject-match recall; the working-vocabulary additions (`call, meeting, session, update, slides, documents, demo, round, initiative, project`) raised per-email recall to 42% AND, more importantly, both client domains now land in the Stage 1 top-5 aggregation (ranks 2 and 4 of 10 candidate domains in the sample).
+**Goal.** Surface the **client domains** the user actively corresponds with. In the agency mental model, every client = its own non-user, non-generic email domain. Stage 1 separates noise (newsletters, internal threads, generic providers) from signal (`@<client>.com` domains the user emails frequently).
 
-Discovers the **client domains** the user actively corresponds with. In the agency mental model, every client = its own non-user, non-generic email domain. Stage 1 separates noise (newsletters, internal threads, generic providers) from signal (`@<client>.com` domains the user emails frequently).
+**Signals that should produce candidates (positive):**
+- User-typed client names as WHATs (`Portfolio Pro Advisors`, `Stallion`) whose quoted full-text search converges on a single non-generic domain → +2 first hit, +1 each additional convergence.
+- User-typed client-contact names as WHOs (`Margaret Potter`, `George Trevino`, `Farrukh Malik`) whose `from:` search resolves to a paired WHAT's domain → +3 per confirmed pair.
+- Multiple paired WHOs at the same domain compound the score and flag it as strongly anchored.
 
-**Gmail query (`format: 'metadata'`, last 12 months, exclude promotions):**
+**Signals that must NOT produce candidates (veto):**
+- Generic provider domains (`gmail.com`, etc.) — handled by Stage 2 public-provider scoping when a paired WHO lives there (see break mode #1).
+- **The user's own domain** (agency-specific — `nick@thecontrolsurface.com` → drop `@thecontrolsurface.com`). Internal company traffic is out of scope for `agency` (see break mode #8).
+- Platform / SaaS notification domains (newsletter relays, GitHub, Twilio, etc. — see the platform denylist).
+- Domains whose messages carry `List-Unsubscribe` headers in majority.
 
-```
-subject:("invoice" OR "scope" OR "deliverable" OR "review" OR "deck"
-  OR "proposal" OR "contract" OR "retainer" OR "kickoff" OR "status"
-  OR "deadline" OR "agreement" OR "RFP" OR "SOW" OR "milestone"
-  OR "feedback" OR "approval" OR "draft"
-  OR "call" OR "meeting" OR "session" OR "update" OR "slides"
-  OR "documents" OR "demo" OR "round" OR "initiative" OR "project")
-  -category:promotions after:{12_months_ago}
-```
+**Threshold.** A candidate must clear `MIN_SCORE_THRESHOLD` (principle #4 compounding signals).
 
-**Why these keywords:**
-- Commercial/contract: `invoice, scope, deliverable, contract, retainer, agreement, RFP, SOW`
-- Project lifecycle: `kickoff, milestone, deadline, status`
-- Deliverable language: `deck, draft, review, proposal, feedback, approval`
-- Working vocabulary (added 2026-04-16 post-validation against Nick's sample inbox — the formal list alone had 0/19 recall on known-agency senders): `call, meeting, session, update, slides, documents, demo, round, initiative, project`
+**SLA.** < 5 seconds wall-clock. **Zero AI in the hot path** (principle #6).
 
-**Fetch shape:** identical to property/school — up to 500 messages, single `Promise.all` batch, no bodies.
+**Confirmation UI.** Show scored candidate domains with the display label *derived from the domain* (see §4 below — `anthropic.com` → `Anthropic`). Expected confirmation count: 3-8 clients. Review copy must match §2 Onboarding UI Copy verbatim.
 
-**Aggregation:**
-- Group by sender domain
-- **Drop the user's own domain** (e.g., if user is `nick@thecontrolsurface.com`, drop `@thecontrolsurface.com`) — this is the agency-specific filter that property/school don't need
-- Drop generic providers from `PUBLIC_PROVIDERS`
-- Sort by message count, return top **5** (agency users typically have 3-10 active clients)
+## 4. Stage 2 — Entity Confirmation
 
-**Confirmation UI:**
-- Show top 5 candidate domains with email counts
-- Display label derived from domain (see Stage 2 for derivation rule) — show `"Anthropic"` not `@anthropic.com`
-- "This is one of my clients" toggle per domain
-- User confirms 0+ domains; expected 3-8
+**Agency Stage 2 is structurally different from property and school.** The entity IS the client company; it's *found* via the sender domain. There is NO subject-content extraction — the domain itself uniquely identifies the client. One confirmed Stage-1 domain → ONE PRIMARY entity.
 
-## 4. Stage 2 — Entity Discovery (~6 sec)
+**Display-label derivation priority:**
+1. **User's typed WHAT (preferred when available).** When exactly one user WHAT paired with this domain (e.g., the user typed `Portfolio Pro Advisors` and all confirmed Q4 contacts at `portfolioproadvisors.com` are paired with that WHAT), use the user-typed label verbatim. This honors spec §5 "canonical form = user's typed input."
+2. **Domain-derived.** Strip TLD, split on hyphens, title-case segments. `anthropic.com` → `Anthropic`; `portfolio-pro-advisors.com` → `Portfolio Pro Advisors`; `sghgroup.com` → `Sghgroup` (user edits at confirmation when the derivation is unclear).
+3. **User edit at confirmation.** When the derived label looks wrong (no hyphens + ambiguous domain), the review screen offers inline rename. Break mode #2 (client domain ≠ brand name — `Stallion` brand at `@sghgroup.com`) is also handled here.
 
-**Stage 2 is structurally different from property and school.** The entity IS the company name (display label); it's *found* via the sender domain (signal). There's no subject-content regex to extract an entity from — the domain itself uniquely identifies the client.
+**Short-circuit path.** When exactly one sender is confirmed at the domain AND they're paired with exactly one user WHAT, Stage 2 emits one synthetic PRIMARY = the user's typed WHAT with zero AI calls. This is the common `Farrukh Malik` → `stallionis.com` → `Stallion` shape.
 
-**Algorithm:**
-
-1. From each Stage-1-confirmed domain, run:
-   ```
-   from:*@<confirmed_domain> after:{12_months_ago}
-   ```
-   to verify volume and gather sender-display-name samples (top 50 messages is enough).
-2. Derive the company-name display label using this priority order:
-   - **(a)** If sender display names converge on a clear company name (e.g., 80%+ of messages have display-name pattern `<person> | Anthropic` or `<person> at Anthropic`), use that company name.
-   - **(b)** Otherwise, derive from the domain: strip TLD, capitalize first letter of each segment. `anthropic.com` → `Anthropic`; `portfolio-pro-advisors.com` → `Portfolio Pro Advisors`; `sghgroup.com` → `SGH Group`.
-   - **(c)** If the derived name is unclear (e.g., `xyz123.com` → `Xyz123`), flag for user editing in the confirmation UI.
-3. The user confirms or edits the display label. The domain is stored as the entity's authoritative-domain attribute.
-
-**No subject-content regex.** Property's address regex and school_parent's institution/activity regexes don't have an analog here — agency entity discovery is fully sender-domain-driven.
-
-**Coalescence at confirmation (Cell 3 = B + C helper):**
-
-- **Domain-anchored merge (auto-suggest):** if two user-typed names from Q2 (`PPA`, `Portfolio Pro Advisors`) both map to the same Stage-1-confirmed authoritative domain, propose a merge at the confirmation screen with the merge pre-checked. User confirms (or rejects).
-- **Name-similarity merge (auto-suggest, no shared domain):** if two user-typed names with no domain overlap show high name similarity (acronym/expansion pair, e.g., `PPA` ↔ `Portfolio Pro Advisors`; or string-similarity above some threshold), propose a merge with the merge **un-checked** (user must opt in — riskier match).
+**Coalescence at confirmation:**
+- **Domain-anchored merge (auto-suggest).** If two user-typed WHATs (`PPA`, `Portfolio Pro Advisors`) both resolve to the same authoritative domain, propose a merge with the merge pre-checked.
+- **Name-similarity merge (auto-suggest, no shared domain).** Acronym/expansion pair with high string similarity → propose a merge *un*-checked (riskier match, user opts in).
 - **Never auto-merge.** Always require user confirmation.
 
-**Confirmation UI:**
-- Show derived company-name display labels with email counts
-- Inline edit affordance for the display label
-- Inline merge affordance for any pair flagged by the coalescence rules above
-- "Add another client" free-text fallback for clients not surfaced by Stage 1
+**§5 rejection path.** Engagements (`Rhodes Data Test Sample`, `KPI Dashboard Review`, `AI Session #2`, `V7 Update`) are NOT PRIMARIES — they are CASES that emerge during synthesis. Stage 2 never emits them. Similarly, single-word fragments (`Nick`, `PPA` alone), generic nouns (`client`, `project`), and short acronyms (≤3 chars without paired-WHO anchor) are rejected.
 
-**Result shape:**
-- One Entity row per confirmed client
-- Each Entity row carries: display label (the canonical company name), authoritative domain (`@<domain>`), source (Stage-1-discovered or user-typed-and-then-confirmed)
+**SLA.** < 6 seconds wall-clock per confirmed domain. For the unambiguous + short-circuit paths, Stage 2 makes zero Gemini calls.
+
+**Result shape.** One Entity row per confirmed client. Each row carries display label (the canonical company name), authoritative domain (`@<domain>`), and provenance (USER_HINT / STAGE2_SHORT_CIRCUIT / STAGE2_AGENCY_DOMAIN).
+
+**Confirmation UI.** Show derived company-name labels with email counts. Inline edit + merge affordances per the coalescence rules above. "Add another client" free-text fallback for clients the user didn't type and Stage 1 didn't surface.
 
 ## 5. PRIMARY (WHAT) Entity Table
 
@@ -179,3 +151,26 @@ The 8 break modes locked today (2026-04-16):
 - **Multi-year/multi-engagement clients:** one PRIMARY per client. Engagements are CASES. Future user-driven splitting (when a single client gets noisy enough to warrant splitting into engagement-PRIMARIES) is part of the tuning/learning loop — not Phase 1. (Cell 6 = A locked.)
 - **Past clients (engagement ended):** PRIMARY remains. The CASE timeline shows the engagement; new emails after the engagement ends are usually a `relationship` thread (referrals, year-end check-ins) and stay routed to that client.
 - **The Consulting-run "Asset Management" failure** is the canonical input-error case: the user typed `Asset Management` (a service category) instead of the company name. The new WHAT placeholder + helper text in Section 2 directly addresses this. Round-trip the copy into `domain-config.ts` when the code-touching task lands.
+
+## 9. Implementation pointers
+
+Procedural detail (exact Gmail queries, keyword lists, regex patterns, Levenshtein thresholds, top-N counts, fetch batch sizes) lives in code — see the files below. When implementation diverges from spec goals, the fix lands in the implementation; when the goals themselves change, this document is the source of truth that gets edited, reviewed, and dated.
+
+| Goal | Implementation |
+|---|---|
+| Stage 1 orchestration | `apps/web/src/lib/discovery/stage1-orchestrator.ts` |
+| Stage 1 compounding-signal scoring | `packages/engine/src/discovery/score-domain-candidates.ts` |
+| Stage 1 / 2 public-provider veto | `packages/engine/src/discovery/public-providers.ts` |
+| Stage 1 / 2 platform denylist | `packages/engine/src/discovery/platform-denylist.ts` |
+| Stage 1 Inngest wiring | `apps/web/src/lib/inngest/domain-discovery-fn.ts` |
+| Stage 2 entity discovery (includes agency-domain-derive + short-circuit) | `apps/web/src/lib/discovery/entity-discovery.ts` |
+| Stage 2 paired-who resolver | `apps/web/src/lib/discovery/paired-who-resolver.ts` |
+| Stage 2 candidate scoring | `packages/engine/src/discovery/score-entity-candidates.ts` |
+| §5 alias-prohibition enforcement | `packages/engine/src/discovery/spec-validators.ts` |
+| Persistence + last-chance §5 gate | `apps/web/src/lib/services/interview.ts::persistConfirmedEntities` |
+| Review-screen component | `apps/web/src/components/onboarding/phase-entity-confirmation.tsx` |
+| Feed chip row | `apps/web/src/components/feed/topic-chips.tsx` + `apps/web/src/app/api/feed/route.ts` |
+| Tunables (thresholds, batch sizes, SLAs) | `apps/web/src/lib/config/onboarding-tunables.ts` |
+| Stage 2 algorithm dispatch | `apps/web/src/lib/config/domain-shapes.ts` (`stage2Algorithm`) |
+
+Eval harness: `apps/web/scripts/eval-onboarding.ts` exercises the full path end-to-end against fixture email data in `denim_samples_individual/`.

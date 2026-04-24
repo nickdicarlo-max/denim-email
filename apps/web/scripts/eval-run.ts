@@ -3,9 +3,9 @@
  * clustering → synthesis) against fixture emails using a FixtureGmailClient.
  *
  * Usage (from apps/web/):
- *   node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --schema-id <ID> --fixtures ../../Denim_Samples_Individual
- *   node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --create-schema --role "parent" --domain "school_parent" --whats "Lanier,St Agnes" --whos "soccer,dance" --fixtures ../../Denim_Samples_Individual
- *   node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --coverage --fixtures ../../Denim_Samples_Individual
+ *   node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --schema-id <ID> --fixtures ../../denim_samples_individual
+ *   node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --create-schema --role "parent" --domain "school_parent" --whats "Lanier,St Agnes" --whos "soccer,dance" --fixtures ../../denim_samples_individual
+ *   node --env-file=.env.local --import tsx/esm scripts/eval-run.ts --coverage --fixtures ../../denim_samples_individual
  */
 
 import { resolve } from "node:path";

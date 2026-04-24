@@ -126,6 +126,63 @@ describe("derivePollingResponse — Stage 2 (issue #95)", () => {
 
     expect(res.stage2Candidates).toEqual([]);
   });
+
+  // Phase 5 (2026-04-23) — the by-WHAT confirm UI needs inputs +
+  // stage1UserThings + stage1UserContacts + stage1ConfirmedUserContactQueries
+  // during AWAITING_ENTITY_CONFIRMATION. Prior to Phase 5 these were only
+  // surfaced during AWAITING_DOMAIN_CONFIRMATION.
+  it("surfaces inputs + Stage 1 sidecars during AWAITING_ENTITY_CONFIRMATION", async () => {
+    const schema = baseSchema({
+      phase: "AWAITING_ENTITY_CONFIRMATION",
+      stage2Candidates: stage2 as unknown as CaseSchema["stage2Candidates"],
+      inputs: {
+        domain: "school_parent",
+        whats: ["soccer", "guitar"],
+        whos: ["Ziad Allan"],
+        groups: [{ whats: ["soccer"], whos: ["Ziad Allan"] }],
+        sharedWhos: [],
+        goals: [],
+      } as unknown as CaseSchema["inputs"],
+      stage1UserThings: [
+        {
+          query: "soccer",
+          matchCount: 13,
+          topDomain: "email.teamsnap.com",
+          topSenders: ["TeamSnap"],
+          errorCount: 0,
+        },
+        {
+          query: "guitar",
+          matchCount: 0,
+          topDomain: null,
+          topSenders: [],
+          errorCount: 0,
+        },
+      ] as unknown as CaseSchema["stage1UserThings"],
+      stage1UserContacts: [
+        {
+          query: "Ziad Allan",
+          matchCount: 13,
+          senderEmail: "donotreply@email.teamsnap.com",
+          senderDomain: "email.teamsnap.com",
+          errorCount: 0,
+        },
+      ] as unknown as CaseSchema["stage1UserContacts"],
+      stage1ConfirmedUserContactQueries: [
+        "Ziad Allan",
+      ] as unknown as CaseSchema["stage1ConfirmedUserContactQueries"],
+    });
+
+    const res = await derivePollingResponse(schema, null);
+
+    expect(res.phase).toBe("AWAITING_ENTITY_CONFIRMATION");
+    expect(res.inputs?.whats).toEqual(["soccer", "guitar"]);
+    expect(res.inputs?.groups).toEqual([{ whats: ["soccer"], whos: ["Ziad Allan"] }]);
+    expect(res.stage1UserThings).toHaveLength(2);
+    expect(res.stage1UserThings?.[1]).toMatchObject({ query: "guitar", matchCount: 0 });
+    expect(res.stage1UserContacts).toHaveLength(1);
+    expect(res.stage1ConfirmedUserContactQueries).toEqual(["Ziad Allan"]);
+  });
 });
 
 describe("derivePollingResponse — regression guards", () => {

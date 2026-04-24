@@ -344,6 +344,7 @@ export async function generateSmartQueries(
         inputTokens: aiResult.inputTokens,
         outputTokens: aiResult.outputTokens,
         latencyMs: aiResult.latencyMs,
+        fromCache: aiResult.fromCache,
       },
       {
         emailId: "discovery", // No specific email — use placeholder

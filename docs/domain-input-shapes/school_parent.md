@@ -8,11 +8,11 @@
 >
 > Onboarding is a 3-stage flow modeled on **The Control Surface** (Nick's other product, NOT this repo):
 >
-> 1. **Domain confirmation (~5 sec)** — Gmail `format: 'metadata'` query with a per-domain keyword list, parallel `Promise.all` of ~500 From-header fetches, group by sender domain, drop generic providers (`@gmail.com` etc.), top 3. **Zero AI.** Pure regex + counting. User confirms the relevant domain(s).
-> 2. **Entity confirmation (~6 sec)** — `from:*@<confirmed-domain>` query in parallel, regex-extract entity shapes from subjects, Levenshtein dedup, top 20. **Zero AI.** User confirms entities.
-> 3. **Deep scan (~5 min, background)** — Gemini extraction + Claude clustering + case synthesis on confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
+> 1. **Domain confirmation (~5 sec)** — Surface candidate sender domains where multiple signals (user hints, paired-WHO triangulation, sender volume in the lookback window) indicate the user actively corresponds about this schema's topic. **Zero AI in this hot path.** User confirms which domains are relevant.
+> 2. **Entity confirmation (~6 sec)** — Produce the PRIMARY entities the user should track for each confirmed domain. Short-circuit when the pairing is unambiguous (single paired WHO + single paired WHAT); use semantic entity extraction otherwise. Every candidate must pass the per-domain §5 alias-prohibition rules. User confirms the list.
+> 3. **Deep scan (~5 min, background)** — Extract, cluster, and synthesize cases on the confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
 >
-> The per-domain spec files specify what makes Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.**
+> The per-domain spec files specify the GOALS that make Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.** Procedures (exact Gmail queries, keyword lists, regex, thresholds, top-N counts) live in code and tunables — see each file's §9 Implementation pointers.
 >
 > ### The 6 principles
 >
@@ -48,92 +48,55 @@ The user is a parent (or guardian, grandparent, etc.) coordinating one or more c
 
 **Source-of-truth pointer:** `apps/web/src/components/interview/domain-config.ts` (the `DOMAIN_CONFIGS.school_parent` block). Currently aligned with this spec.
 
-## 3. Stage 1 — Domain Discovery (~5 sec)
+## 3. Stage 1 — Domain Confirmation
 
-> **Status: LOCKED 2026-04-16.** Keyword list reviewed against Nick's real inbox and confirmed sufficient.
+**Goal.** Surface the schools, activity platforms, and care-provider organizations that touch the user's children. In contrast to property (where one or two domains dominate), school_parent users typically have 5-15 relevant domains — a school district, multiple activity platforms (TeamSnap, GameChanger, Class Dojo), a religious organization, a few medical/therapy providers.
 
-Discovers the schools, activity platforms, and care-provider organizations that touch the user's children. In contrast to property (where one or two domains usually dominate), school_parent users typically have 5-15 relevant domains — a school district, multiple activity platforms (TeamSnap, GameChanger, Class Dojo), a religious organization, and a few medical/therapy providers.
+**Signals that should produce candidates (positive):**
+- Paired WHOs (coach, teacher, activity coordinator) whose `from:` search resolves to a non-generic domain → +3.
+- Solo user-typed WHOs → +1 (insufficient alone; compounds).
+- User-typed WHATs whose quoted full-text search converges on a non-generic domain → +2 first hit, +1 each additional convergence.
+- Paired-WHO triangulation — `Ziad Allan` + `soccer` grouped → when Ziad's mail is at `email.teamsnap.com`, that domain earns the full paired-WHO credit for the soccer topic (principle #7 compound signal).
 
-**Gmail query (`format: 'metadata'`, last 12 months, exclude promotions):**
+**Signals that must NOT produce candidates (veto):**
+- Generic provider domains (`gmail.com`, `yahoo.com`, etc.) at the domain level — when a paired WHO lives at a public provider (Amy at `@gmail.com` paired with `lanier`), Stage 2 scopes to `from:amy@gmail.com` rather than admitting `gmail.com` as a candidate.
+- The user's own domain.
+- Platform / SaaS notification domains (GitHub, Twilio, Stripe, newsletter relays — see the platform denylist).
+- Newsletter-shaped domains whose messages carry `List-Unsubscribe` headers in majority.
 
-```
-subject:("practice" OR "game" OR "tournament" OR "schedule" OR "registration"
-  OR "tryout" OR "recital" OR "performance" OR "pickup" OR "dropoff"
-  OR "permission" OR "field trip" OR "parent" OR "teacher" OR "coach"
-  OR "homework" OR "report card" OR "conference" OR "appointment")
-  -category:promotions after:{12_months_ago}
-```
+**Domain shape hints the review UI should surface:**
+- Education domain tells: `.edu`, `.k12.<state>.us`, `<schoolname>.org`.
+- Known activity-platform tells: `teamsnap.com`, `gamechanger.io`, `classdojo.com`, `signupgenius.com`, `bandapp.com`, `remind.com`, `parentsquare.com`, `leagueapps.com`, `bblearn.com`, `canvaslms.com`, `powerschool.com`, `infinitecampus.com`, `skyward.com`.
 
-**Why these keywords (rationale for Nick's review):**
-- Sport/activity terms: `practice, game, tournament, tryout, schedule`
-- School terms: `permission, field trip, parent, teacher, homework, report card, conference`
-- Performance arts: `recital, performance`
-- Logistics: `pickup, dropoff, registration`
-- Medical/therapy: `appointment` (broad — may need narrowing)
+The review UI may badge candidates accordingly ("School", "Activity Platform") to help the user recognize them.
 
-**Fetch shape:** identical to property — up to 500 messages, single `Promise.all` batch, no bodies.
+**Threshold.** A candidate must clear `MIN_SCORE_THRESHOLD` (principle #4 compounding signals). User confirmation at the review screen is the terminal gate.
 
-**Aggregation:**
-- Group by sender domain
-- Drop generic providers from `PUBLIC_PROVIDERS`
-- Sort by message count, return top **5** (school_parent has more relevant domains than property — show more candidates)
-- Distinguish education-domain hints: `.edu`, `.k12.<state>.us`, `<schoolname>.org` get a "School" badge in the UI
-- Activity-platform domain hints: known platforms (`teamsnap.com`, `gamechanger.io`, `classdojo.com`, `signupgenius.com`, `bandapp.com`, `remind.com`, `parentsquare.com`, `leagueapps.com`, `bblearn.com`, `canvaslms.com`, `powerschool.com`, `infinitecampus.com`, `skyward.com`) get an "Activity Platform" badge
+**SLA.** < 5 seconds wall-clock. **Zero AI in the hot path** (principle #6).
 
-**Confirmation UI:**
-- Show top 5 candidate domains with email counts and badges
-- "This is my child's school / activity platform / etc." per-domain confirmation
-- User confirms 0+ domains; expected confirmation count is 3-8
+**Confirmation UI.** Show scored candidates with badges; expected confirmation count is 3-8 domains. Review copy must match §2 Onboarding UI Copy verbatim.
 
-## 4. Stage 2 — Entity Discovery (~6 sec)
+## 4. Stage 2 — Entity Confirmation
 
-> **Status: LOCKED 2026-04-16.** Nick reviewed the two-pattern approach (institutions + activities/teams) and approved.
+**Goal.** For each confirmed Stage-1 domain, produce the candidate PRIMARY entities (schools, activities, teams, providers) the user should track. Per §8 domain-specific notes, *teams and program names are aliases UNDER the parent topic PRIMARY*, not separate PRIMARIES — a TeamSnap account's `ZSA U11/12 Girls Competitive Rise` is an alias for the user's `soccer` WHAT, not a peer entity.
 
-Given confirmed Stage-1 domains, extract candidate school/activity/team/provider entities from subjects.
+**Three per-domain paths:**
 
-**Gmail query (per confirmed Stage-1 domain):**
+1. **Short-circuit (04-22 Layer 1, tuned for this domain).** When exactly one sender email is confirmed at the domain AND that sender pairs with exactly one user WHAT — the canonical case (`Ziad Allan` → `email.teamsnap.com` → `soccer`) — skip semantic extraction entirely and emit one synthetic PRIMARY = the user's typed WHAT. Team-specific content (`ZSA U11/12 Girls`, `Rise ECNL`, `Houston Select`) surfaces during case synthesis as case-splitting discriminators, not as Stage 2 entities.
+2. **Public-provider scoping (04-22 Layer 2).** When the confirmed domain is a generic provider (Amy DiCarlo at `@gmail.com` paired with `lanier`, `st agnes`, `guitar`), scope the Stage 2 query to `from:amy@gmail.com` only.
+3. **Hint-anchored semantic extraction.** On an anchor domain without an unambiguous short-circuit, extract candidate PRIMARIES from subjects. Filter newsletters (`-category:promotions` + `List-Unsubscribe` drop). Score each candidate with compounding signals. Reject §5 violations (no generic context words — `team`, `practice`, `game`, `season`, `fall`, `spring` — no seasonal+year descriptors, no engagement/event fragments).
 
-```
-from:*@<confirmed_domain> after:{12_months_ago}
-```
+**What makes a PRIMARY surface:**
+- User-typed WHATs (`soccer`, `dance`, `Lanier`, `St Agnes`) — always, via the short-circuit path or token-overlap matching when Gemini expands display forms.
+- Adjacent activities / institutions the user didn't type but the corpus reveals (new sport, new school) — subject to §5 rules.
 
-**Entity-shape regexes (subjects only — TWO patterns):**
+**What does NOT surface as a PRIMARY:**
+- Specific team names or season variants under a parent topic (`ZSA U11/12 Girls Competitive Rise` under `soccer`) — these are aliases / case-splitting discriminators.
+- Event names like `St Agnes Auction`, `Pia Spring Dance Show`, `8th grade prom` — these are CASES, time-tied.
 
-Pattern A — Institution / proper-named entities:
+**SLA.** < 6 seconds wall-clock per confirmed domain (fan-out in parallel).
 
-```regex
-/\b(St\.?\s+\w+|[A-Z]\w+\s+(?:School|Academy|College|Preschool|Elementary|Middle|High|Prep|Montessori|YMCA|Church|Temple|Synagogue))\b/g
-```
-
-Captures: `St Agnes`, `St. Agnes`, `Saint Agnes`, `Lanier Middle`, `Vail Mountain School`, `St Mary's Academy`, `First Baptist Church`.
-
-Pattern B — Activity/team names:
-
-```regex
-/\b(?:U\d{1,2}|[A-Z]\w{2,})\s+(?:Soccer|Football|Basketball|Baseball|Lacrosse|Hockey|Volleyball|Swimming|Track|Tennis|Golf|Dance|Ballet|Theater|Choir|Band|Orchestra|Karate|Judo|Gymnastics|Cheer)/g
-```
-
-Captures: `U11 Soccer`, `ZSA U12 Girls`, `Pia Ballet`, `Cosmos Soccer`, `Adams Lacrosse`. Sports/arts vocabulary is the anchor; the proper noun before is the team/group name.
-
-**False-positive guards:**
-- Marketing/retail subjects (e.g., `"Soccer cleats 50% off!"`) often match Pattern B. Mitigation: exclude domains with `category:promotions` already in the Stage 1 query; deeper guard requires content gate (deep-scan path).
-- Generic words like `practice`, `game`, `season` alone are NOT entity names — they're event-type words. Patterns A and B both require at least one capitalized proper-noun token.
-
-**Dedup (Levenshtein):**
-- Same algorithm as property — Levenshtein threshold 1 (short ≤6 chars) / 2 (longer)
-- Special-case casing/punctuation: `St Agnes` ↔ `st agnes` ↔ `St. Agnes` ↔ `Saint Agnes` all merge to the most-frequent display form
-- `Lanier` and `Lanier Middle School` merge — the longer form wins as display
-
-**Result shape:**
-- Top 20 deduped candidates per confirmed domain
-- Each tagged with which pattern (A or B) matched, for UI affordance
-- User confirms; "Add another" free-text fallback
-- A user-typed-during-Q2 entity that doesn't appear in Stage 2 results is preserved (the user's typing is authoritative)
-
-**Confirmation UI:**
-- Per Stage-1-confirmed domain, show 20 candidate entities
-- Group by Pattern A (institutions) vs Pattern B (activities/teams) for visual separation
-- Inline edit + merge affordances (school_parent collisions are common — `St Agnes` and `Saint Agnes` should be visibly mergeable)
+**Confirmation UI.** Per confirmed domain, show the candidate list with origin attribution. Inline edit + merge affordances are important for this domain (`St Agnes` ↔ `Saint Agnes` ↔ `St. Agnes` should be visibly mergeable). "Add another" free-text fallback covers anything Stage 2 missed.
 
 ## 5. PRIMARY (WHAT) Entity Table
 
@@ -183,3 +146,26 @@ This is the prompt content for Gemini's extraction system prompt for `domain: "s
 - **Schools spanning grade transitions:** `Lanier Middle School` and `Lanier High School` are different PRIMARIES (different institutions) even when the same child attends both. Don't auto-merge across grade-level boundaries.
 - **Activity platforms with multiple teams:** TeamSnap covering soccer + lacrosse + basketball is ONE SECONDARY (the platform), with `associatedPrimaryIds` linking it to all relevant PRIMARIES. Team-specific content surfaces in case discriminators, not separate SECONDARIES.
 - **Drag-drop regrouping UI:** mentioned as planned but deferred. When it lands, it's part of the user-tuning/learning loop (see `feedback_core_product_loop.md` and `project_learning_loop_needed.md`).
+
+## 9. Implementation pointers
+
+Procedural detail (exact Gmail queries, keyword lists, regex patterns, Levenshtein thresholds, top-N counts, fetch batch sizes) lives in code — see the files below. When implementation diverges from spec goals, the fix lands in the implementation; when the goals themselves change, this document is the source of truth that gets edited, reviewed, and dated.
+
+| Goal | Implementation |
+|---|---|
+| Stage 1 orchestration | `apps/web/src/lib/discovery/stage1-orchestrator.ts` |
+| Stage 1 compounding-signal scoring | `packages/engine/src/discovery/score-domain-candidates.ts` |
+| Stage 1 / 2 public-provider veto | `packages/engine/src/discovery/public-providers.ts` |
+| Stage 1 / 2 platform denylist | `packages/engine/src/discovery/platform-denylist.ts` |
+| Stage 1 Inngest wiring | `apps/web/src/lib/inngest/domain-discovery-fn.ts` |
+| Stage 2 entity discovery + short-circuit + public-provider scoping | `apps/web/src/lib/discovery/entity-discovery.ts` |
+| Stage 2 paired-who resolver | `apps/web/src/lib/discovery/paired-who-resolver.ts` |
+| Stage 2 candidate scoring | `packages/engine/src/discovery/score-entity-candidates.ts` |
+| §5 alias-prohibition enforcement | `packages/engine/src/discovery/spec-validators.ts` |
+| Persistence + last-chance §5 gate | `apps/web/src/lib/services/interview.ts::persistConfirmedEntities` |
+| Review-screen component | `apps/web/src/components/onboarding/phase-entity-confirmation.tsx` |
+| Feed chip row | `apps/web/src/components/feed/topic-chips.tsx` + `apps/web/src/app/api/feed/route.ts` |
+| Tunables (thresholds, batch sizes, SLAs) | `apps/web/src/lib/config/onboarding-tunables.ts` |
+| Stage 2 algorithm dispatch | `apps/web/src/lib/config/domain-shapes.ts` (`stage2Algorithm`) |
+
+Eval harness: `apps/web/scripts/eval-onboarding.ts` exercises the full path end-to-end against fixture email data in `denim_samples_individual/`.

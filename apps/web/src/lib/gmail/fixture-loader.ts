@@ -4,7 +4,7 @@
  *
  * Usage:
  *   import { loadFixtures } from "@/lib/gmail/fixture-loader";
- *   const emails = loadFixtures("../../Denim_Samples_Individual");
+ *   const emails = loadFixtures("../../denim_samples_individual");
  */
 
 import { readdirSync, readFileSync } from "node:fs";

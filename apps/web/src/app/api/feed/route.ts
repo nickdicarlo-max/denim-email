@@ -18,7 +18,15 @@ export const GET = withAuth(async ({ userId, request }) => {
         summaryLabels: true,
         entities: {
           where: { isActive: true, type: "PRIMARY" },
-          select: { id: true, name: true },
+          // Phase 3 — surface origin + discoveryScore so the chip row can
+          // render user hints first (origin=USER_HINT) and confirmed
+          // discoveries second (everything else, sorted by discoveryScore).
+          select: {
+            id: true,
+            name: true,
+            origin: true,
+            discoveryScore: true,
+          },
         },
       },
     });
@@ -166,14 +174,36 @@ export const GET = withAuth(async ({ userId, request }) => {
         id: e.id,
         name: e.name,
         caseCount: schemaCases.filter((c) => c.entityId === e.id).length,
+        origin: e.origin,
+        discoveryScore: e.discoveryScore,
       }));
+      // Phase 3 chip-row ordering:
+      //   1. User hints first (origin=USER_HINT) — these are the WHATs the
+      //      user typed and represent ground truth.
+      //   2. Confirmed discoveries second — sort by discoveryScore desc,
+      //      then caseCount desc, then name asc for stability.
+      // Sort is stable so within each tier the original order is preserved.
+      const userHints = entityCounts.filter((e) => e.origin === "USER_HINT");
+      const discoveries = entityCounts
+        .filter((e) => e.origin !== "USER_HINT")
+        .sort((a, b) => {
+          const sa = a.discoveryScore ?? 0;
+          const sb = b.discoveryScore ?? 0;
+          if (sa !== sb) return sb - sa;
+          if (a.caseCount !== b.caseCount) return b.caseCount - a.caseCount;
+          return a.name.localeCompare(b.name);
+        });
 
       return {
         id: s.id,
         name: s.name,
         domain: s.domain,
         caseCount: schemaCases.length,
-        entities: entityCounts,
+        // Legacy `entities` kept for backward compatibility with existing
+        // consumers; new consumers should read `hintEntities` + `discoveryEntities`.
+        entities: [...userHints, ...discoveries],
+        hintEntities: userHints,
+        discoveryEntities: discoveries,
       };
     });
 

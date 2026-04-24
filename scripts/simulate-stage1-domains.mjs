@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const SAMPLES_DIR = 'Denim_Samples_Individual';
+const SAMPLES_DIR = 'denim_samples_individual';
 
 const KEYWORDS = [
   'invoice', 'scope', 'deliverable', 'review', 'deck',

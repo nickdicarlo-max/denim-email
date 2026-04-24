@@ -29,11 +29,13 @@ import type {
   FrequencyTable,
   QualityPhaseType,
 } from "@denim/types";
+import type { Prisma } from "@prisma/client";
 import { callClaude } from "@/lib/ai/client";
 import { logAICost } from "@/lib/ai/cost-tracker";
 import { logger } from "@/lib/logger";
 import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
+import { resolveByThreadAdjacency } from "@/lib/services/thread-adjacency";
 
 interface ClusterResult {
   clusterIds: string[];
@@ -136,12 +138,88 @@ async function coarseClusterImpl(
       date: true,
       senderEntityId: true,
       entityId: true,
+      candidatePrimaryIds: true,
       senderDisplayName: true,
       senderEmail: true,
       detectedEntities: true,
     },
     orderBy: { date: "asc" },
   });
+
+  // 2a. #130 thread-adjacency disambiguation.
+  //
+  // Extraction Stage 5 sets `candidatePrimaryIds` on emails where the sender
+  // is a known SECONDARY linked to multiple PRIMARIES and no content match
+  // disambiguated (e.g. Amy DiCarlo's generic school blast with Lanier /
+  // Stagnes / St Agnes / Dance all associated). These emails have
+  // entityId=null. For each one, if a sibling email in the same threadId
+  // has already landed on exactly one of the candidate primaries, adopt
+  // that primary for this email too. Persist the resolution so re-runs and
+  // downstream writers see consistent state.
+  const orphansNeedingAdjacency = unclusteredEmails.filter(
+    (e) =>
+      e.entityId === null &&
+      Array.isArray(e.candidatePrimaryIds) &&
+      (e.candidatePrimaryIds as string[]).length > 0,
+  );
+
+  if (orphansNeedingAdjacency.length > 0) {
+    const threadIds = [...new Set(orphansNeedingAdjacency.map((e) => e.threadId))];
+    const threadSiblings = await prisma.email.findMany({
+      where: {
+        schemaId,
+        threadId: { in: threadIds },
+        entityId: { not: null },
+      },
+      select: { threadId: true, entityId: true },
+    });
+
+    const resolutions = resolveByThreadAdjacency(
+      orphansNeedingAdjacency.map((o) => ({
+        id: o.id,
+        threadId: o.threadId,
+        candidatePrimaryIds: o.candidatePrimaryIds as string[],
+      })),
+      threadSiblings.filter(
+        (s): s is { threadId: string; entityId: string } => s.entityId !== null,
+      ),
+    );
+
+    if (resolutions.length > 0) {
+      await prisma.$transaction(
+        resolutions.map((r) =>
+          prisma.email.update({
+            where: { id: r.emailId },
+            data: {
+              entityId: r.entityId,
+              candidatePrimaryIds: [] as unknown as Prisma.InputJsonValue,
+              routingDecision: {
+                method: "thread_adjacency",
+                detail: `Adopted primary ${r.entityId} via thread-adjacency disambiguation (#130)`,
+              } as Prisma.InputJsonValue,
+            },
+          }),
+        ),
+      );
+      logger.info({
+        service: "cluster",
+        operation: "threadAdjacency.resolved",
+        schemaId,
+        orphansConsidered: orphansNeedingAdjacency.length,
+        resolved: resolutions.length,
+      });
+
+      // Apply resolutions to the in-memory list so the clusterer sees the
+      // adopted entityId without a re-load.
+      const resolvedById = new Map(resolutions.map((r) => [r.emailId, r.entityId]));
+      for (const e of unclusteredEmails) {
+        const newId = resolvedById.get(e.id);
+        if (newId) {
+          e.entityId = newId;
+        }
+      }
+    }
+  }
 
   if (unclusteredEmails.length === 0) {
     logger.info({
@@ -788,6 +866,7 @@ async function aiCaseSplit(
         inputTokens: aiResult.inputTokens,
         outputTokens: aiResult.outputTokens,
         latencyMs: aiResult.latencyMs,
+        fromCache: aiResult.fromCache,
       },
       {
         emailId: clusters[0]?.emailSamples[0]?.id ?? "unknown",
@@ -1495,6 +1574,7 @@ export async function applyCalibration(schemaId: string, scanJobId?: string): Pr
         inputTokens: aiResult.inputTokens,
         outputTokens: aiResult.outputTokens,
         latencyMs: aiResult.latencyMs,
+        fromCache: aiResult.fromCache,
       },
       {
         emailId: "calibration",

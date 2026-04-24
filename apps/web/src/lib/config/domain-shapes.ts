@@ -1,16 +1,33 @@
 // Runtime configuration derived from docs/domain-input-shapes/<domain>.md.
-// Phase 5's spec-compliance test enforces byte-level sync between this file
-// and the Stage 1 keyword lists + Stage 2 rule selectors in the spec files.
-// DO NOT edit the values here without updating the spec file first.
+//
+// 2026-04-23: Stage 1 no longer consumes `stage1Keywords` as a Gmail query
+// driver. The hint-anchored compounding-signal scorer in
+// `@denim/engine/discovery/score-domain-candidates` replaced the
+// shape-keyword OR-search. These keyword lists and `stage1TopN` are
+// retained as Stage 2 prompt decoration and domain-shape metadata (the
+// Gemini subject-pass passes `schemaDomain` into the prompt; tests still
+// assert the shape is stable). Per the `specs describe goals, not
+// procedures` editorial rule, these values will eventually move entirely
+// into tunables and the spec files will describe only the WHAT.
 
 export type DomainName = "property" | "school_parent" | "agency";
 export type Stage2Algorithm = "property-address" | "school-two-pattern" | "agency-domain-derive";
 
 export interface DomainShape {
   domain: DomainName;
-  // Stage 1: subject keyword list used to build the Gmail metadata query
+  /**
+   * Legacy field — previously drove the Stage 1 subject-keyword OR-search.
+   * NOT used by Stage 1 anymore (see the orchestrator in
+   * `apps/web/src/lib/discovery/stage1-orchestrator.ts`). Kept as Stage 2
+   * prompt-context hints and for domain-metadata tests; will be removed
+   * when Phase 3.5 refactors the domain-input-shapes specs.
+   */
   stage1Keywords: readonly string[];
-  // Stage 1: how many top candidate domains to return (property=3, school=5, agency=5)
+  /**
+   * Legacy field — previously capped the Stage 1 top-N domain aggregation.
+   * NOT used anymore; the new compounding-signal scorer returns every
+   * candidate that clears the score threshold.
+   */
   stage1TopN: number;
   // Stage 2: which algorithm variant to dispatch
   stage2Algorithm: Stage2Algorithm;

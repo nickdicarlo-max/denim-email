@@ -61,7 +61,10 @@ docs/test-results/*.json
 
 # === EVAL FIXTURES ===
 # Real email exports (Gmail API JSON) — contains personal data
-Denim_Samples_Individual/
+denim_samples_individual/
+
+# AI response cache for eval runs (content-hashed Claude/Gemini responses)
+.eval-cache/
 
 # === TEST ARTIFACTS ===
 coverage/

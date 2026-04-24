@@ -1,5 +1,5 @@
-import type { FromHeaderResult } from "./gmail-metadata-fetch";
 import { isPublicProvider } from "./public-providers";
+import type { FromHeaderResult } from "./types";
 
 export interface DomainCandidate {
   domain: string;
@@ -21,6 +21,10 @@ function extractDomain(fromHeader: string): string {
     .toLowerCase();
 }
 
+/**
+ * Group `From:` headers by sender domain, drop public providers and the
+ * user's own domain, return the top-N by frequency.
+ */
 export function aggregateDomains(
   rows: FromHeaderResult[],
   opts: AggregateOptions,

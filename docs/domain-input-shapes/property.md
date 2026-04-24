@@ -8,11 +8,11 @@
 >
 > Onboarding is a 3-stage flow modeled on **The Control Surface** (Nick's other product, NOT this repo):
 >
-> 1. **Domain confirmation (~5 sec)** — Gmail `format: 'metadata'` query with a per-domain keyword list, parallel `Promise.all` of ~500 From-header fetches, group by sender domain, drop generic providers (`@gmail.com` etc.), top 3. **Zero AI.** Pure regex + counting. User confirms the relevant domain(s).
-> 2. **Entity confirmation (~6 sec)** — `from:*@<confirmed-domain>` query in parallel, regex-extract entity shapes from subjects, Levenshtein dedup, top 20. **Zero AI.** User confirms entities.
-> 3. **Deep scan (~5 min, background)** — Gemini extraction + Claude clustering + case synthesis on confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
+> 1. **Domain confirmation (~5 sec)** — Surface candidate sender domains where multiple signals (user hints, paired-WHO triangulation, sender volume in the lookback window) indicate the user actively corresponds about this schema's topic. **Zero AI in this hot path.** User confirms which domains are relevant.
+> 2. **Entity confirmation (~6 sec)** — Produce the PRIMARY entities the user should track for each confirmed domain. Short-circuit when the pairing is unambiguous (single paired WHO + single paired WHAT); use semantic entity extraction otherwise. Every candidate must pass the per-domain §5 alias-prohibition rules. User confirms the list.
+> 3. **Deep scan (~5 min, background)** — Extract, cluster, and synthesize cases on the confirmed scope. The user is no longer waiting at the empty progress screen — they're already invested.
 >
-> The per-domain spec files specify what makes Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.**
+> The per-domain spec files specify the GOALS that make Stages 1, 2, and 3 work for each domain. **Speed is non-negotiable for Stages 1 and 2.** Procedures (exact Gmail queries, keyword lists, regex, thresholds, top-N counts) live in code and tunables — see each file's §9 Implementation pointers.
 >
 > ### The 6 principles
 >
@@ -48,83 +48,44 @@ The user manages multiple physical properties — properties they own, manage, o
 
 **Source-of-truth pointer:** `apps/web/src/components/interview/domain-config.ts` (the `DOMAIN_CONFIGS.property` block). Copy is currently aligned with this spec; future copy edits there should round-trip back to this file.
 
-## 3. Stage 1 — Domain Discovery (~5 sec)
+## 3. Stage 1 — Domain Confirmation
 
-Discovers the property-management business that handles the user's properties. In ~80% of cases the user receives mail from one or two professional property-management companies (e.g., `@judgefite.com`); in the remaining cases the user IS the property manager and the WHO discovery surfaces tenant/vendor domains.
+**Goal.** Surface the property-management business(es) handling the user's properties. In ~80% of cases one or two professional PM companies (e.g., `@judgefite.com`) dominate the user's inbox traffic for this schema; in the remaining cases the user IS the PM and Stage 1 surfaces tenant/vendor domains via paired-WHO triangulation.
 
-**Gmail query (`format: 'metadata'`, last 12 months, exclude promotions):**
+**Signals that should produce candidates (positive):**
+- A user-typed WHO whose `from:` search resolves to a non-generic domain (paired WHO → +3, solo WHO → +1).
+- A user-typed WHAT whose quoted full-text search converges on a non-generic domain (+2 first hit, +1 each additional convergence).
+- Multiple hints landing on the same domain compound the score.
 
-```
-subject:("invoice" OR "repair" OR "leak" OR "rent" OR "balance" OR "statement"
-  OR "application" OR "marketing" OR "lease" OR "estimate" OR "inspection"
-  OR "work order" OR "renewal") -category:promotions after:{12_months_ago}
-```
+**Signals that must NOT produce candidates (veto):**
+- Generic provider domains (`gmail.com`, `yahoo.com`, `outlook.com`, `icloud.com`, etc.) at the domain level — when a confirmed WHO lives at a public provider, Stage 2 scopes to `from:<specific>@provider` instead.
+- The user's own domain.
+- Platform / SaaS notification domains (GitHub, Twilio, Stripe, FloSports, newsletter relays, SES / Mailchimp / Substack — see the platform denylist in code).
+- Any domain whose hint-matched messages volunteer `List-Unsubscribe` headers in majority (treated as newsletter source).
 
-Source: ported verbatim from `GMAIL_CONFIG.MARKETING_KEYWORDS` in The Control Surface (`constants.ts:447`).
+**Threshold.** A candidate must clear `MIN_SCORE_THRESHOLD` (multiple signals must align, per master plan §7 principle #4). User confirmation at the review screen is the terminal gate; non-confirmed candidates are not entities.
 
-**Fetch shape:**
-- Up to 500 messages, single `Promise.all` batch of `From`-header fetches
-- No body reads, no AI calls
-- Total wall: target <5 sec for 500 messages on a normal connection
+**SLA.** < 5 seconds wall-clock. **Zero AI in the hot path** (principle #6).
 
-**Aggregation:**
-- Group by sender domain (after `@`)
-- Drop generic providers from the `PUBLIC_PROVIDERS` list (`@gmail.com`, `@yahoo.com`, `@outlook.com`, `@icloud.com`, etc. — see Control Surface `constants.ts:559`)
-- Sort by message count, return top 3
-- Cross-check against the `PropertyManager` table for "verified by N owners" social proof if it ever lands in this codebase (currently doesn't exist; Control Surface convention)
+**Confirmation UI.** Show scored candidate domains; let the user confirm 0+ (zero is valid — the user may be the PM themselves, in which case Stage 2 can run a self-search fallback). Review copy must match §2 Onboarding UI Copy verbatim.
 
-**Confirmation UI:**
-- Show top 3 candidate domains with email counts
-- "This is my property manager" / "I am the property manager" toggle per domain
-- User confirms 0+ domains (zero is valid — they go straight to Stage 2 with a `from:me@<userdomain>` self-search instead)
+## 4. Stage 2 — Entity Confirmation
 
-## 4. Stage 2 — Entity Discovery (~6 sec)
+**Goal.** For each confirmed Stage-1 domain, produce the candidate PRIMARY entities (properties) the user should track. The user's typed addresses are already PRIMARIES; Stage 2's job is to validate them against the inbox corpus AND surface adjacent properties the user owns but didn't type — per master plan §7 principle #5 (Seeded-WHO → discovered-PRIMARY).
 
-Given the confirmed Stage-1 domain (or self-search fallback), extract candidate property entities from subjects.
+**Three per-domain paths:**
 
-**Gmail query (`format: 'metadata'`, last 12 months):**
+1. **Short-circuit (04-22 Layer 1).** When exactly one sender email is confirmed at the domain AND that sender pairs with exactly one user WHAT, skip semantic extraction entirely and emit one synthetic PRIMARY = the paired WHAT.
+2. **Public-provider scoping (04-22 Layer 2).** When the confirmed domain is a generic provider (e.g., the user's realtor emails from `@gmail.com`), Stage 2 queries `from:<specific>@provider` — never `from:*@provider`.
+3. **Hint-anchored semantic extraction.** On a confirmed anchor domain (non-generic provider, multiple paired WHOs / WHATs), extract candidate PRIMARIES from the subject corpus. Filter newsletters (`-category:promotions` + `List-Unsubscribe` drop). Score each candidate with compounding signals (hint token match, confirmed-WHO sender, recurrence). Reject any that violate §5 alias-prohibition rules (see the table below — no single-word fragments, bare numbers, generic phrases, street-type-alone, or engagement/case fragments).
 
-```
-from:*@<confirmed_domain> after:{12_months_ago}
-```
+**What makes a PRIMARY surface:**
+- Addresses the user typed as WHATs (always — even when Gemini expands `"3910 Bucknell"` → `"3910 Bucknell Drive"`, token overlap treats it as `USER_HINT` origin).
+- Adjacent addresses in the anchor domain's corpus that pass §5 rules (origin = `STAGE2_GEMINI`). These let the user discover properties they forgot to type.
 
-Or for public-provider Stage 1 results:
+**SLA.** < 6 seconds wall-clock per confirmed domain (fan-out in parallel).
 
-```
-from:<specific_email_address> after:{12_months_ago}
-```
-
-**Fetch shape:**
-- Up to 500 messages, batched 40 at a time in parallel (`MARKETING_BATCH_SIZE`)
-- Headers only, no bodies
-- Wall: target <6 sec for 500 messages
-
-**Entity-shape regex (subjects only):**
-
-```regex
-/\b(\d{3,5})\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)\b/g
-```
-
-Captures address-shaped tokens like `1906 Crockett`, `2310 Healey Dr`, `205 Freedom Trail`, `851 Peavy`.
-
-**False-positive guards:**
-- Numbers in `2000-2030` are treated as years and dropped (calendar/lease references, NOT addresses)
-
-**Dedup (Levenshtein):**
-- Group candidates that share a house number
-- Within each group, compare display string with Levenshtein distance
-- Threshold 1 for short street names (≤6 chars), threshold 2 for longer
-- "2310 healey" merges into "2310 Healey Dr" (the higher-frequency or fuller spelling wins)
-
-**Result shape:**
-- Top 20 deduped candidates by frequency
-- Each carries an `autoFixed` flag if Levenshtein-merged, so UI can show what was unified
-- User checks/unchecks; result is the locked entity set for the deep scan
-
-**Confirmation UI:**
-- Per Stage-1-confirmed domain, show 20 candidate addresses with email counts
-- Inline edit (rename) and merge affordances
-- "Add another property" free-text fallback for missed entities
+**Confirmation UI.** Per confirmed domain, show the candidate list with origin attribution (`From your input` vs `Denim found this`) + merge affordances. Inline edit lets the user rename or reject.
 
 ## 5. PRIMARY (WHAT) Entity Table
 
@@ -168,3 +129,26 @@ This is the prompt content that ships into Gemini's extraction system prompt for
 - **Owner-occupied properties:** if the user lives in a property they also manage, mortgage and homeowner-insurance email about that property is in-scope (it's a managed property). Mortgage email about a separate non-schema home is out-of-scope.
 - **Vacant/under-renovation properties:** still PRIMARIES even if the inbox traffic is contractor-only. The CASE timeline reflects the renovation; the PRIMARY persists.
 - **Past properties (sold/divested):** PRIMARY remains for historical reference but no new emails should arrive. Future UX may add an `archived` flag — out of scope for Phase 1.
+
+## 9. Implementation pointers
+
+Procedural detail (exact Gmail queries, keyword lists, regex patterns, Levenshtein thresholds, top-N counts, fetch batch sizes) lives in code — see the files below. When implementation diverges from spec goals, the fix lands in the implementation; when the goals themselves change, this document is the source of truth that gets edited, reviewed, and dated.
+
+| Goal | Implementation |
+|---|---|
+| Stage 1 orchestration | `apps/web/src/lib/discovery/stage1-orchestrator.ts` |
+| Stage 1 compounding-signal scoring | `packages/engine/src/discovery/score-domain-candidates.ts` |
+| Stage 1 / 2 public-provider veto | `packages/engine/src/discovery/public-providers.ts` |
+| Stage 1 / 2 platform denylist | `packages/engine/src/discovery/platform-denylist.ts` |
+| Stage 1 Inngest wiring | `apps/web/src/lib/inngest/domain-discovery-fn.ts` |
+| Stage 2 entity discovery | `apps/web/src/lib/discovery/entity-discovery.ts` |
+| Stage 2 paired-who resolver | `apps/web/src/lib/discovery/paired-who-resolver.ts` |
+| Stage 2 candidate scoring | `packages/engine/src/discovery/score-entity-candidates.ts` |
+| §5 alias-prohibition enforcement | `packages/engine/src/discovery/spec-validators.ts` |
+| Persistence + last-chance §5 gate | `apps/web/src/lib/services/interview.ts::persistConfirmedEntities` |
+| Review-screen component | `apps/web/src/components/onboarding/phase-entity-confirmation.tsx` |
+| Feed chip row | `apps/web/src/components/feed/topic-chips.tsx` + `apps/web/src/app/api/feed/route.ts` |
+| Tunables (thresholds, batch sizes, SLAs) | `apps/web/src/lib/config/onboarding-tunables.ts` |
+| Stage 2 algorithm dispatch | `apps/web/src/lib/config/domain-shapes.ts` (`stage2Algorithm`) |
+
+Eval harness: `apps/web/scripts/eval-onboarding.ts` exercises the full path end-to-end against fixture email data in `denim_samples_individual/`.

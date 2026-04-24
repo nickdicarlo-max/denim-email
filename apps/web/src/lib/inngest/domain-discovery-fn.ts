@@ -10,12 +10,7 @@
  */
 
 import { type EntityGroupInput, extractCredentialFailure } from "@denim/types";
-import type { DomainName } from "@/lib/config/domain-shapes";
-import { discoverDomains } from "@/lib/discovery/domain-discovery";
-import {
-  discoverUserNamedContacts,
-  discoverUserNamedThings,
-} from "@/lib/discovery/user-hints-discovery";
+import { discoverStage1Candidates } from "@/lib/discovery/stage1-orchestrator";
 import { GmailClient } from "@/lib/gmail/client";
 import { getAccessToken } from "@/lib/gmail/credentials";
 import { logger } from "@/lib/logger";
@@ -69,25 +64,20 @@ export const runDomainDiscovery = inngest.createFunction(
             const whos = inputs?.whos ?? [];
             const groups = inputs?.groups ?? [];
 
-            // #112/#117: keyword-domain pass + per-who pass run in parallel.
-            // Per-what pass waits for the per-who results so paired WHATs can
-            // attribute their topDomain from the corresponding WHO's result
-            // (#117). Small wall-clock cost only when the user has WHOs — if
-            // `whos` is empty, `userContacts` resolves to `[]` immediately
-            // and the pairing path is a no-op.
-            const [domains, userContacts] = await Promise.all([
-              discoverDomains({
-                gmailClient: gmail,
-                domain: schema.domain as DomainName,
-                userDomain,
-              }),
-              discoverUserNamedContacts(gmail, whos),
-            ]);
-            const userThings = await discoverUserNamedThings(gmail, whats, userDomain, {
-              whoResults: userContacts,
+            // 2026-04-23 rewrite: Stage 1 is now hint-anchored with
+            // compounding-signal scoring. The generic domain-shape keyword
+            // OR-search was deleted — it violated principle #4 by allowing
+            // single-signal inclusion. `discoverStage1Candidates` runs the
+            // WHO + WHAT hint searches, triangulates via paired groups
+            // (#117), and returns scored domain candidates that cleared the
+            // compounding-signal threshold.
+            return discoverStage1Candidates({
+              gmailClient: gmail,
+              userDomain,
+              whats,
+              whos,
               groups,
             });
-            return { ...domains, userThings, userContacts };
           },
         });
       });
@@ -103,8 +93,17 @@ export const runDomainDiscovery = inngest.createFunction(
 
       await step.run("persist-and-advance", async () => {
         await writeStage1Result(schemaId, {
-          candidates: result.candidates,
-          queryUsed: result.queryUsed,
+          candidates: result.candidates.map((c) => ({
+            domain: c.domain,
+            score: c.score,
+            signals: c.signals,
+            hintsMatched: c.hintsMatched,
+            ...(c.pairedWho ? { pairedWho: c.pairedWho } : {}),
+            count: c.score,
+          })),
+          // No single Gmail query drives Stage 1 anymore — record a summary
+          // of the hint queries dispatched for traceability.
+          queryUsed: `hint-anchored: ${result.userThings.length} WHAT, ${result.userContacts.length} WHO`,
           messagesSeen: result.messagesSeen,
           errorCount: result.errorCount,
           userThings: result.userThings,

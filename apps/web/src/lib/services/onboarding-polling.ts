@@ -56,7 +56,16 @@ export interface OnboardingError {
 
 export interface Stage1CandidateDTO {
   domain: string;
+  /** Backward-compat alias for `score`. New UI code should read `score`. */
   count: number;
+  /** Compounding-signal total score (2026-04-23 rewrite). */
+  score?: number;
+  /** Named positive/negative signals that produced the score. */
+  signals?: ReadonlyArray<string>;
+  /** User WHAT hints that converged on this domain. */
+  hintsMatched?: ReadonlyArray<string>;
+  /** When a paired-WHO search sourced this candidate, the WHO's typed name. */
+  pairedWho?: string;
 }
 
 /** #112: per-user-what find-or-tell result surfaced on Stage 1 review. */
@@ -118,10 +127,18 @@ export interface OnboardingPollingResponse {
   stage1UserContacts?: Stage1UserContactDTO[];
   // Present during DISCOVERING_ENTITIES / AWAITING_ENTITY_CONFIRMATION.
   stage2Candidates?: Stage2PerDomainDTO[];
-  // #127: interview inputs surfaced while the schema is in a rewind-eligible
-  // phase so the `/onboarding/names` edit screen can pre-fill without a
-  // second endpoint. Omitted past AWAITING_DOMAIN_CONFIRMATION — past that
-  // the rewind path is blocked, so the UI has no reason to read inputs.
+  /**
+   * Phase 5 (2026-04-23) — list of user-typed WHO queries that the user
+   * confirmed on the Stage 1 review screen. The by-WHAT confirm UI uses
+   * this to pre-tick SECONDARY rows under their paired WHAT sections.
+   * Present during DISCOVERING_ENTITIES / AWAITING_ENTITY_CONFIRMATION.
+   */
+  stage1ConfirmedUserContactQueries?: string[];
+  // #127 / Phase 5: interview inputs surfaced while the schema is in a
+  // rewind-eligible phase so the `/onboarding/names` edit screen can
+  // pre-fill, AND during Stage 2 entity confirmation so the by-WHAT UI
+  // can section by `inputs.whats` and render paired WHOs from
+  // `inputs.groups`.
   inputs?: InterviewInput;
 }
 
@@ -250,11 +267,23 @@ export async function derivePollingResponse(
 
   // Issue #95 Stage 2 — entity discovery running or awaiting user confirm.
   // Surface per-domain candidates for the entity review screen.
+  //
+  // Phase 5 (2026-04-23): also surface `inputs`, `stage1UserThings`,
+  // `stage1UserContacts`, and `stage1ConfirmedUserContactQueries` so the
+  // by-WHAT confirm UI can (a) section by user-typed WHATs, (b) show
+  // zero-match "not found" states per the #112 find-or-tell contract,
+  // (c) pre-tick SECONDARY rows under their paired WHAT, and (d) fall
+  // back to by-domain layout when `inputs.groups` is empty.
   if (schema.phase === "DISCOVERING_ENTITIES" || schema.phase === "AWAITING_ENTITY_CONFIRMATION") {
     return {
       ...base,
       phase: schema.phase,
       stage2Candidates: (schema.stage2Candidates as Stage2PerDomainDTO[] | null) ?? [],
+      stage1UserThings: (schema.stage1UserThings as Stage1UserThingDTO[] | null) ?? [],
+      stage1UserContacts: (schema.stage1UserContacts as Stage1UserContactDTO[] | null) ?? [],
+      stage1ConfirmedUserContactQueries:
+        (schema.stage1ConfirmedUserContactQueries as string[] | null) ?? [],
+      ...(schema.inputs ? { inputs: schema.inputs as unknown as InterviewInput } : {}),
     };
   }
 

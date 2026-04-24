@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPublicProvider, PUBLIC_PROVIDERS } from "../public-providers";
+import { isPublicProvider, PUBLIC_PROVIDERS } from "../discovery/public-providers";
 
 describe("public-providers", () => {
   it("recognizes gmail", () => {

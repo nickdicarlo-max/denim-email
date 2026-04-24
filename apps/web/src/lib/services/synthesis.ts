@@ -479,6 +479,7 @@ async function synthesizeCaseImpl(
       inputTokens: aiResult.inputTokens,
       outputTokens: aiResult.outputTokens,
       latencyMs: aiResult.latencyMs,
+      fromCache: aiResult.fromCache,
     },
     {
       emailId: emails[0].id,

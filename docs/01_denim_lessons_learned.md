@@ -329,7 +329,7 @@ The domain-aggregation result is the one that matters. Stage 1's job is not to m
 **The validation workflow** (applied to the agency list, re-usable for every future domain):
 
 1. **Collect an oracle.** A small list of senders the user confirms are in-scope for the domain. For agency, Nick named 3 addresses across 2 client domains. The oracle does not need to be large; it needs to be ground truth.
-2. **Collect a realistic inbox sample.** The `Denim_Samples_Individual/` folder holds 417 Gmail JSON files (`payload.headers`, `payload.parts[].body.data` as UTF-8 byte arrays, `labelIds`). Gitignored — local-only, because it contains real PII.
+2. **Collect a realistic inbox sample.** The `denim_samples_individual/` folder holds 417 Gmail JSON files (`payload.headers`, `payload.parts[].body.data` as UTF-8 byte arrays, `labelIds`). Gitignored — local-only, because it contains real PII.
 3. **Per-sender recall script.** Walks the sample, filters to the oracle senders, counts per-keyword subject matches against each sender's emails. Reports N/N matched, top keywords, and a list of *missed* subjects so the reviewer can eyeball what vocabulary is absent. The miss list is where the signal comes from — it reveals the gap between drafted and observed vocabulary in a glance.
 4. **Stage 1 aggregation simulation.** Walks the sample with the full Stage 1 filter chain applied (`-category:promotions`, drop `PUBLIC_PROVIDERS`, drop user's own domain), groups keyword-matching emails by sender domain, reports top-10 domains by filtered count, and reports the **rank** of the target domains. This is the question that actually matters: does the domain land in top-5?
 
@@ -510,6 +510,161 @@ The cost (~2 minutes of parallel dispatch + ~5 minutes of reading the returns) i
 
 ---
 
+## 2026-04-22: Eval-harness surfaced four latent bugs that tests missed
+
+**Context:** Built the onboarding eval harness this session (`apps/web/scripts/eval-onboarding.ts`) to drive Stage 1 + Stage 2 + full synthesis against the 417-email `denim_samples_individual/` corpus through the REAL production service functions (via `FixtureGmailClient` + `AI_RESPONSE_CACHE=fixture`). First run exposed four production bugs the 309-test suite didn't catch. All four are class-instances of patterns already in this document — but each instance required the eval to surface it.
+
+### Bug 9: `UPDATE "Entity"` in raw SQL — wrong physical table name
+
+**Symptom:** First Part B run (synthesis) threw `Raw query failed. Code: 42P01. Message: relation "Entity" does not exist` from `persistConfirmedEntities` (`apps/web/src/lib/services/interview.ts:1193`). Every user who has confirmed an entity through `/entity-confirm` where any SECONDARY has a resolved senderEmail alias would have hit this.
+
+**Root cause:** `prisma/schema.prisma` has `model Entity { ... @@map("entities") }` — the physical table name is `entities` (snake_cased). The raw `$executeRaw` alias-merge path used `UPDATE "Entity"` (PascalCase model name). PostgreSQL with quoted identifiers is case-sensitive, so the query looked for a table literally named `Entity` that doesn't exist.
+
+**Why tests missed it:** The only test that triggers the `$executeRaw` branch would need a SECONDARY entity with aliases, and the alias path is only populated for SECONDARY entities whose `identityKey` resolves to a Stage 1 `senderEmail` (#121). Integration-test fixtures haven't exercised that combination. Unit tests mock Prisma entirely. The bug is dormant under both.
+
+**Fix:** `UPDATE "Entity"` → `UPDATE "entities"` at `interview.ts:1193`. One-character column swap.
+
+**Rule exposed:** **Every `$executeRaw` / `$queryRaw` against a Prisma model must use the physical table name from `@@map`, not the model name.** Prisma silently renames everywhere else; raw SQL is the only place you can drift. Grep pattern for preventive audit: for every `$executeRaw` or `$queryRaw` call in the codebase, check each quoted identifier against the `@@map` on the corresponding model in `schema.prisma`. Catch #12 in the Patterns list.
+
+### Discovery 14: Zod `.optional()` does NOT accept explicit `null`
+
+**Symptom:** Stage 2 eval for agency schema: the portfolioproadvisors.com Gemini call returned 5 candidate entities, all with non-empty names and frequencies. The Zod parse at the trust boundary rejected the entire response (`schemaInvalid` error log, 11 issues). All 5 entities silently dropped. The entity-confirm screen showed "We didn't find specific things inside portfolioproadvisors.com" — invisible to the user, who just saw an empty cluster.
+
+**Root cause:** `entity-discovery.ts:76-77` defined `sourced_from_who: z.string().optional()` and `related_what: z.string().optional()`. Gemini, following the prompt, returned these fields as explicit `null` when the entity wasn't paired (as it should — the field was absent-by-value). Zod's `.optional()` accepts `undefined` OR absent fields, but rejects `null`. Every entity in the response had `null` for at least one of these fields → each one failed validation → the `safeParse` rejected the whole batch → `errorCount++` and empty candidates returned.
+
+**Why tests missed it:** `entity-discovery.ts` has no unit test that exercises a Gemini response with explicit `null` values. Fixture-based tests for parsers use hand-authored JSON that tends to omit optional fields rather than emit them as null. The bug only surfaces when the LLM follows the prompt literally.
+
+**Fix:** `z.string().optional()` → `z.string().nullable().optional()` on both fields.
+
+**Rule exposed:** **When Zod-parsing AI responses, optional string fields MUST be `.nullable().optional()` unless you can prove the model never emits explicit null.** LLM prompt compliance is not a guarantee — the model can and will return `null` where you expected `undefined`. Defensive pattern: for every AI response schema, any field that is optional at the semantic level uses `.nullable().optional()`. Same rule applies to enums, numbers, and arrays. The performance cost is zero; the coverage gain is real.
+
+**Preventive check:** grep every `packages/ai/src/parsers/` file and every `z.object(` near a `callClaude` / `callGemini` call for `.optional()` without an accompanying `.nullable()` on a field type that could conceivably be `null`. Add `.nullable()` unless the prompt explicitly requires absence-over-null.
+
+### Discovery 15: `FixtureGmailClient` query parser silently returned zero matches for production-shape queries
+
+**Symptom:** First Part A discovery run for school_parent: `Stage 1 done (428 ms) — 0 domain candidates`. But `scripts/validate-stage1-real-samples.ts` (which uses its own stub, bypassing FixtureGmailClient) produced 5 candidates with `email.teamsnap.com` at #1. Same corpus, same production code, different "Gmail client" — different answers.
+
+**Root cause:** `FixtureGmailClient.evaluateQuery` tokenized `from:`, `subject:`, quoted phrases, and `OR` — but broke on three query shapes the production Stage 1 query generator emits:
+1. **`subject:(A OR B OR C)`** — parenthesized field groups. The tokenizer advanced past `:` then consumed until the next space, taking `subject:("practice"` as a single token and leaving `OR "game")` etc. as stray words. Production query: `subject:("practice" OR "game" OR ... OR "guitar") -category:promotions newer_than:365d`.
+2. **`-category:promotions`** — negation. Treated as unquoted word, matched nothing.
+3. **`from:*@domain.com`** — wildcard. Treated as literal substring match.
+
+All three failures returned zero candidates silently — same shape as "no matching emails in corpus."
+
+**Why existing tests missed it:** FixtureGmailClient had unit tests for `searchEmails(query)` with simple queries. Stage 1's actual query generator emits compound queries that nothing exercised end-to-end. `validate-stage1-real-samples.ts` sidestepped the problem by using a hand-rolled stub that did keyword-matching directly against sample subjects — so it was giving correct answers using different logic than production.
+
+**Fix (landed this session):** Rewrote `tokenize` + `filterByToken` in `fixture-client.ts` to handle `subject:(...)` / `from:(...)` paren groups via a shared `expandFieldValues` helper, added negation support via a leading `-` branch, added `from:*@domain.com` wildcard handling, added `category:CATEGORY_NAME` + `label:NAME` filters.
+
+**Rule exposed:** **Every fake/mock of an external API must be exercised against a production-shape input before being trusted. A mock that silently returns zero results looks identical to a mock that correctly handles the query — there is no runtime error to catch.** The production query generator is the oracle: whatever query shapes it can emit, the fake must handle. When adding a new production query shape (or discovering a missing one via eval), add a test in the fake's suite that runs that shape and asserts non-zero results against the fixture corpus.
+
+**Coverage test template for fakes:**
+```ts
+it("handles the production Stage 1 query shape", () => {
+  const client = new FixtureGmailClient(realSamples);
+  const query = buildStage1Query("school_parent", 365);
+  const ids = await client.listMessageIds(query, 500);
+  expect(ids.length).toBeGreaterThan(0);  // smoke test
+});
+```
+Catch #13 in the Patterns list.
+
+### Discovery 16: Eval harness drifted from production Stage 2 fanout
+
+**Symptom:** After fixing Discovery 15, the agency eval produced domain candidates but the entity-confirm screen showed "Margaret Potter" (seeded WHO) as an `otter.ai` entity instead of a `portfolioproadvisors.com` one — even though `stage1UserContacts` correctly recorded `mpotter@portfolioproadvisors.com` with 9 matches. The user reviewing the screens flagged this as "surprising — I expected mpotter and gtrevino to surface under PPA."
+
+**Root cause:** The Inngest `runEntityDiscovery` function builds a `userSeedsByDomain` map AFTER calling `discoverEntitiesForDomain` and prepends those seeds to the per-domain candidate list. My first eval harness called `discoverEntitiesForDomain` directly and skipped the seed-prepend step. Divergence was invisible to the hard assertions (which check that WHOs appear in `stage1UserContacts`, not that they appear on the entity-confirm screen), but visible to the user on visual review.
+
+**Why this is Bug 1 / Bug 5 / Bug 6 all over again:** Same class as "test helper does work production path doesn't" — just applied to the eval harness. The harness inlined domain-specific orchestration logic that should have been a shared service-layer function. Eval harnesses ARE test infrastructure; the rule applies.
+
+**Fix (landed this session):** Extracted `buildStage2Context()` + `runStage2ForDomain()` + `runStage2Fanout()` into `apps/web/src/lib/services/stage2-fanout.ts`. The Inngest `runEntityDiscovery` shrank by ~120 lines and now calls these helpers; the eval harness calls them too. Single source of truth for seed-prepend + paired-WHO resolution + per-domain error handling. Zero behavior change — verified by rerun producing identical reports (cached, 15-23ms per domain).
+
+**Rule re-affirmed (fifth data point of this class, after Bugs 1 / 4 / 5 / 6):** **When an eval harness or test helper orchestrates production code, it must call the exact same entry-point functions the production path calls. If the only existing entry point is embedded in an Inngest function, a route handler, or a specific controller, extract the orchestration into a shared service module first — THEN have both call sites use it.** Do NOT inline the logic into the harness "because it's just a test" — that IS the trap.
+
+**Pattern template:** `stage2-fanout.ts` is the canonical example. Production-side: `runEntityDiscovery` loads its schema snapshot inside `step.run`, calls `buildStage2Context(schema)`, fans out `runStage2ForDomain(ctx, d, gmailClient)` inside per-domain `step.run`s. Harness-side: eval-onboarding loads the schema snapshot directly, calls the same `buildStage2Context`, calls `runStage2ForDomain` with a `FixtureGmailClient`. Both reach the same service function for anything non-trivial. The only thing each side owns independently is its own invocation mechanics (Inngest `step.run` boundaries vs. plain `Promise.all`).
+
+**Meta:** Discoveries 14-16 plus Bug 9 are the direct product of building the eval and running it against real corpus data. All four were in production code before this session; none would have been caught by the existing 309-test suite. **The eval harness is now the preventive-rigor layer for this class of bug.** Future additions to Stage 1 / Stage 2 / synthesis logic should re-run the three-schema eval before being considered done; the "did we just break something that only shows up under realistic input shapes" question has an answer now.
+
+---
+
+## 2026-04-23: User-typed names in `inputs.groups` drift from persisted entity names
+
+**Context:** Closing issue #130 step 7a — wiring `EntityGroup` + `Entity.groupId` + `Entity.associatedPrimaryIds` through `persistConfirmedEntities` so the Phase-2/3 confirm flow stops producing orphan entities. The extracted `linkEntityGroups` helper looked up entities by `inputs.groups[].whats[i]` / `whos[i]` against a `Map<name, entity>` built from the persisted rows. Unit tests passed. The first property eval (fresh schemaId `cmoc1dmur00008gqeyyd0anah`) revealed every SECONDARY had empty `associatedPrimaryIds` despite `groupId` being populated on all entities.
+
+### Discovery 17: Confirm-flow canonicalisation drifts entity names out from under stable-by-name lookups
+
+**Symptom:** Property schema post-run DB spot-check: Timothy / Vivek / Krystin (SECONDARIES) all had `"assoc_count": 0`. Expected: `[peavy_id, bucknell_id, healey_id]` on each (1:N pairing — one group with 3 addresses + 3 contacts). The `groupMemberAssignments` writes DID land (all entities had `groupId` set), so the helper was running, just failing to build a non-empty `primaryIdsInGroup` for the one group.
+
+**Root cause:** `inputs.groups` stores the user's original typed strings — `"851 Peavy"`, `"3910 Bucknell"`, `"2310 Healey"`. The confirm flow (eval's `autoConfirmEntitiesAndAdvance` mirroring the Gemini-augmented entity-confirm route) persists entities with canonicalised names — `"851 Peavy Road"`, `"3910 Bucknell Drive"`, `"2310 Healey Drive"`. Exact name lookup (`entityByName.get("851 Peavy")`) returns `undefined` → `primaryIdsInGroup` is empty → the `associatedPrimaryByFingerprint` block is skipped (requires BOTH primaries and secondaries non-empty) → no `associatedPrimaryIds` write fires. The SECONDARIES still got linked to their EntityGroup because the SECONDARY names happened to match exactly, but their associatedPrimaryIds denormalisation — the thing the scan pipeline actually reads at Stage 5 — was never written.
+
+**Why the existing unit tests missed it:** Every test fixture in `link-entity-groups.test.ts` used the same name as both the group entry AND the persisted entity (`{ whats: ["Lanier"] }` with a persisted entity named `"Lanier"`). That matches the legacy hypothesis flow (where `hypothesis.entities[i].name` feeds both `inputs.groups` and the persisted row). It does not match the Phase-2/3 confirm flow, which canonicalises on the way through.
+
+**Fix:** Added a tolerant `resolveByTypedName(typedName, expectedType)` inside the helper:
+1. Exact-name match on `entityByName` (fast path; legacy path + matching SECONDARIES stay at score 1000).
+2. Case-insensitive exact match.
+3. Case-insensitive prefix match — user's typed string is a prefix of a persisted entity name, with a space or hyphen boundary (so `"851 Peavy"` matches `"851 Peavy Road"` but not `"851 Peavyville"`).
+4. Token-subset match — every token the user typed appears in the entity's token set (so `"Margaret Potter"` matches either exact or a longer canonical form).
+Picks the highest-scoring candidate; ties broken by the longest name. Restricted to the same `type` so a typed WHAT can't accidentally bind to a SECONDARY of the same name and vice versa. Two regression tests added (`"resolves typed names that are a prefix of the augmented persisted entity name (property schema regression)"` + `"restricts fuzzy matching to the correct type"`).
+
+**Rule exposed:** **When a helper resolves a user-supplied string against a set of persisted rows that may have been canonicalised between user input and persistence, prefer resolution by the most stable identifier available — and if forced to resolve by name, build a tolerant matcher that handles prefix + token-subset + case-insensitive equivalence, restricted by the other dimensions that disambiguate (in this case, `type`).** Exact-name lookups are a latent bug anywhere a value crosses a stage that may rewrite it (AI canonicalisation, suffix normalisation, alias merging). The lookup will pass unit tests where nothing rewrites, then fail in production where something does.
+
+**Why this wasn't caught earlier:** The legacy hypothesis flow didn't trigger it (Claude uses hypothesis entity names verbatim — no drift between `inputs.groups` and persisted rows). The Phase-2/3 flow adds an augmentation step inside the confirm screen → persist path, and that's where names drift. The eval caught it because the eval exercises the Phase-2/3 path end-to-end with realistic user inputs and realistic AI-augmented confirm-screen state.
+
+**Preventive check:** For any name-based lookup between "user-typed text" and "persisted entity row," audit for intervening rewriters (domain canonicalisers, alias mergers, Gemini-augmentation passes). Either (a) resolve by `identityKey` / another stable ID instead of by name, or (b) use a tolerant matcher with documented fallback rules. Catch #15 in the Patterns list.
+
+---
+
+## 2026-04-23: Prefer record-the-decision over silent-drop when future context may resolve the ambiguity
+
+**Context:** Closing issue #130 step 7b — universalising paired-WHO routing so a SECONDARY paired with N primaries (Timothy/Krystin/Vivek each paired with 3 addresses) can still route its generic emails to the right case. Extraction's Stage 5 is the sender-fallback path that reads `Entity.associatedPrimaryIds`; before today, it silently dropped to orphan when the list had >1 primaries because "it's ambiguous."
+
+### Discovery 18: Silent-drop-on-ambiguity loses information the downstream pipeline could have used
+
+**Symptom:** Eval runs for property showed Timothy's / Krystin's / Vivek's generic emails (no specific address in subject, no address in Gemini's summary) dropping to `entityId: null` even when the thread clearly related to a specific property. Cluster.ts had nothing to work with — the orphan looked identical to "no signal found anywhere." Today's extraction logic:
+
+```ts
+} else if (senderPrimaryIds.length > 1) {
+  // Multiple associated primaries — ambiguous, leave null.
+  routeMethod = null;
+  routeDetail = `... ambiguous, skipping`;
+}
+```
+
+The `skipping` log was honest about what the line of code did; what it didn't convey was that the Email row itself retained NO memory of the ambiguity — no list of candidates, no way for a later stage (cluster, feedback loop, future re-extraction) to say "pick up where we left off."
+
+**Root cause of the design gap (not a code bug — a missing primitive):** Stage 5 was built as a pure decision function: "can I pick one primary right now? yes → set entityId; no → give up." But the right question at Stage 5 is different: "can I pick one primary right now? yes → set entityId; no → *record what I know so far*, defer the decision." Cluster time has information extraction time doesn't (thread siblings), so deferring is strictly better than dropping.
+
+**Fix (step 7b, this session):**
+1. **Prisma schema:** new `Email.candidatePrimaryIds: Json @default("[]")` column (additive migration; `ALTER TABLE` via supabase-db skill).
+2. **Extraction Stage 5 write path:** on `senderPrimaryIds.length > 1`, set `candidatePrimaryIds = senderPrimaryIds`, set `routingDecision.method = "sender_ambiguous"`, emit `extraction.ambiguousSender.recorded` info log. entityId stays null — honest about not having resolved.
+3. **Cluster pre-pass read path:** new `thread-adjacency.ts` pure helper. For each orphan with non-empty `candidatePrimaryIds`, query sibling emails in the same thread that have `entityId ∈ candidatePrimaryIds`. If exactly one distinct primary matches → adopt it + stamp `routingDecision.method = "thread_adjacency"` + clear `candidatePrimaryIds`. 0 or >1 → stay orphan.
+4. **Idempotent:** rerunning extraction clears `candidatePrimaryIds` to `[]` when a content match takes over; rerunning cluster is a no-op on a resolved email (empty candidate list).
+
+**Rule exposed:** **When a pipeline stage can't make a routing decision with the information it has, record the inputs it had — not just "null" — so a later stage with more context can finish the job.** The `candidatePrimaryIds` column is the pattern: record the candidate set, the reason-code, and any other inputs that would help a smarter pass resolve later. Downstream code is free to ignore the record (behaviour-neutral), but CAN use it (new capability unlocked). Silent-drop is strictly weaker than defer-with-record.
+
+**Operational signals this unlocks:**
+- `routingDecision.method IN ("sender_ambiguous", "thread_adjacency")` is now queryable to measure how often the paired-WHO fallback fires and how often thread-adjacency resolves it. Property's first fresh eval: 2 `sender_ambiguous` orphans, 0 resolved via adjacency (those 2 were alone in their threads — honest floor, not a silent failure).
+- The same pattern generalises: any future "ambiguous at stage N, resolvable at stage N+1" case can follow the same schema-column + pure-helper-between-stages template. `cluster.ts::resolveByThreadAdjacency` is the canonical example.
+
+**Pattern template:**
+```ts
+// Stage N — decision function that can defer:
+if (canResolve) { result.entityId = pickOne(); }
+else if (hasCandidates) {
+  result.candidatePrimaryIds = candidates;
+  result.routingDecision.method = "sender_ambiguous";
+  logger.info({ operation: "ambiguousSender.recorded", ... });
+}
+
+// Stage N+1 — reader of deferred decisions:
+const resolutions = resolveByThreadAdjacency(orphans, siblings);
+// Updates the row + clears the deferred state when it can; leaves honest
+// unresolved otherwise. Never swallows the ambiguity.
+```
+
+Catch #16 in the Patterns list.
+
+---
+
 ## Patterns to watch for
 
 These bugs share common shapes. When you see one of these patterns, stop
@@ -660,6 +815,80 @@ column is the record store, the new column is the pointer set. Applies to user-
 confirmation markers, calibration selections, feedback flags, anything that
 records "which existing thing did the user pick."
 
+### 12a. "Raw SQL identifier doesn't match `@@map`"
+
+If a `$executeRaw` or `$queryRaw` call uses a quoted identifier for a Prisma
+model that has `@@map("snake_cased")`, the raw query hits the PascalCase name
+and PostgreSQL fails with `relation "Entity" does not exist`. The rest of the
+codebase uses Prisma's typed API which knows the mapping; the raw query is
+the only place you can drift. Ships silent until the specific code path runs
+(e.g. SECONDARY entity with aliases, triggering `$executeRaw` in
+`persistConfirmedEntities`). See Bug 9 (2026-04-22).
+
+**Check:** Grep for `$executeRaw`, `$executeRawUnsafe`, `$queryRaw`,
+`$queryRawUnsafe` in `apps/web/src/`. For each quoted identifier, open
+`schema.prisma` and verify the model's `@@map` matches. Tools like Prisma
+Studio won't help here — the raw SQL bypasses the ORM entirely. If you
+need the model name to stay PascalCase in the raw query, drop `@@map` and
+use a Prisma migration to rename the physical table.
+
+### 12b. "Zod `.optional()` on an AI-response field without `.nullable()`"
+
+If an external AI response schema has `z.string().optional()` on a field the
+model might emit as explicit `null`, the whole response fails validation and
+downstream code sees an empty/defaulted result. LLM prompt compliance is not
+a guarantee — the model can return `null` where you told it to omit the field.
+See Discovery 14 (2026-04-22) where every portfolioproadvisors.com entity
+dropped because `sourced_from_who: null` rejected the response.
+
+**Check:** For every Zod schema wrapping a Claude or Gemini response, every
+optional string / number / enum field should be `.nullable().optional()`
+unless you can prove the model never emits explicit null. Defensive pattern
+has zero cost. Grep pattern: `.optional()` inside a file that also imports
+`callClaude` or `callGemini`. Add `.nullable()` in front of `.optional()`
+unless the prompt explicitly requires absence-over-null.
+
+### 13. "Fake of an external API silently returning zero matches"
+
+If a fake / mock / fixture-backed replacement of an external API has its own
+query parser or matching logic, a production-shape input it doesn't handle
+returns zero results with no error. Zero results is indistinguishable from
+"no matches in the fixture set." Eval passes with "0 domain candidates" look
+identical to "the corpus genuinely has none." See Discovery 15 (2026-04-22)
+where `FixtureGmailClient` silently ignored `subject:(A OR B)` groups and
+`-category:promotions` negations, making every Stage 1 eval return empty
+until the tokenizer was fixed.
+
+**Check:** For every external-API fake (`FixtureGmailClient`, any MSW handler,
+any test harness that implements its own query/filter logic), run the
+production query generator's actual output shapes through it and assert
+non-zero results against a realistic fixture. Grep for files named
+`fixture-client.ts`, `fake-*.ts`, or `mock-*.ts` under `apps/web/src/`;
+for each, verify there's at least one test that feeds it a real-shape
+query and gets meaningful results. A passing eval against real corpus data
+is the canonical smoke test.
+
+### 14. "Eval harness inlines orchestration that lives in the production path"
+
+If an eval or test harness that drives production service code inlines the
+fan-out logic, seed-merging, error partitioning, or any orchestration step
+that the production entry point (Inngest function, API route, service
+controller) also performs, the harness WILL drift from production behavior.
+Hard-assertion metrics can pass while the actual production shape silently
+diverges. See Discovery 16 (2026-04-22) where the eval harness skipped the
+user-seed prepend step, hiding Margaret Potter / George Trevino / Farrukh
+Malik from the entity-confirm screen that the eval was supposed to validate.
+
+**Check:** For every new eval or integration harness that calls production
+services directly, identify every orchestration step between the entry
+point and the leaf service call. Any step that's non-trivial (seed
+prepending, paired-context resolution, error partitioning, idempotency
+guards) must live in a shared service module that BOTH the production
+entry point AND the harness call. If the production entry point is an
+Inngest function with that logic inline, extract the logic first. See
+`apps/web/src/lib/services/stage2-fanout.ts` for the template:
+`buildStage2Context` + `runStage2ForDomain` both sides share.
+
 ### 12. "Direct `updateMany` on a CAS-owned column"
 
 If a route or service sets `phase`, `status`, or any column whose transitions
@@ -681,6 +910,46 @@ If a feature appears to require rewinding a schema/scan row (e.g. an "edit and
 restart" UX), the correct primitive is to create a NEW row and flip the old
 row's `status` to a terminal value (ABANDONED, ARCHIVED), then let the old row's
 in-flight work finish into a dead row. See the #130 refactor for the template.
+
+### 15. "Exact-name lookup across a canonicalisation boundary"
+
+If a helper resolves a user-supplied string (typed input, form field, stored JSON
+key) against a set of persisted rows and anything between input and persistence
+may rewrite the name — AI canonicalisation, suffix normalisation, alias merging,
+title-casing — exact-name lookup will silently miss. Unit tests that use the
+same name on both sides pass; production misses. The lookup returns `undefined`
+and the "both sides non-empty" guard skips the write. No error, no log.
+
+**Check:** For any `Map<string, ...>` built from entity names or labels and
+queried with user-supplied strings, audit the pipeline from the string's
+origin to its use. Either (a) switch to an identifier-based lookup
+(`identityKey`, row ID), or (b) use a tolerant matcher that handles
+prefix + token-subset + case-insensitive equivalence, restricted by any
+disambiguating dimension available (here: `type`). Grep:
+```
+grep -rn "entityByName\|labelByName\|nameToId" apps/web/src/ packages/
+```
+For every hit, walk the input's journey. Phase-2/3 confirm flow is the
+worst offender — it augments names; the legacy hypothesis flow didn't.
+
+### 16. "Silent-drop-on-ambiguity loses information the next stage could use"
+
+If a decision function ("route this email to a primary") can't resolve
+uniquely and sets the result to null/undefined without persisting *what
+candidates it considered*, downstream stages have lost the evidence. No
+thread-adjacency pass, no feedback-loop hint, no future re-extraction can
+pick up where the decision was left — the ambiguity is gone, not deferred.
+
+**Check:** For any stage that returns null-on-ambiguous, verify one of
+two is true: (a) there is no downstream stage that could plausibly have
+more information (dead end — silent-null is fine), or (b) the ambiguity
+case persists its inputs (candidate list, reason-code, source refs) on
+the row so a downstream stage can revisit. `Email.candidatePrimaryIds`
+(issue #130 step 7b) is the canonical pattern — the column is additive,
+behaviour-neutral on its own, and unlocks thread-adjacency resolution in
+`cluster.ts::resolveByThreadAdjacency`. Grep for `"ambiguous"` / `"skipping"`
+in routing code and audit each hit for "did I just throw away information
+someone else could have used?"
 
 ---
 

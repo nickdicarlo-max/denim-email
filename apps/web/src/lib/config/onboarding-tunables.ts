@@ -70,6 +70,21 @@ export const ONBOARDING_TUNABLES = {
      * residual display-form variants inside the same bucket collapse.
      */
     levenshteinLongThreshold: 3,
+    /**
+     * 04-22 plan Layer 1 — when a confirmed domain has exactly one paired
+     * sender AND that sender is paired to exactly one WHAT, skip Gemini and
+     * emit one synthetic PRIMARY candidate = that WHAT. Collapses
+     * `Ziad → teamsnap.com → soccer` into ONE `soccer` PRIMARY (with team
+     * variants folded in as aliases during merge), per school_parent.md §8.
+     */
+    enableShortCircuit: true,
+    /**
+     * 04-22 plan Layer 3 — when a confirmed domain has paired WHATs, append
+     * `AND (what1 OR "what 2" OR ...)` to the Gmail `from:*@domain` query so
+     * Gmail narrows the subject corpus before Gemini sees it. Defends
+     * against promotional subjects on otherwise-legit domains.
+     */
+    useTopicContentFilter: true,
     // fetchBatchSize + lookbackDays intentionally omitted — Stage 2 reuses
     // ONBOARDING_TUNABLES.stage1's values. One source of truth, no drift.
   },

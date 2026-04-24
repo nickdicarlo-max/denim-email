@@ -7,6 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ExternalAPIError } from "@denim/types";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { logger } from "@/lib/logger";
+import { isCacheActive, maybeServeFromCache, maybeStoreInCache } from "./interceptor";
 import { callWithRetry } from "./retry";
 
 // Module-level singleton: reads ANTHROPIC_API_KEY from env automatically
@@ -40,6 +41,13 @@ export interface AICallResult {
   cacheReadInputTokens: number;
   /** Tokens written to Anthropic prompt cache. Zero for Gemini or when no breakpoint set. */
   cacheCreationInputTokens: number;
+  /**
+   * True when this result was served from the eval response cache
+   * (`AI_RESPONSE_CACHE=fixture`) rather than a fresh provider call.
+   * Downstream cost-tracking uses this to tag ExtractionCost rows
+   * so first-run vs cached-run diffs are obvious.
+   */
+  fromCache?: boolean;
 }
 
 async function callAI(
@@ -56,6 +64,23 @@ async function callAI(
     userId,
     model,
   });
+
+  // Eval-only cache short-circuit. `maybeServeFromCache` returns null
+  // unless AI_RESPONSE_CACHE=fixture is set, so production code paths
+  // never observe a cached response.
+  if (isCacheActive()) {
+    const cached = maybeServeFromCache(provider, options);
+    if (cached) {
+      logger.info({
+        service: "ai-client",
+        operation: `${provider}.${operation}.cacheHit`,
+        schemaId,
+        userId,
+        model,
+      });
+      return { ...cached, fromCache: true, latencyMs: Date.now() - start };
+    }
+  }
 
   try {
     const result = await callWithRetry(async (): Promise<Omit<AICallResult, "latencyMs">> => {
@@ -139,7 +164,14 @@ async function callAI(
       cacheCreationInputTokens: result.cacheCreationInputTokens,
     });
 
-    return { ...result, latencyMs };
+    const final = { ...result, latencyMs };
+
+    // Persist to eval cache when active. No-op in production (mode=off).
+    if (isCacheActive()) {
+      maybeStoreInCache(provider, options, final);
+    }
+
+    return final;
   } catch (error) {
     const latencyMs = Date.now() - start;
     logger.error({

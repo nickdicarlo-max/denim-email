@@ -2573,37 +2573,55 @@ If anything breaks, bisect across Phase 4 commits. No commit needed for this tas
 
 ---
 
-## Phase 5 — Spec Files Become the Runtime Config (drift is structurally impossible)
+## Phase 5 — Spec Files Become the Runtime Config via Build-Time Codegen
 
 **Rationale:** The prior draft of Phase 5 built a markdown parser + fixture runner + CI step just to assert that a hand-copied `domain-shapes.ts` matched a YAML block embedded inside the spec markdown. That's three sources of truth and a compliance harness to enforce 1:1 sync.
 
-Simpler: move the structured bits out of the markdown into sibling `.config.yaml` files. `domain-shapes.ts` **imports** them at module load. The markdown stays as prose for humans. Drift becomes impossible because there is only one source.
+**Approach chosen (Option 1, decided 2026-04-18):** YAML is the human-authored source. A build-time codegen script reads the YAMLs, Zod-validates them in the generator (never at runtime), and emits a typed `domain-shapes.generated.ts` with `as const` literal types. **The generated file is committed to git** (small, deterministic, deploy-critical — unlike Prisma Client, which is gitignored because it's large and environment-specific). CI runs `pnpm generate:domain-shapes && git diff --exit-code` to fail on stale commits OR hand-edits of the artifact. Runtime has zero file I/O and zero Zod.
+
+Why commit the generated file:
+- Deploys don't depend on codegen wiring in every CI/build path
+- Reviewers see the actual artifact being consumed in PRs
+- `git blame` on `domain-shapes.generated.ts` lands on the commit that changed the YAML
+- Drift check is a one-liner: hand-edits silently revert on next regen, stale commits fail CI
+
+Rejected alternatives:
+- **Runtime `readFileSync` from `docs/`** (original Phase 5 draft): `process.cwd()` in a Next.js function bundle ≠ repo root; Next output-file-tracing won't auto-ship files at `../../docs/` without a static import edge; any import of `domain-shapes` crashes module load on cold start if the path resolves wrong. Fragile, late-binding, hard to test.
+- **Ship YAMLs via `apps/web/public/`**: exposes internal config on the public web; still incurs runtime I/O.
+- **Next.js YAML loader**: Turbopack-loader maturity risk on Next 16; still requires codegen'd types to match Option 1's type narrowness.
 
 This replaces the entire prior Phase 5 (Tasks 5.1–5.4).
 
 ---
 
-### Task 5.0: Create `*.config.yaml` siblings to each spec file
+### Task 5.0: Codegen `domain-shapes.generated.ts` from `*.config.yaml` siblings
 
 **Files:**
 - Create: `docs/domain-input-shapes/property.config.yaml`
 - Create: `docs/domain-input-shapes/school_parent.config.yaml`
 - Create: `docs/domain-input-shapes/agency.config.yaml`
+- Create: `apps/web/scripts/generate-domain-shapes.ts`
+- Create (committed): `apps/web/src/lib/config/domain-shapes.generated.ts`
+- Modify: `apps/web/src/lib/config/domain-shapes.ts` (delete hardcoded `DOMAIN_SHAPES`, re-export from `.generated.ts`)
+- Modify: `apps/web/package.json` (add `generate:domain-shapes` + `postinstall` / `predev` / `prebuild` / `pretypecheck` / `pretest` hooks)
+- Modify: `.github/workflows/ci.yml` (add drift-check step)
 
-Each file holds ONLY the machine-readable bits. The corresponding `.md` file keeps the prose + the LOCKED marker. If you edit the `.yaml`, the runtime config changes. If you edit the `.md`, you're documenting intent.
+Each `.yaml` holds ONLY the machine-readable bits. The corresponding `.md` file keeps the prose + the LOCKED marker. Edit the `.yaml` → next build produces a new `.generated.ts` → diff lands in the PR.
 
-- [ ] **Step 0: Install the YAML loader**
+- [ ] **Step 0: Install build-time deps**
 
 ```bash
-pnpm --filter web add js-yaml
-pnpm --filter web add -D @types/js-yaml
+pnpm --filter web add -D js-yaml @types/js-yaml
 ```
+
+(`tsx` is already at the repo root; `zod` is already a runtime dep in `apps/web` and is reused by the generator — it does NOT become a runtime load-time cost because the generated file is plain TS literals.)
 
 - [ ] **Step 1: Create `property.config.yaml`**
 
 ```yaml
-# Runtime configuration for the property domain. Imported by domain-shapes.ts.
-# Prose rationale lives in property.md. LOCKED status tracked there.
+# Machine-readable runtime config for the property domain.
+# Consumed at build time by apps/web/scripts/generate-domain-shapes.ts.
+# Prose rationale + LOCKED marker live in property.md.
 domain: property
 stage1TopN: 3
 stage2Algorithm: property-address
@@ -2623,20 +2641,105 @@ stage1Keywords:
   - renewal
 ```
 
-- [ ] **Step 2: Create `school_parent.config.yaml`** (19 keywords)
-- [ ] **Step 3: Create `agency.config.yaml`** (28 keywords; 18 formal + 10 working)
-- [ ] **Step 4: Rewrite `domain-shapes.ts` to import the YAML at module load**
+- [ ] **Step 2: Create `school_parent.config.yaml`** (19 keywords — copy exactly from current `apps/web/src/lib/config/domain-shapes.ts:42–62`)
+- [ ] **Step 3: Create `agency.config.yaml`** (28 keywords; 18 formal + 10 working — copy exactly from current `domain-shapes.ts:68–97`)
 
-This step **deletes** the hardcoded `DOMAIN_SHAPES` Record that landed in commit `e3242be` (Task 0.3) and replaces it with the YAML-backed loader below. Not coexistence — wholesale replacement. The existing Task 0.3 tests continue to pass because the YAML keyword counts match the TS values exactly (property 13 / school_parent 19 / agency 28).
+- [ ] **Step 4: Write the codegen script**
+
+```typescript
+// apps/web/scripts/generate-domain-shapes.ts
+//
+// Reads docs/domain-input-shapes/*.config.yaml, Zod-validates, and emits
+// apps/web/src/lib/config/domain-shapes.generated.ts with `as const`
+// literal types.
+//
+// The generated file is COMMITTED to git. Drift is caught in CI by:
+//   pnpm --filter web generate:domain-shapes && git diff --exit-code
+// This fails on both stale commits AND hand-edits of the artifact
+// (hand-edits revert on regen, producing a non-empty diff).
+
+import { readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import yaml from "js-yaml";
+import { z } from "zod";
+
+const DOMAINS = ["property", "school_parent", "agency"] as const;
+const ALGORITHMS = [
+  "property-address",
+  "school-two-pattern",
+  "agency-domain-derive",
+] as const;
+
+const ShapeSchema = z.object({
+  domain: z.enum(DOMAINS),
+  stage1Keywords: z.array(z.string().min(1)).min(1),
+  stage1TopN: z.number().int().positive(),
+  stage2Algorithm: z.enum(ALGORITHMS),
+});
+
+// __dirname equivalent for ESM. Script lives at apps/web/scripts/.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+const YAML_DIR = path.join(REPO_ROOT, "docs/domain-input-shapes");
+const OUT_PATH = path.join(
+  REPO_ROOT,
+  "apps/web/src/lib/config/domain-shapes.generated.ts",
+);
+
+function loadShape(domain: (typeof DOMAINS)[number]) {
+  const file = path.join(YAML_DIR, `${domain}.config.yaml`);
+  const raw = readFileSync(file, "utf8");
+  const shape = ShapeSchema.parse(yaml.load(raw));
+  if (shape.domain !== domain) {
+    throw new Error(
+      `YAML domain mismatch in ${file}: got "${shape.domain}", expected "${domain}"`,
+    );
+  }
+  return shape;
+}
+
+const shapes = Object.fromEntries(DOMAINS.map((d) => [d, loadShape(d)]));
+
+const banner = `// ============================================================================
+// GENERATED FILE — DO NOT EDIT
+// ============================================================================
+// Source of truth: docs/domain-input-shapes/*.config.yaml
+// Generator:       apps/web/scripts/generate-domain-shapes.ts
+// Regenerate:      pnpm --filter web generate:domain-shapes
+// CI drift check:  pnpm generate:domain-shapes && git diff --exit-code
+//                  (fails on stale commits OR hand-edits — hand-edits revert
+//                  on regen, producing a non-empty diff)
+// ============================================================================
+
+`;
+
+const body = `export const DOMAIN_SHAPES = ${JSON.stringify(shapes, null, 2)} as const;\n`;
+
+writeFileSync(OUT_PATH, banner + body, "utf8");
+console.log(`[domain-shapes] wrote ${path.relative(REPO_ROOT, OUT_PATH)}`);
+```
+
+The `as const` on the emitted object narrows types. Consumers get `stage2Algorithm: "property-address" | "school-two-pattern" | "agency-domain-derive"` instead of `string`, and `stage1Keywords` becomes a readonly literal tuple.
+
+- [ ] **Step 5: Rewrite `domain-shapes.ts` as a thin typed wrapper**
+
+Delete the hardcoded `DOMAIN_SHAPES` Record from commit `e3242be` (Task 0.3). Keep the named types + helper; re-export the constant from the generated file. **Zero Zod at runtime** — the generator already validated, so consumers just import literal values.
 
 ```typescript
 // apps/web/src/lib/config/domain-shapes.ts
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import yaml from "js-yaml";
+//
+// Public surface for domain configuration. The DOMAIN_SHAPES constant is
+// build-time generated from docs/domain-input-shapes/*.config.yaml and
+// committed at domain-shapes.generated.ts. Edit the YAML, not that file.
+
+import { DOMAIN_SHAPES } from "./domain-shapes.generated";
 
 export type DomainName = "property" | "school_parent" | "agency";
-export type Stage2Algorithm = "property-address" | "school-two-pattern" | "agency-domain-derive";
+export type Stage2Algorithm =
+  | "property-address"
+  | "school-two-pattern"
+  | "agency-domain-derive";
 
 export interface DomainShape {
   domain: DomainName;
@@ -2645,50 +2748,95 @@ export interface DomainShape {
   stage2Algorithm: Stage2Algorithm;
 }
 
-function loadShape(domain: DomainName): DomainShape {
-  // Resolved at module-load time. In Vercel deploys, docs/ ships in the repo root.
-  const p = path.resolve(process.cwd(), "../../docs/domain-input-shapes", `${domain}.config.yaml`);
-  const parsed = yaml.load(readFileSync(p, "utf8")) as DomainShape;
-  if (parsed.domain !== domain) throw new Error(`YAML domain mismatch: ${parsed.domain} vs ${domain}`);
-  return parsed;
-}
-
-export const DOMAIN_SHAPES: Record<DomainName, DomainShape> = {
-  property: loadShape("property"),
-  school_parent: loadShape("school_parent"),
-  agency: loadShape("agency"),
-};
+export { DOMAIN_SHAPES };
 
 export function getDomainShape(domain: string): DomainShape {
   if (!(domain in DOMAIN_SHAPES)) {
-    throw new Error(`Unknown domain: ${domain}`);
+    throw new Error(
+      `Unknown domain: ${domain}. Known: ${Object.keys(DOMAIN_SHAPES).join(", ")}`,
+    );
   }
   return DOMAIN_SHAPES[domain as DomainName];
 }
 ```
 
-- [ ] **Step 5: Keep the unit tests from Task 0.3**
+Consumers (`domain-discovery.ts`, `entity-discovery.ts`, `domain-discovery-fn.ts`, `entity-discovery-fn.ts`, `scripts/validate-stage1-real-samples.ts`) don't change — same export surface, same types.
 
-The tests that assert "property has 13 keywords, agency has 28" still pass because they read `DOMAIN_SHAPES` — but now those numbers come from the YAML, not a hand-maintained TS constant.
+- [ ] **Step 6: Wire npm scripts + commit the generated file + add CI drift check**
 
-- [ ] **Step 6: Delete Tasks 5.1 / 5.2 / 5.3 / 5.4 from this plan's execution list**
+Add to `apps/web/package.json` `scripts` (chain with `&&` if any already exist):
 
-They are obsolete. No spec-compliance harness, no markdown parser, no Section 9 YAML-in-markdown, no CI step. If the YAML and code ever disagree, there IS no code to disagree — the YAML IS the code.
+```json
+"generate:domain-shapes": "tsx scripts/generate-domain-shapes.ts",
+"postinstall": "pnpm generate:domain-shapes",
+"predev": "pnpm generate:domain-shapes",
+"prebuild": "pnpm generate:domain-shapes",
+"pretypecheck": "pnpm generate:domain-shapes",
+"pretest": "pnpm generate:domain-shapes"
+```
 
-- [ ] **Step 7: Deployment note — HARD GATE**
+**Commit the generated file.** Do NOT add it to `.gitignore`. Rationale: small (<200 lines), deterministic, deploy-critical; reviewers see the artifact; `git blame` lands on the right commit; Vercel builds don't depend on codegen wiring in every path.
 
-The YAML files must ship to Vercel. They live in `docs/` which is already part of the repo and not gitignored. `path.resolve(process.cwd(), "../../docs/...")` is cwd-sensitive — on Vercel, `process.cwd()` is the function bundle root, not the repo root. **Treat the first preview deployment as a hard verification gate**: start the preview, load an onboarding session end-to-end, and confirm `getDomainShape` doesn't throw at request time. If the path resolves wrong, fall back to a build-step that copies each `*.config.yaml` into `apps/web/public/domain-shapes/` (or bundles as JSON via a `next.config.ts` import rule) and reads from the known-shipped path at runtime. Do not merge Phase 5 until this is green.
+Add a drift-check step to `.github/workflows/ci.yml` early in the job (before typecheck / tests / build):
 
-- [ ] **Step 8: Commit**
+```yaml
+- name: Domain-shapes codegen drift check
+  run: |
+    pnpm --filter web generate:domain-shapes
+    git diff --exit-code apps/web/src/lib/config/domain-shapes.generated.ts \
+      || (echo "::error::domain-shapes.generated.ts is stale or hand-edited. Run 'pnpm --filter web generate:domain-shapes' and commit." && exit 1)
+```
+
+This single check handles both failure modes:
+- **Stale commit** (YAML changed, generated file not regenerated): regen produces a diff, CI fails.
+- **Hand-edit of the artifact**: regen overwrites the edits, producing a diff, CI fails.
+
+The banner in the generated file tells humans not to edit; CI enforces it.
+
+- [ ] **Step 7: Keep the unit tests from Task 0.3**
+
+`apps/web/src/lib/config/__tests__/domain-shapes.test.ts` already asserts counts 13 / 19 / 28 via `DOMAIN_SHAPES`. Still passes — but failures now mean the YAML drifted from expected counts, not that someone hand-edited a TS constant. Because `pretest` runs the codegen, the test always reads the current YAML.
+
+- [ ] **Step 8: Delete Tasks 5.1 / 5.2 / 5.3 / 5.4 from this plan's execution list**
+
+Obsolete. No markdown parser, no spec-compliance harness, no Section-9 YAML-in-markdown. The codegen + `git diff --exit-code` pair replaces all four.
+
+- [ ] **Step 9: Verify + commit**
+
+Run every gate locally before committing:
+
+```bash
+pnpm --filter web generate:domain-shapes      # writes .generated.ts
+pnpm --filter web typecheck                    # regenerates + type-checks
+pnpm --filter web test -- domain-shapes        # regenerates + asserts counts
+pnpm --filter web build                        # regenerates + full build
+git diff --exit-code apps/web/src/lib/config/domain-shapes.generated.ts
+# ^ must be clean AFTER the above sequence; confirms codegen is idempotent
+```
+
+Then:
 
 ```bash
 git add docs/domain-input-shapes/property.config.yaml \
         docs/domain-input-shapes/school_parent.config.yaml \
         docs/domain-input-shapes/agency.config.yaml \
+        apps/web/scripts/generate-domain-shapes.ts \
         apps/web/src/lib/config/domain-shapes.ts \
-        apps/web/package.json pnpm-lock.yaml
-git commit -m "feat(config): spec files become runtime config — drift structurally impossible"
+        apps/web/src/lib/config/domain-shapes.generated.ts \
+        apps/web/package.json apps/web/pnpm-lock.yaml \
+        .github/workflows/ci.yml
+git commit -m "feat(config): domain shapes via build-time codegen from YAML source"
 ```
+
+**Companion action:** update `docs/superpowers/plans/2026-04-17-issue-95-phase2-plus-corrections.md` — the P5-1 / P5-2 / P5-3 entries describe the runtime-`readFileSync` draft and are obsolete. Rewrite them to reference the codegen pipeline (or mark the prior three as superseded and add one new entry covering the codegen drift-check expectation).
+
+**Why build-time codegen beats runtime YAML load:**
+- Zero runtime I/O → no `process.cwd()` fragility, no Vercel bundle-tracing concerns, no cold-start crash mode if a file is missing
+- Zero runtime Zod → validation happens once, at build time, in the generator
+- Narrow literal types via `as const` — consumers get `"property-address" | "school-two-pattern" | …` instead of `string`
+- Malformed YAML fails `pnpm install` / CI with a Zod error (with path/field context), not a prod 500
+- Turbopack-safe (generated file is a plain `.ts` import)
+- Same pattern GraphQL Codegen / next-intl use; different choice from Prisma Client on the gitignore axis, deliberately
 
 **Note on lock evidence:** Discovery 9's oracle recall + top-5 rank are a one-time validation artifact, not a CI assertion. Move them to `docs/domain-input-shapes/validation-log.md` as a dated entry per domain. Nothing in the runtime needs to assert them in perpetuity; CI-theatre.
 

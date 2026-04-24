@@ -3,7 +3,7 @@
  *
  * Drives the REAL production code paths (`discoverDomains` + `discoverEntitiesForDomain`)
  * imported from apps/web through a stub GmailClient that serves from
- * `Denim_Samples_Individual/*.json`. Unlike `simulate-stage1-domains.mjs` which
+ * `denim_samples_individual/*.json`. Unlike `simulate-stage1-domains.mjs` which
  * re-implements Stage 1, this script catches regressions in the actual pipeline
  * (aggregator, public-providers filter, topN slicing, query builder, Stage 2
  * dispatcher, per-domain algorithms, Levenshtein dedup).
@@ -38,7 +38,7 @@ import { discoverEntitiesForDomain } from "../apps/web/src/lib/discovery/entity-
 // regardless of the caller's cwd (repo root OR apps/web — tsconfig-path
 // resolution requires apps/web cwd, but samples live at repo root).
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SAMPLES_DIR = path.resolve(SCRIPT_DIR, "..", "Denim_Samples_Individual");
+const SAMPLES_DIR = path.resolve(SCRIPT_DIR, "..", "denim_samples_individual");
 const USER_DOMAIN = "thecontrolsurface.com";
 
 interface Sample {
@@ -126,8 +126,7 @@ async function runDomain(
 ): Promise<Array<{ domain: string; count: number }>> {
   const stub = makeStubGmail(samples, domain);
   const result = await discoverDomains({
-    // biome-ignore lint/suspicious/noExplicitAny: stub GmailClient for offline validation
-    gmailClient: stub as any,
+    gmailClient: stub,
     domain,
     userDomain: USER_DOMAIN,
   });
@@ -352,8 +351,7 @@ async function runStage2(samples: Sample[]): Promise<void> {
     let result: Awaited<ReturnType<typeof discoverEntitiesForDomain>>;
     try {
       result = await discoverEntitiesForDomain({
-        // biome-ignore lint/suspicious/noExplicitAny: stub GmailClient for offline validation
-        gmailClient: stub as any,
+        gmailClient: stub,
         schemaDomain: fx.domain,
         confirmedDomain: fx.confirmedDomain,
       });

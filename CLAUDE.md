@@ -9,6 +9,8 @@ and see their email organized into actionable cases in a Chrome side panel.
 This is not a throwaway prototype. Build for maintainability, security, and scale
 from the start. Gmail access means we hold sensitive data and need to earn trust.
 
+On startup, read `ZEFRESH_DENIM/denim-master-plan.md`.
+
 ## Repository
 
 https://github.com/nickdicarlo-max/denim-email

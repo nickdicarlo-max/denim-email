@@ -10,13 +10,24 @@ export default async function FeedCaseDetailPage({
   params: Promise<{ caseId: string }>;
 }) {
   const { caseId } = await params;
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
 
-  if (!user) {
-    redirect("/");
+  // BYPASS_AUTH parity with `withAuth` — eval schemas are owned by the
+  // bypass user `dev-user-id`, so in dev mode the ownership check below
+  // needs to compare against that same id. Without this the server
+  // component reads the real Supabase session (different id), ownership
+  // fails, and the user sees a redirect to /feed when they click a case.
+  let userId: string;
+  if (process.env.BYPASS_AUTH === "true") {
+    userId = "dev-user-id";
+  } else {
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      redirect("/");
+    }
+    userId = user.id;
   }
 
   const caseRow = await prisma.case.findUnique({
@@ -62,7 +73,7 @@ export default async function FeedCaseDetailPage({
     },
   });
 
-  if (!caseRow || caseRow.schema.userId !== user.id) {
+  if (!caseRow || caseRow.schema.userId !== userId) {
     redirect("/feed");
   }
 

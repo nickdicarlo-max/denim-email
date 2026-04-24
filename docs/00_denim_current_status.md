@@ -1,8 +1,204 @@
 # Denim Email — Current Status
 
-Last updated: 2026-04-19 Evening (Compound E2E-driven fix on `feature/perf-quality-sprint`: **#117** Stage 1 per-whats pairing + safety hygiene, **#102** Pattern C corpus frequency mining, **#119** property address suffix-aware dedup, **#121** SECONDARY alias population. **21 new commits**, **364 unit tests passing** across 4 workspaces (+36 this session). Closed **#93** / **#109** / **#118** as superseded / verified / subsumed. Filed **#120** / **#121** / **#122** / **#123** with DB-forensic evidence from live E2E runs on Girls Activities (`01KPM0R4QS72E8B1M0A1BDJWYC`) + North 40 Partners (`01KPM07ZBZG9570XKJZTVB9N2A`) schemas. Open count 40 → 43. Next: live E2E re-run to verify the compound, then **#123** tag-score investigation (likely proximate root cause of #86 case over-fragmentation — every MERGE scored exactly at threshold with `tagScore: 0` despite `tagMatchScore=15` configured).)
+Last updated: 2026-04-23 (Phase 5 Round 1 + Phase 6 Rounds 2+3 complete on `feature/perf-quality-sprint`. Review-screen rebuilt around user WHATs (A2 hierarchy, B1 first-class discoveries, truthful frequencies, three render states per WHAT). Pipeline wiring landed for paired-WHO routing: `linkEntityGroups` helper (new `apps/web/src/lib/services/link-entity-groups.ts`) plumbs `EntityGroup` + `Entity.groupId` + `Entity.associatedPrimaryIds` through the Phase-2/3 `persistConfirmedEntities` flow, fixing orphan-entity bug; tolerant name resolver handles the common case where the confirm flow canonicalises user-typed short strings ("851 Peavy" → "851 Peavy Road"). New `Email.candidatePrimaryIds` column + `apps/web/src/lib/services/thread-adjacency.ts` helper records ambiguous-sender candidate lists during extraction and resolves them via thread-sibling adjacency at cluster time — turns silent-drop into honest-defer for any N:M paired WHO. **All three locked schemas (property 7/7, school_parent 3/3, agency 3/3) pass the full eval gate end-to-end** with 0 off-topic cases and 0 synthesis failures. 182 web-app tests green (+10 new for 7a/7b). Issue #130 captured for the deferred zero-match-hint re-scan cron. Not yet: visual review of confirm screens + feed, live Gmail `--refresh-cache` run.) Previous: 2026-04-22 Late (Full eval harness + Phase 3A/3B/4 complete on `feature/perf-quality-sprint`. Stage 1 + Stage 2 + full synthesis all drive through production code against 417-sample corpus, one schema at a time, with content-hash AI response cache. 3 schemas ran end-to-end. **5 production bugs surfaced and fixed via the eval loop** (Zod null, Gemini "≥3 subjects" rule, FixtureGmailClient query parser, `"Entity"` raw SQL table name, eval harness fanout drift). Scoped monorepo tightening: `domain-aggregator`, `public-providers`, `FromHeaderResult` moved to `@denim/engine/discovery`; `stage2-fanout.ts` extracted so Inngest fn + eval harness share one orchestration path. **Case-topics-vs-subject-line-noise insight quantified:** agency produced 67 cases from 105 extractions with only 25% multi-email rate — clear evidence that sender-domain-clustering surfaces subject fragments as pseudo-cases. Deferred to Phase 5. 309 tests green; Part B synthesis burned ~$1.60 across three first-runs.) Previous: 2026-04-19 Evening (Compound E2E-driven fix on `feature/perf-quality-sprint`: **#117** Stage 1 per-whats pairing + safety hygiene, **#102** Pattern C corpus frequency mining, **#119** property address suffix-aware dedup, **#121** SECONDARY alias population. **21 new commits**, **364 unit tests passing** across 4 workspaces (+36 this session). Closed **#93** / **#109** / **#118** as superseded / verified / subsumed. Filed **#120** / **#121** / **#122** / **#123** with DB-forensic evidence from live E2E runs on Girls Activities (`01KPM0R4QS72E8B1M0A1BDJWYC`) + North 40 Partners (`01KPM07ZBZG9570XKJZTVB9N2A`) schemas. Open count 40 → 43. Next: live E2E re-run to verify the compound, then **#123** tag-score investigation (likely proximate root cause of #86 case over-fragmentation — every MERGE scored exactly at threshold with `tagScore: 0` despite `tagMatchScore=15` configured).)
 
 Historical sessions (Phases 0–7 baseline, per-phase detail, bug archaeology): `docs/archive/denim_session_history.md`.
+
+## 2026-04-22 Session — Onboarding Eval Harness + First Visual Review
+
+Built the onboarding eval harness and got the first visual-review baseline against the three locked schemas (school_parent, property, agency) using `denim_samples_individual/` (417 fixture emails).
+
+**What shipped:**
+- `apps/web/scripts/eval-onboarding.ts` + `apps/web/scripts/eval-ground-truth.ts` — one-schema-per-invocation runner that drives Stage 1 + Stage 2 through the REAL production code against fixtures. Hard assertions (seeded primaries + seeded WHOs must surface, SLA budgets) and soft assertions (expected domains, count ranges).
+- `apps/web/src/lib/ai/response-cache.ts` + `interceptor.ts` — content-hash disk cache at `.eval-cache/ai/` for Claude + Gemini. Env-gated (`AI_RESPONSE_CACHE=off|fixture|record`, default `off`). Cached rows log to ExtractionCost with `.cached` suffix + $0.
+- `apps/web/src/lib/services/stage2-fanout.ts` — shared `buildStage2Context()` + `runStage2ForDomain()`. Inngest `runEntityDiscovery` shrank ~120 lines and now delegates to these helpers; eval harness calls the same helpers. Single source of truth for seed-prepend + paired-WHO handling.
+- `GmailClientLike` interface (`apps/web/src/lib/gmail/types.ts`) — both `GmailClient` and `FixtureGmailClient` satisfy it. Stage 1/2 discovery functions now take `GmailClientLike`, enabling offline eval without a parallel code path.
+- Fixed `subject:(... OR ...)`, `-category:promotions`, `from:*@domain` handling in `FixtureGmailClient` — it was silently matching zero emails on production-shape queries.
+- Sample folder renamed `Denim_Samples_Individual/` → `denim_samples_individual/` (case-sensitive CI safety).
+
+**Production bugs surfaced + fixed via the eval loop:**
+- **Zod null bug** (`entity-discovery.ts:76-78`) — `sourced_from_who` / `related_what` were `z.string().optional()`; Gemini returns them as explicit `null`, which failed Zod, which dropped the entire per-domain response. Changed to `.nullable().optional()`. This single fix unblocked portfolioproadvisors.com's entity cluster on the agency screen.
+- **"Skip <3 subjects" rule** (`entity-discovery.ts:179`) — dropped from the Gemini prompt. Property went from 6 addresses discovered → 13 after this change.
+- Stage 1 + Stage 2 now accept an optional injected Gmail client (Phase 1 of the eval plan). Matches the pattern `services/extraction.ts:847` already used.
+
+**Current eval verdicts (2026-04-22):**
+- school_parent: FAIL (1 hard — "guitar" not in sample corpus; likely data gap, not code)
+- property: PASS; 13 properties discovered (above expected 9–12 range)
+- agency: PASS; all three WHOs (margaret/george/farrukh) resolved with correct senders
+
+**Key insight surfaced during visual review — deferred to Phase 5:**
+
+> **Current Stage 2 surfaces senders + subject-line fragments, not real case topics.**
+>
+> The Gemini subject-entity pass is good at extracting "things mentioned in subjects" but that is weakly correlated with "real case topics the user would track."
+>
+> Concrete examples from the first review:
+> - `email.teamsnap.com` surfaces "ZSA U11/12 Girls Competitive Rise", "Rise ECNL", "Houston Select" — these are *subteams*, not topics. The user's real topic is **soccer** (their seeded WHAT).
+> - `portfolioproadvisors.com` surfaces "Rhodes Data Test Sample", "AI Session #2 PPA & Nick" — fragments of subject lines, not topic labels.
+> - `otter.ai` transcripts tagged with "PPA" belong to the PPA topic, not a separate Otter cluster. Cross-domain association isn't happening.
+>
+> The brand promise is "organize my email by things I care about" — NOT "extract n-grams from subject lines." Subteam/subject fragments should be surfaced as *aliases* or *subcategories* of a user-seeded WHAT, not as independent entities. The `Inside {domain}` grouping on the entity-confirm screen treats the domain as the label — it should probably show the paired topic when one exists.
+>
+> Synthesis (Stage 3 case generation) is where this matters most — cases must be named by topic, not by sender-extracted fragment. Will become measurable once Phase 3 Part B (synthesis harness) lands.
+
+**Stage 1 domain noise also flagged for later:**
+- school_parent pulls in `bucknell.edu` (alumni newsletter), `principal.com` (401k), `twilio.zendesk.com`, `github.com` via generic keywords ("game", "performance", "schedule")
+- agency pulls in `email.teamsnap.com` (kid soccer), `github.com`, `t.biggerpockets.com` (RE newsletter) via "meeting", "invoice", "update"
+- Master-plan §7 principle 4 (compounding-signal inclusion) says no single signal confirms membership. Current Stage 1 uses one signal (keyword-in-subject) and trusts it. Phase 5 candidate: post-Stage-1 filter that boosts domains reached by ≥2 signal types (keyword + paired-WHO-from, or keyword + volume).
+
+**Cache behavior verified:** first-run tokens burned; second-run shows `cacheHit` logs + `.cached` ExtractionCost rows at $0. Cache gate is fail-closed (`AI_RESPONSE_CACHE=off` default). 309/309 unit tests passing throughout.
+
+---
+
+## 2026-04-22 Late — Phase 3B + Phase 4 + five production bugs fixed
+
+Completed the remaining eval-plan phases and ran all three schemas through the full synthesis pipeline. Five production bugs surfaced and were fixed in the code (not the harness) during the eval iteration. The harness itself got a real-code refactor after the user's visual review surfaced a harness-vs-prod drift.
+
+### Phase 4 shipped — scoped monorepo tightening
+
+Zero-regression refactor. Moved truly-pure modules into `@denim/engine`:
+- `packages/engine/src/discovery/domain-aggregator.ts` — `aggregateDomains()` + `DomainCandidate` + `AggregateOptions`
+- `packages/engine/src/discovery/public-providers.ts` — `PUBLIC_PROVIDERS` set + `isPublicProvider()`
+- `packages/engine/src/discovery/types.ts` — `FromHeaderResult` pure input shape
+- Moved tests to `packages/engine/src/__tests__/domain-aggregator.test.ts` + `public-providers.test.ts`
+
+Apps/web now imports these from `@denim/engine`. Deleted originals in `apps/web/src/lib/discovery/`. `gmail-metadata-fetch.ts` re-exports `FromHeaderResult` as a convenience. **Typecheck + 309 tests still green; eval reruns produced byte-identical reports (cached, 15-23ms per domain vs 1600-2500ms first-run) — proves the refactor is zero-behavior-change.**
+
+Phase-ordering (`SCHEMA_PHASE_ORDER` / `SCAN_PHASE_ORDER` in `onboarding-state.ts`) stays in apps/web — it's keyed by the Prisma `SchemaPhase` / `ScanPhase` enums; moving would duplicate the type and lose exhaustiveness checks. Documented decision.
+
+Also extracted `apps/web/src/lib/services/stage2-fanout.ts` — `buildStage2Context()` + `runStage2ForDomain()` + `runStage2Fanout()` are now the single source of truth for Stage 2 fanout. Inngest `runEntityDiscovery` shrank by ~120 lines and delegates to these helpers; the eval harness calls the same helpers. No more parallel orchestration logic.
+
+### Phase 3B shipped — full-pipeline synthesis eval
+
+`apps/web/scripts/eval-onboarding.ts --stage synthesis` now drives:
+1. Auto-accept all Stage 2 candidates from the schema's `stage2Candidates` as `ConfirmedEntity[]` (mirrors `/entity-confirm` route logic including `#121` sender-email alias augmentation)
+2. CAS-advance `AWAITING_ENTITY_CONFIRMATION → PROCESSING_SCAN` inside a transaction (matches the route)
+3. Create ScanJob
+4. `runSmartDiscovery(fixtureClient as any, ...)` — fixture client satisfies the surface (searchEmails + getEmailFull) even though the signature is `GmailClient`. `as any` cast is the only concession to the type system for the sake of reusing the production pipeline verbatim.
+5. Batched `processEmailBatch` with injected FixtureGmailClient (already supported by that function since #eval-run)
+6. `coarseCluster` + `splitCoarseClusters`
+7. `synthesizeCase` per open case
+8. Advance to COMPLETED, mark schema ACTIVE
+9. Write `docs/test-results/eval-onboarding-{schema}-full-{date}.{md,csv}`
+
+**Case-quality assertions:** SLA < 5 min (hard), ≥80% multi-email cases (soft, per master plan §10), cases-with-entity ratio, cases-with-actions ratio.
+
+### Part B results (2026-04-22)
+
+| Schema | Verdict | Discovered | Extracted | Cases | Multi-email | Cost (first run) | Total time |
+|---|---|---|---|---|---|---|---|
+| property | **PASS** | 86 | 17 | 5 | 60% (3/5) | $0.14 | 199.6 s |
+| school_parent | **FAIL** (SLA) | 175 | 100 | 22 | 73% (16/22) | $0.49 | 575.1 s |
+| agency | **FAIL** (SLA + FK) | 194 | 105 | 67 | 25% (17/67) | $0.97 | 855.3 s |
+
+Observations:
+- **property fits the model well.** Strong entity signals (address regex on `judgefite.com`) → clean clustering → 5 reasonable cases.
+- **school_parent has 22 cases, 73% multi-email.** TeamSnap provides good grouping; some fragment cases from bucknell.edu / principal.com / github.com bleed (Stage 1 keyword noise).
+- **agency produced 67 cases from 105 extractions — 25% multi-email rate.** This is the subject-line-noise failure mode in numbers: almost every extracted email becomes its own case because the "entity" extracted from the subject is an n-gram fragment with no other emails matching it.
+- **First-run pipeline costs ~$1.60 across all three schemas.** Steady-state (fully cached) should be near-$0.
+- **SLA fails on school_parent + agency first-run only.** Claude synthesis scales with case count; 67 cases × synthesis call = bulk of agency's 14-minute run. Needs re-measurement with warm cache before drawing conclusions.
+
+### Five production bugs surfaced + fixed via the eval loop
+
+Full postmortems in `docs/01_denim_lessons_learned.md` under "2026-04-22: Eval-harness surfaced four latent bugs that tests missed" plus Bug 9. Quick index:
+
+1. **Zod `.optional()` rejects `null`** (`entity-discovery.ts:76-77`) — Gemini returns `sourced_from_who: null`, entire Stage 2 response dropped. **Fixed** with `.nullable().optional()`. Unblocked portfolioproadvisors.com's entity cluster.
+2. **Gemini prompt "≥3 subjects" rule** (`entity-discovery.ts:179`) — hardcoded cutoff silently dropped legitimate low-volume entities (stallionis.com 4 subjects → 0 extracted; 851 Peavy and 3305 Cardinal below cutoff on first eval). **Fixed** — rule replaced with "low-frequency entities ARE valid if they look like distinct real-world things." Property went from 6 → 13 addresses.
+3. **FixtureGmailClient query parser gaps** (`fixture-client.ts`) — broke on `subject:(A OR B)` paren groups, `-category:promotions` negation, `from:*@domain.com` wildcards. Returned zero matches silently. **Fixed** — tokenizer now handles all production query shapes; added `consumeUnit` helper, `expandFieldValues` splitter, negation branch.
+4. **`UPDATE "Entity"` raw SQL wrong table name** (`interview.ts:1193`) — Prisma `@@map("entities")` makes physical table `entities`, raw SQL used PascalCase model name. Production bug dormant until SECONDARY entity with aliases confirmed. **Fixed** `UPDATE "Entity"` → `UPDATE "entities"`.
+5. **Eval harness inlined Stage 2 fanout logic** (my own code) — harness skipped the user-seed prepend step, so Margaret Potter / George Trevino / Farrukh Malik didn't appear under portfolioproadvisors.com on the entity-confirm screen. **Fixed** by extracting `stage2-fanout.ts` shared module; Inngest fn + harness both use it.
+
+Sixth bug seen but not yet fixed: **FK violation during agency clustering** (`cluster.ts:1072`). `case_emails.emailId` constraint violated. Didn't crash the pipeline (caught within transaction scope) but silently dropped emails from cases. Needs investigation in Phase 5 — currently unclear whether it's a race between extraction completion and clustering start, or a genuine dropped-email-row bug.
+
+### Where this lands us for Phase 5
+
+Open questions driven by the eval data:
+
+1. **FK violation in agency clustering (`cluster.ts:1072`).** First-priority investigation.
+2. **Agency 67-cases-from-105-emails fragmentation.** The case-topics vs. subject-line-noise insight has quantitative backing now. Fix candidates, in order of likely impact:
+   - Require 2+ signal types for Stage 1 domain inclusion (master-plan §7 principle 4 — compounding signal). Would drop bucknell.edu / principal.com / github.com / biggerpockets from agency+school_parent domain lists.
+   - Gemini Stage 2 prompt: weight user-seeded PRIMARY names heavily, treat subject-line fragments as aliases of seeded primaries rather than independent entities when a match exists.
+   - Cross-domain entity association: Otter.ai transcripts with "PPA" in subject should route to the PPA entity, not a separate Otter cluster.
+3. **Master-plan §16 item 2 Stage 2 spec-drift decision.** Data says Gemini subject-pass misses low-volume entities that zero-AI regex would catch. Revisit whether the Gemini approach is the right one long-term.
+4. **SLA rerun with warm cache** — does the pipeline fit under 5 min on all three schemas when extraction tokens are cached? Likely yes for property + school_parent, probably no for agency until fragmentation is fixed.
+
+Entry points for the next session:
+- Current eval URLs (schemas still at COMPLETED state, accessible at `/feed?schema={id}` with `BYPASS_AUTH=true`):
+  - property: `cmoatdjg40000voqemcyrmgr2`
+  - school_parent: `cmoatdb6a000024qexft1k2dn`
+  - agency: `cmoatdrp3000060qenbjudi64`
+- `apps/web/scripts/eval-onboarding.ts --schema {key} --stage {discovery|synthesis}` is now a first-class tool; rerun any schema end-to-end with `AI_RESPONSE_CACHE=fixture DOTENV_CONFIG_PATH=.env.local npx tsx -r dotenv/config` from `apps/web/`.
+- Master plan still on `ZEFRESH_DENIM/denim-master-plan.md`; new eval rubric at `ZEFRESH_DENIM/eval-goodonboarding-badonboarding.md`.
+- Plan file: `C:\Users\alkam\.claude\plans\no-one-schema-invocation-synthetic-thimble.md`.
+
+## 2026-04-23 Session — Phase 5 (Round 1) + Phase 6 (Rounds 2+3) landed on `feature/perf-quality-sprint`
+
+Closed the two functional gaps the 2026-04-22 Late session flagged on Phase 4 ("review UI hides user WHATs / shows 0-emails on legit synthetics") and then built the two pipeline changes the fixed review UI relied on (paired-WHO sender routing + ambiguous-sender thread disambiguation). All three locked schemas (`property`, `school_parent`, `agency`) now pass the full eval gate end-to-end against fixture data.
+
+### Round 1 — Confirm-screen rebuild + feed fixes (Phase 5)
+
+UI-and-wiring-only; no pipeline changes. Shipped in sequence against the 2026-04-23 plan at `C:\Users\alkam\.claude\plans\c-users-alkam-downloads-summary-card-ne-refactored-leaf.md`.
+
+- **Confirm screen by-WHAT hierarchy (A2 option)** — `phase-entity-confirmation.tsx` rewritten: user-typed WHATs are section headers; SECONDARIES nest under them as `AttributionWhoRow`. Anchor row for each WHAT renders prominently; discovered PRIMARIES promoted to first-class sections (B1 option) with provenance badges "from your input" vs "Denim found this · domain".
+- **Three render states per WHAT:** `found_anchored` (user typed + we found matches) / `found_unanchored` (matches exist but no domain anchor; user can confirm and cluster by sender fallback) / `not_found` (zero matches; "We'll keep watching" copy).
+- **"Also noticed" section** renders adjacent Stage 2 discoveries with softer treatment; unticked by default.
+- **Truthful `frequency` on synthetic candidates** — short-circuit + agency-domain-derive no longer emit `frequency: 0`. Paired-WHO matchCount threaded through `paired-who-resolver.ts → stage2-fanout.ts → entity-discovery.ts`.
+- **Normalised `meta.relatedWhat`** across all three Stage 2 paths (short-circuit, Gemini, agency-derive); agency path previously used `meta.sourcedFromWhat` — silent mismatch.
+- **Polling DTO widened at `AWAITING_ENTITY_CONFIRMATION`** — `inputs`, `stage1UserThings`, `stage1UserContacts`, `stage1ConfirmedUserContactQueries` now reach the confirm UI.
+- **Review-screen gate simulator** in the eval harness (`simulateReviewGate`) — replaces blind auto-accept with a policy that mirrors the real UI (pre-tick USER_HINT / USER_SEEDED / STAGE2_SHORT_CIRCUIT / STAGE2_AGENCY_DOMAIN; accept STAGE2_GEMINI conditional on score ≥1 OR token-overlap with a user hint; reject otherwise with a counted reason). Report now includes `gateSim.accepted` / `rejected` / `rejectedByReason` plus per-entity `gateSimVerdict` in the CSV.
+- **Feed fixes:** case-click regression on `/feed/[caseId]` (BYPASS_AUTH parity with `withAuth`); new `AllEntityRows` component renders every schema's chips on the ALL tab; Gemini-sourced anchors that token-match a user WHAT now pre-ticked.
+- **Rejection summary log** at the end of `persistConfirmedEntities` — `{ requested, accepted, rejectedBySpec, rejectedTotal }` one info log per confirm.
+
+Outcome after Round 1: review-screen spec alignment complete, feed chip rows render correctly, but `persistConfirmedEntities` was still producing orphan entities (null groupId, empty associatedPrimaryIds) — the pipeline's sender→PRIMARY fallback couldn't route because the wiring the scan layer reads was never written in the Phase-2/3 flow. That set up Round 2.
+
+### Round 2 — Pipeline wiring for paired-WHO routing (#130 pair)
+
+**Step 6 (research-only):** Mapped sender→PRIMARY routing through `extraction.ts` (5-stage cascade; Stage 5 is sender-fallback reading `Entity.associatedPrimaryIds`; ambiguous when length ≠ 1) and `cluster.ts::resolveEntityFromDetected`. Confirmed: scan pipeline reads `associatedPrimaryIds` at three extraction sites + one cluster site; does NOT read `EntityGroup` / `Entity.groupId` at scan time (those are UI-only). So `associatedPrimaryIds` is the critical denormalisation to wire.
+
+**Step 7a — `linkEntityGroups` helper + Phase-2/3 integration**
+- New `apps/web/src/lib/services/link-entity-groups.ts` — extracted the inline EntityGroup/associatedPrimaryIds logic from `persistSchemaRelations` (legacy hypothesis path) into a pure-ish helper that takes a `Prisma.TransactionClient` + the freshly-persisted entity rows + `inputs.groups`, and emits all the writes in parallel. Auto-groups ungrouped PRIMARIES into their own EntityGroups. Coalesces `associatedPrimaryIds` writes by primary-id fingerprint.
+- `persistSchemaRelations` now calls the helper in place of the inline block (behavior-identical for the legacy path — same writes, same ordering).
+- `persistConfirmedEntities` extended: `caseSchema.findUnique` now also selects `inputs`; after the `createMany` / `updateMany` writes land, reloads the persisted rows by `(identityKey, type)` and calls `linkEntityGroups(tx, schemaId, rows, inputs.groups)`. This is the fix for "Phase-2/3 confirm flow produces orphan entities."
+- **Regression caught during Round 3 eval:** first property run still had empty `associatedPrimaryIds` on all SECONDARIES. Root cause: `inputs.groups` stores the user's typed short strings ("851 Peavy"), but the confirm flow canonicalises entity names ("851 Peavy Road") — exact name lookup missed. Added a tolerant resolver in the helper (case-insensitive + prefix + token-subset match, restricted to same `type`). Tests cover the regression explicitly (`link-entity-groups.test.ts` — 10 cases).
+
+**Step 7b — `Email.candidatePrimaryIds` + thread-adjacency disambiguation**
+- New column `emails.candidatePrimaryIds JSONB NOT NULL DEFAULT '[]'` via `ALTER TABLE` (additive, safe). Schema delta in `prisma/schema.prisma`; `pnpm prisma generate` to pick it up.
+- Extraction Stage 5 updated: when the sender is a known SECONDARY and `senderPrimaryIds.length > 1`, write `candidatePrimaryIds = senderPrimaryIds` on the Email row (entityId stays null; `routingDecision.method = "sender_ambiguous"`; structured log `extraction.ambiguousSender.recorded`). Previously this case silently dropped to orphan.
+- New `apps/web/src/lib/services/thread-adjacency.ts` — pure `resolveByThreadAdjacency(orphans, siblings)` helper. Given orphan emails (`candidatePrimaryIds` non-empty, `entityId` null) and sibling emails in the same threads (`entityId` set), adopt the unique candidate that matches a sibling. 0 or >1 matches → stay orphan (honest).
+- `cluster.ts::coarseClusterImpl` runs the resolution pre-cluster: loads `candidatePrimaryIds`, queries thread siblings scoped by `schemaId`, applies `resolveByThreadAdjacency`, writes adopted `entityId` + clears `candidatePrimaryIds` + stamps `routingDecision.method = "thread_adjacency"` in one transaction. Structured log `cluster.threadAdjacency.resolved` with orphansConsidered/resolved counts.
+- Unit tests: `thread-adjacency.test.ts` — 8 cases (single match, multi-match abstain, no-match, no siblings, batch independence, sibling dedup, irrelevant sibling filter, empty input).
+- **Why this matters beyond school_parent:** 7b is universal for any N:M pairing — property (Timothy/Krystin/Vivek × 3 addresses) and any future user who pairs one WHO with multiple WHATs. Without it, every generic email from a paired WHO with no content match drops to orphan silently. With it, thread context routes most such emails to the right case; the rest stay honestly unrouted.
+- **Deferred as issue #130 (captured, not built):** zero-match-hint re-scan cron ("we'll keep watching" copy is aspirational until the cron exists). Design is in the issue: daily cron, per-schema loop over `stage1UserThings` with matchCount=0, re-run discovery, update row if the count flipped. UI-promotion surface ("Denim found new matches for X") is a follow-up beyond the cron.
+
+### Round 3 — End-to-end gate on all three eval schemas
+
+Ran `--stage synthesis` with `AI_RESPONSE_CACHE=fixture` against fresh schemaIds (`--stage discovery` then `--stage synthesis`) after the 7a regression fix landed.
+
+| Schema | Cases | Off-topic | Synth ok | 7a (SECONDARY assoc_count) | 7b (sender_ambiguous / thread_adj resolved) | Total time |
+|---|---|---|---|---|---|---|
+| school_parent | 3/3 | 0 | 3/3 | Ziad→1 (1:1) | 0 / 0 (simple pairing, 7b doesn't fire) | 121.6 s |
+| property | 7/7 | 0 | 7/7 | Tim/Vivek/Krystin→3 each (1:N) | 2 / 0 (orphans alone in thread — honest) | 193.0 s |
+| agency | 3/3 | 0 | 3/3 | Margaret/George→1 (PPA), Farrukh→1 (Stallion) | 0 / 0 (1:1 pairings) | 142.7 s |
+
+All hard assertions pass on all three: SLA <5 min, 0 off-topic, 0 synthesis failures, entity-routed cases. **Property exercises the 1:N pairing case fully** — the 2 `sender_ambiguous` orphans are the honest floor (generic Timothy emails in single-email threads with no sibling to disambiguate against).
+
+182 web-app tests green (+2 for the 7a regression, +8 for thread-adjacency). Typecheck clean. Biome clean on changed files.
+
+### Entry points for the next session
+
+- Fresh eval schemaIds (2026-04-23, usable for visual review at `/feed?schema={id}` with `BYPASS_AUTH=true`):
+  - property: `cmoc1dmur00008gqeyyd0anah`
+  - school_parent: `cmobts5lj0000kcqedzr4hel6` (Round 3 reran synthesis on this existing AWAITING_ENTITY_CONFIRMATION schema)
+  - agency: `cmoc1e8rv0000h0qeoh5ulv06`
+- Reports in `docs/test-results/eval-onboarding-{schema}-full-2026-04-23.md`.
+- **Not yet verified:** visual review of the confirm screens (`/onboarding/{schemaId}`) and the feed (`/feed?schema={id}`) — per prior guidance, this is the manual E2E step. Round 3 only verified the DB + pipeline state.
+- **Not yet built:** issue #130 (hint re-scan cron). Tracked in GitHub; see capture at `https://github.com/nickdicarlo-max/denim-email/issues/130`.
+- **Not yet run:** live Gmail test with `--refresh-cache` (cache was fixture-only this round).
+
+### What this completes from master-plan §16
+
+- **Item 3 — Stage 1/Stage 2 review-screen UI** — shipped in Round 1. The discovery-confirm-include loop is now architecturally complete; what's left is ongoing quality tuning, not missing screens.
+- **Items 1/2/4/5/6/7/9 — unchanged** (RLS migration, Stage 2 spec-drift decision, feedback-rule application, whatPlaceholder, CASA prep, daily cron, #120-123 tag-score) — deferred to subsequent sessions.
 
 ## Baseline
 

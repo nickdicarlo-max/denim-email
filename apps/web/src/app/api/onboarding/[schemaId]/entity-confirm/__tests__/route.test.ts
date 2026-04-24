@@ -141,14 +141,26 @@ describe("POST /onboarding/:schemaId/entity-confirm", () => {
     });
     // #121: PRIMARY passes through untouched; SECONDARY with `@`-prefixed
     // identityKey gets aliases populated from the senderEmail suffix.
+    // Phase 3: the route additionally annotates each entity with an `origin`
+    // (derived from stage2Candidates meta) and optional `discoveryScore`.
+    // PRIMARY without a stage2Candidate match → STAGE2_GEMINI default.
+    // SECONDARY without a `source: "user_named"` match → USER_SEEDED default.
     expect(mocks.persistConfirmedEntities).toHaveBeenCalledWith(expect.anything(), "s1", [
-      { displayLabel: "3910 Bucknell", identityKey: "3910 bucknell", kind: "PRIMARY" },
+      {
+        displayLabel: "3910 Bucknell",
+        identityKey: "3910 bucknell",
+        kind: "PRIMARY",
+        origin: "STAGE2_GEMINI",
+        discoveryScore: undefined,
+      },
       {
         displayLabel: "Anthropic",
         identityKey: "@anthropic.com",
         kind: "SECONDARY",
         secondaryTypeName: "Vendor",
         aliases: ["anthropic.com"],
+        origin: "USER_SEEDED",
+        discoveryScore: undefined,
       },
     ]);
     expect(mocks.seedSchemaDefaults).toHaveBeenCalledWith(expect.anything(), "s1", "agency");

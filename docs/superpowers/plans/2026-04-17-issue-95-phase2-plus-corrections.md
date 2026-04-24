@@ -6,7 +6,7 @@
 
 **Source of findings:** 3 parallel subagent audits on 2026-04-17.
 
-**Counts (remaining):** 2 Critical, 7 Medium, 0 Nit.
+**Counts (remaining):** 2 Critical, 5 Medium, 0 Nit. *(2026-04-18: P5-1 / P5-2 / P5-3 retired — Task 5.0 rewritten to build-time codegen; the concerns they raised — install step, wholesale replacement, Vercel cwd fragility — are either embedded in the new task or structurally impossible under codegen. One new Medium P5-4 added.)*
 
 ---
 
@@ -22,15 +22,19 @@ Phase 0/1 did **not** rename existing code. The plan was originally drafted with
 
 ---
 
-## Phase 5 — Spec files as YAML runtime config
+## Phase 5 — Spec files as YAML via build-time codegen
 
-### Task 5.0 (lines 3763–3864)
+### Task 5.0
 
-| # | Plan lines | Plan says | Correct to | Severity |
-|---|---|---|---|---|
-| P5-1 | 3802 + 4068 | Imports `yaml from "js-yaml"` but no install step in Task 5.0 | Add Step: `pnpm --filter web add js-yaml && pnpm --filter web add -D @types/js-yaml` at top of Task 5.0 | Medium |
-| P5-2 | 3798–3836 | Rewrites `domain-shapes.ts` to `readFileSync` YAML at module load | Explicitly note this **deletes** the hardcoded `DOMAIN_SHAPES` Record that landed in commit `e3242be`. Not coexistence — wholesale replacement. Tests from Task 0.3 continue to pass because YAML keyword counts match the TS values. | Medium |
-| P5-3 | 3818 | `path.resolve(process.cwd(), "../../docs/...")` | Plan already flags Vercel cwd fragility in Step 7. Add deployment verification as hard gate: first preview must smoke-test the YAML load, with fallback to build-step JSON if cwd differs on Vercel. | Medium |
+**History:** Task 5.0 was rewritten on 2026-04-18 from a runtime-`readFileSync` loader to a build-time codegen pipeline (Option 1). The new flow: YAML source → Zod-validated generator → committed `domain-shapes.generated.ts` with `as const` literals → thin runtime wrapper with zero I/O and zero Zod. Previous entries P5-1 / P5-2 / P5-3 described the obsolete draft and are retired:
+
+- **P5-1 (install step)** — folded into Step 0 of the rewritten Task 5.0 (`pnpm --filter web add -D js-yaml @types/js-yaml`; now devDep-only because YAML is never read at runtime).
+- **P5-2 (wholesale replacement)** — now the explicit wording of Step 5 in the rewritten Task 5.0 (delete the hardcoded Record from `e3242be`, re-export from `.generated.ts`). Task 0.3 tests still pass for the same count-match reason.
+- **P5-3 (Vercel cwd fragility)** — **structurally impossible under codegen.** The generated file is a plain `.ts` import, bundled by Turbopack like any other source; there is no `process.cwd()` at request time. No preview-gate needed for this axis.
+
+| # | Concern | Correction | Severity |
+|---|---|---|---|
+| P5-4 | CI must enforce codegen drift — without it, a dev can edit YAML without regenerating, and prod ships with stale domain shapes | Task 5.0 Step 6 wires `.github/workflows/ci.yml` to run `pnpm --filter web generate:domain-shapes && git diff --exit-code apps/web/src/lib/config/domain-shapes.generated.ts`. This single check catches both stale commits (regen produces a diff) and hand-edits of the artifact (regen reverts them, producing a diff). Verify the CI job step lands in the same PR as Task 5.0 — not in a follow-up. | Medium |
 
 ---
 
@@ -106,12 +110,12 @@ Clean — all column names (`stage1Candidates`, `stage1QueryUsed`, `stage1Messag
 
 | Phase | Critical | Medium | Nit | Clean tasks |
 |---|---|---|---|---|
-| 5 | 0 | 3 | 0 | — |
+| 5 | 0 | 1 | 0 | — *(P5-1/P5-2/P5-3 retired 2026-04-18; P5-4 added for codegen drift check)* |
 | 6 | 1 | 1 | 0 | 6.2, 6.4, 6.5 |
 | 7 | 1 | 2 | 0 | 7.1, 7.2, 7.4, 7.6, 7.7 |
 | 8 | 0 | 1 | 0 | 8.1, 8.2, 8.4 |
 | 9 | 0 | 0 | 0 | All clean |
-| **Total** | **2** | **7** | **0** | — |
+| **Total** | **2** | **5** | **0** | — |
 
 ---
 

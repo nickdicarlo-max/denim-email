@@ -5,7 +5,7 @@ import {
   parseHypothesisResponse,
   parseValidationResponse,
 } from "@denim/ai";
-import { resolveEntity } from "@denim/engine";
+import { resolveEntity, validateEntityAgainstSpec } from "@denim/engine";
 import type {
   EntityGroupInput,
   HypothesisValidation,
@@ -24,6 +24,7 @@ import {
 import { logger } from "@/lib/logger";
 import { withLogging } from "@/lib/logger-helpers";
 import { prisma } from "@/lib/prisma";
+import { linkEntityGroups } from "@/lib/services/link-entity-groups";
 import { InterviewInputSchema, validateInput } from "@/lib/validation/interview";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
@@ -650,175 +651,26 @@ export async function persistSchemaRelations(
         })),
       });
 
-      // Load created entities for linking
+      // Load created entities for linking.
       const createdEntities = await tx.entity.findMany({
         where: { schemaId, isActive: true },
         select: { id: true, name: true, type: true },
       });
-      const entityByName = new Map(createdEntities.map((e) => [e.name, e]));
 
-      // Create EntityGroup rows and link entities via groupId + associatedPrimaryIds.
-      // Issue #63 batching strategy:
-      //   - Groups are created in parallel via Promise.all(create) rather than
-      //     createMany, because we need the returned IDs to link members. On
-      //     Postgres `createMany` does not return IDs; a follow-up findMany
-      //     (matched by (schemaId,index)) would add a round-trip, so parallel
-      //     create wins (same round-trip count but simpler).
-      //   - associatedPrimaryIds updates for secondaries are collapsed by
-      //     unique primaryIds fingerprint, so all secondaries sharing the same
-      //     primary-id set get written in one updateMany.
-      const groups = effectiveConfirmations.groups ?? [];
-      const groupMemberAssignments: Array<{ groupId: string; memberIds: string[] }> = [];
-      const associatedPrimaryByFingerprint = new Map<
-        string,
-        { primaryIds: string[]; secondaryIds: string[] }
-      >();
-
-      if (groups.length > 0) {
-        // Pre-compute group member mappings in memory, then batch-create groups.
-        const groupSpecs = groups
-          .map((group, i) => {
-            const memberIds = [...group.whats, ...group.whos]
-              .map((name) => entityByName.get(name)?.id)
-              .filter((id): id is string => !!id);
-            const primaryIdsInGroup = group.whats
-              .map((name) => entityByName.get(name)?.id)
-              .filter((id): id is string => !!id);
-            const secondaryIdsInGroup = group.whos
-              .map((name) => entityByName.get(name)?.id)
-              .filter((id): id is string => !!id);
-            return { index: i, memberIds, primaryIdsInGroup, secondaryIdsInGroup };
-          })
-          .filter((g) => g.memberIds.length > 0);
-
-        const createdGroups = await Promise.all(
-          groupSpecs.map((g) =>
-            tx.entityGroup.create({
-              data: { schemaId, index: g.index },
-              select: { id: true },
-            }),
-          ),
-        );
-
-        for (let i = 0; i < groupSpecs.length; i++) {
-          const spec = groupSpecs[i];
-          const entityGroupId = createdGroups[i].id;
-          groupMemberAssignments.push({ groupId: entityGroupId, memberIds: spec.memberIds });
-
-          if (spec.primaryIdsInGroup.length > 0 && spec.secondaryIdsInGroup.length > 0) {
-            // Fingerprint by sorted primary IDs so secondaries with identical
-            // associatedPrimaryIds coalesce into one updateMany.
-            const fp = [...spec.primaryIdsInGroup].sort().join(",");
-            const bucket = associatedPrimaryByFingerprint.get(fp) ?? {
-              primaryIds: spec.primaryIdsInGroup,
-              secondaryIds: [],
-            };
-            bucket.secondaryIds.push(...spec.secondaryIdsInGroup);
-            associatedPrimaryByFingerprint.set(fp, bucket);
-          }
-        }
-      } else {
-        // Fallback: no groups — associate every secondary with every primary
-        const primaryIds = createdEntities.filter((e) => e.type === "PRIMARY").map((e) => e.id);
-        const secondaryIds = createdEntities.filter((e) => e.type === "SECONDARY").map((e) => e.id);
-
-        if (primaryIds.length > 0 && secondaryIds.length > 0) {
-          associatedPrimaryByFingerprint.set([...primaryIds].sort().join(","), {
-            primaryIds,
-            secondaryIds,
-          });
-        }
-      }
-
-      // Auto-promote ungrouped PRIMARY entities to their own groups.
-      // Discovered primaries (from validation scan) and user-added primaries that weren't
-      // placed in any group should each become their own EntityGroup so they generate cases.
-      // Issue #63: dropped the per-primary `findUnique({groupId})` existence check —
-      // `createdEntities` was just loaded inside this transaction after a fresh
-      // `entity.createMany` that doesn't set groupId, so no row here can already
-      // have a groupId. Any group links happen only in the grouped-branch above,
-      // which we skip (ungroupedPrimaries excludes names present in groups).
-      const groupedEntityNames = new Set<string>();
-      for (const group of groups) {
-        for (const name of [...group.whats, ...group.whos]) {
-          groupedEntityNames.add(name);
-        }
-      }
-      const ungroupedPrimaries = createdEntities.filter(
-        (e) => e.type === "PRIMARY" && !groupedEntityNames.has(e.name),
-      );
-
-      const autoGroupBase = groups.length;
-      const createdAutoGroups = await Promise.all(
-        ungroupedPrimaries.map((_, i) =>
-          tx.entityGroup.create({
-            data: { schemaId, index: autoGroupBase + i },
-            select: { id: true },
-          }),
-        ),
-      );
-
-      // Shared WHOs — SECONDARY entities with no group, empty associatedPrimaryIds.
-      // These are discovery senders: their "from:" queries find emails, but content
-      // determines routing. Preserves existing dedup (skip if whoName already in
-      // finalEntities / entityByName).
-      const sharedWhos = effectiveConfirmations.sharedWhos ?? [];
-      const sharedWhoData = sharedWhos
-        .filter((whoName) => !entityByName.has(whoName))
-        .map((whoName) => ({
-          schemaId,
-          name: whoName,
-          identityKey: whoName,
-          type: "SECONDARY" as const,
-          secondaryTypeName: null,
-          aliases: [] as string[],
-          confidence: 1.0,
-          autoDetected: false,
-          associatedPrimaryIds: [] as string[],
-          // No groupId — intentionally ungrouped
-        }));
-
-      // Fire all group-member links, associatedPrimaryIds links, ungrouped-primary
-      // group links, sharedWhos creation, tags, fields, and exclusion rules in
-      // parallel. They all target disjoint rows (different entity IDs, different
-      // tables), so there is no write-write conflict within the transaction.
+      // Link entities into groups, set associatedPrimaryIds, auto-group
+      // ungrouped primaries, and create sharedWhos entity rows. Shared helper
+      // so the Phase-2/3 `persistConfirmedEntities` path reuses identical
+      // logic (#130).
       const parallelWrites: Array<Promise<unknown>> = [];
-
-      for (const { groupId, memberIds } of groupMemberAssignments) {
-        parallelWrites.push(
-          tx.entity.updateMany({
-            where: { id: { in: memberIds } },
-            data: { groupId },
-          }),
-        );
-      }
-
-      for (const { primaryIds, secondaryIds } of associatedPrimaryByFingerprint.values()) {
-        parallelWrites.push(
-          tx.entity.updateMany({
-            where: { id: { in: secondaryIds } },
-            data: { associatedPrimaryIds: primaryIds },
-          }),
-        );
-      }
-
-      // Each ungrouped primary gets a distinct groupId, so we need one
-      // updateMany per primary (updateMany can't set different values per row).
-      // Issued in parallel alongside the other writes.
-      for (let i = 0; i < ungroupedPrimaries.length; i++) {
-        const primary = ungroupedPrimaries[i];
-        const groupId = createdAutoGroups[i].id;
-        parallelWrites.push(
-          tx.entity.updateMany({
-            where: { id: primary.id },
-            data: { groupId },
-          }),
-        );
-      }
-
-      if (sharedWhoData.length > 0) {
-        parallelWrites.push(tx.entity.createMany({ data: sharedWhoData }));
-      }
+      parallelWrites.push(
+        linkEntityGroups({
+          tx,
+          schemaId,
+          createdEntities,
+          groups: effectiveConfirmations.groups ?? [],
+          sharedWhos: effectiveConfirmations.sharedWhos ?? [],
+        }),
+      );
 
       // Create tags
       if (finalTags.length > 0) {
@@ -1003,7 +855,25 @@ export async function finalizeSchema(
 // ---------------------------------------------------------------------------
 
 export interface Stage1Result {
-  candidates: Array<{ domain: string; count: number }>;
+  /**
+   * Compounding-signal-scored candidate domains (2026-04-23 rewrite).
+   * Each carries a score, its signal provenance, the user hints that
+   * converged on it, and the optional paired WHO. The `count` field is
+   * preserved for backward compatibility with polling DTO consumers and
+   * reports the same value as `score` until consumers migrate.
+   */
+  candidates: Array<{
+    domain: string;
+    score: number;
+    signals: ReadonlyArray<string>;
+    hintsMatched: ReadonlyArray<string>;
+    pairedWho?: string;
+    /** Deprecated alias for `score`. Kept for DTO backward compat; new
+     *  code should read `score`. */
+    count: number;
+  }>;
+  /** Comma-joined summary of the per-hint Gmail queries for traceability.
+   *  Replaces the old single shape-keyword query string. */
   queryUsed: string;
   messagesSeen: number;
   errorCount: number;
@@ -1109,6 +979,25 @@ export interface ConfirmedEntity {
    * Empty / undefined → no alias merge performed; the bulk update path runs.
    */
   aliases?: string[];
+  /**
+   * Phase 3 — provenance of this confirmed entity. Drives the feed chip
+   * row's "user hints first, discoveries second" ordering and the review
+   * screen's "from your input" vs "Denim found this" attribution.
+   * Defaults to STAGE2_GEMINI when unset (backward-compat for routes that
+   * don't yet populate it).
+   */
+  origin?:
+    | "USER_HINT"
+    | "USER_SEEDED"
+    | "STAGE1_TRIANGULATED"
+    | "STAGE2_SHORT_CIRCUIT"
+    | "STAGE2_AGENCY_DOMAIN"
+    | "STAGE2_GEMINI"
+    | "MID_SCAN"
+    | "FEEDBACK_RULE";
+  /** Phase 3 — compounding-signal score at the time of confirmation. Used
+   *  to rank discoveries on the chip row. */
+  discoveryScore?: number;
 }
 
 /**
@@ -1141,8 +1030,69 @@ export async function persistConfirmedEntities(
 ): Promise<void> {
   if (entities.length === 0) return;
 
+  // Last-chance spec-§5 alias-prohibition gate — user confirmation at the
+  // review screen does NOT override the locked domain-input-shapes rules.
+  // A confirmed entity that would violate §5 (e.g. single-word fragment
+  // "Bucknell" for property, or "KPI Dashboard Review" engagement for
+  // agency) is rejected here with a structured log; the caller sees zero
+  // rows inserted for that entity.
+  const schema = await tx.caseSchema.findUnique({
+    where: { id: schemaId },
+    select: { domain: true, inputs: true },
+  });
+  const schemaDomain = schema?.domain;
+  const schemaInputs = (schema?.inputs as InterviewInput | null | undefined) ?? null;
+  const accepted: ConfirmedEntity[] = [];
+  const rejectedBySpec: Record<string, number> = {};
+  for (const e of entities) {
+    // SECONDARY entities (contacts) skip the validator — §5 rules describe
+    // PRIMARIES only.
+    if (e.kind === "SECONDARY") {
+      accepted.push(e);
+      continue;
+    }
+    if (
+      schemaDomain === "property" ||
+      schemaDomain === "school_parent" ||
+      schemaDomain === "agency"
+    ) {
+      const validation = validateEntityAgainstSpec({
+        name: e.displayLabel,
+        schemaDomain,
+      });
+      if (!validation.valid) {
+        const code = validation.violationCode ?? "unknown";
+        rejectedBySpec[code] = (rejectedBySpec[code] ?? 0) + 1;
+        logger.warn({
+          service: "interview",
+          operation: "persistConfirmedEntities.specViolation",
+          schemaId,
+          schemaDomain,
+          name: e.displayLabel,
+          violationCode: validation.violationCode,
+          rationale: validation.rationale,
+        });
+        continue;
+      }
+    }
+    accepted.push(e);
+  }
+  // Phase 5 — single aggregated summary log so observability sees the
+  // intake-to-accept ratio at a glance without scraping per-row warnings.
+  logger.info({
+    service: "interview",
+    operation: "persistConfirmedEntities.summary",
+    schemaId,
+    schemaDomain: schemaDomain ?? "unknown",
+    requested: entities.length,
+    accepted: accepted.length,
+    rejectedBySpec,
+    rejectedTotal: entities.length - accepted.length,
+  });
+  if (accepted.length === 0) return;
+
   await tx.entity.createMany({
-    data: entities.map((e) => ({
+    data: accepted.map((e) => ({
       schemaId,
       name: e.displayLabel,
       identityKey: e.identityKey,
@@ -1151,6 +1101,12 @@ export async function persistConfirmedEntities(
       aliases: (e.aliases ?? []) as unknown as Prisma.InputJsonValue,
       autoDetected: false,
       isActive: true,
+      // Phase 3 — default provenance when the caller didn't supply one.
+      // SECONDARY + no origin → the user typed a WHO on Q4 and confirmed it
+      // on the Stage 1 review (USER_SEEDED). PRIMARY + no origin → legacy
+      // callers (treat as STAGE2_GEMINI; the column default handles this).
+      origin: e.origin ?? (e.kind === "SECONDARY" ? "USER_SEEDED" : "STAGE2_GEMINI"),
+      discoveryScore: e.discoveryScore,
     })),
     skipDuplicates: true,
   });
@@ -1160,7 +1116,7 @@ export async function persistConfirmedEntities(
   // merge path so existing auto-discovered aliases aren't clobbered.
   const withAliases: ConfirmedEntity[] = [];
   const withoutAliases: ConfirmedEntity[] = [];
-  for (const e of entities) {
+  for (const e of accepted) {
     if (e.aliases && e.aliases.length > 0) withAliases.push(e);
     else withoutAliases.push(e);
   }
@@ -1191,7 +1147,7 @@ export async function persistConfirmedEntities(
   // user string interpolated into the query body.
   for (const e of withAliases) {
     await tx.$executeRaw`
-      UPDATE "Entity"
+      UPDATE "entities"
       SET
         "name" = ${e.displayLabel},
         "isActive" = true,
@@ -1206,6 +1162,35 @@ export async function persistConfirmedEntities(
         AND "type"::text = ${e.kind}
     `;
   }
+
+  // #130 — wire EntityGroup + Entity.groupId + Entity.associatedPrimaryIds
+  // from `inputs.groups`. Without this, the confirm screen produces orphan
+  // entities and the scan pipeline's sender→PRIMARY fallback (Stage 5 of
+  // extraction.ts's cascade) can't route paired SECONDARIES to their
+  // PRIMARY case boundaries.
+  //
+  // Idempotency: `linkEntityGroups` creates fresh EntityGroup rows on every
+  // call, so this must only fire once per schema. Re-entrant calls to
+  // persistConfirmedEntities would double the groups. The onboarding state
+  // machine's phase CAS gates prevent that today (review confirmation
+  // advances past AWAITING_ENTITY_CONFIRMATION on first success).
+  const entityRows = await tx.entity.findMany({
+    where: {
+      schemaId,
+      OR: accepted.map((e) => ({ identityKey: e.identityKey, type: e.kind })),
+    },
+    select: { id: true, name: true, type: true },
+  });
+  await linkEntityGroups({
+    tx,
+    schemaId,
+    createdEntities: entityRows,
+    groups: schemaInputs?.groups ?? [],
+    // sharedWhos are not re-created here — the Phase-2/3 confirm path
+    // treats user-typed WHOs as explicit SECONDARIES already included in
+    // `entities`. Only the legacy hypothesis flow passes sharedWhos.
+    sharedWhos: [],
+  });
 }
 
 /**

@@ -15,6 +15,7 @@ import {
 } from "@denim/ai";
 import { resolveEntity } from "@denim/engine";
 import type { ExtractionInput, ExtractionResult, ExtractionSchemaContext } from "@denim/types";
+import type { Prisma } from "@prisma/client";
 import { callGemini } from "@/lib/ai/client";
 import { logAICost } from "@/lib/ai/cost-tracker";
 import { ONBOARDING_TUNABLES } from "@/lib/config/onboarding-tunables";
@@ -200,6 +201,7 @@ export async function extractEmail(
     inputTokens: aiResult.inputTokens,
     outputTokens: aiResult.outputTokens,
     latencyMs: aiResult.latencyMs,
+    fromCache: aiResult.fromCache,
   });
 }
 
@@ -219,7 +221,12 @@ async function persistExtractedEmail(
   parsed: ExtractionResult,
   entities: { name: string; type: "PRIMARY" | "SECONDARY"; aliases: string[] }[],
   options: ExtractEmailOptions,
-  aiCost: { inputTokens: number; outputTokens: number; latencyMs: number },
+  aiCost: {
+    inputTokens: number;
+    outputTokens: number;
+    latencyMs: number;
+    fromCache?: boolean;
+  },
 ): Promise<ExtractEmailResult> {
   const { schemaId, scanJobId } = options;
 
@@ -341,6 +348,7 @@ async function persistExtractedEmail(
         inputTokens: aiCost.inputTokens,
         outputTokens: aiCost.outputTokens,
         latencyMs: aiCost.latencyMs,
+        fromCache: aiCost.fromCache,
       },
       {
         emailId: email.id,
@@ -371,6 +379,12 @@ async function persistExtractedEmail(
   let entityId: string | null = null;
   let routeMethod: string | null = null;
   let routeDetail: string | null = null;
+  // #130 — pending-disambiguation list. Populated by Stage 5 when the sender
+  // is a known SECONDARY linked to multiple PRIMARIES and content didn't
+  // disambiguate. cluster.ts reads this at clustering time and resolves via
+  // thread-adjacency. Cleared on re-processing so a stale list doesn't
+  // outlive a content match that has since taken over.
+  let candidatePrimaryIds: string[] = [];
 
   // Resolve sender entity up-front. Used by Stage 4 (sender-based routing)
   // and by Stage 3b (mid-scan PRIMARY creation trust gate, #76) to decide
@@ -627,11 +641,21 @@ async function persistExtractedEmail(
         routeMethod = "sender";
         routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" → single primary`;
       } else if (senderPrimaryIds.length > 1) {
-        // Multiple associated primaries — ambiguous, leave null.
-        // Stage 3b above has already run and either spawned a new PRIMARY
-        // or confirmed no trust signal; this is the terminal sender path.
-        routeMethod = null;
-        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" but has ${senderPrimaryIds.length} associated primaries — ambiguous, skipping`;
+        // Multiple associated primaries — ambiguous. Record the candidate
+        // list on the Email row so cluster.ts can resolve via thread-
+        // adjacency (#130). entityId stays null so the downstream clusterer
+        // knows disambiguation is still pending.
+        candidatePrimaryIds = senderPrimaryIds;
+        routeMethod = "sender_ambiguous";
+        routeDetail = `sender "${gmailMessage.senderDisplayName}" matched SECONDARY "${senderEntityMatch.entityName}" — ${senderPrimaryIds.length} candidate primaries recorded for thread-adjacency`;
+        logger.info({
+          service: "extraction",
+          operation: "ambiguousSender.recorded",
+          schemaId,
+          emailId: gmailMessage.id,
+          senderEntityId,
+          candidates: senderPrimaryIds.length,
+        });
       }
       // senderPrimaryIds.length === 0 → shared WHO, leave entityId null
     }
@@ -684,6 +708,7 @@ async function persistExtractedEmail(
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
         entityId,
+        candidatePrimaryIds: candidatePrimaryIds as unknown as Prisma.InputJsonValue,
         routingDecision: routingDecision as any,
         firstScanJobId: scanJobId ?? null,
         lastScanJobId: scanJobId ?? null,
@@ -701,6 +726,7 @@ async function persistExtractedEmail(
         attachmentCount: gmailMessage.attachmentCount,
         senderEntityId,
         entityId,
+        candidatePrimaryIds: candidatePrimaryIds as unknown as Prisma.InputJsonValue,
         routingDecision: routingDecision as any,
         reprocessedAt: new Date(),
         // Advance lastScanJobId to the current scan; firstScanJobId stays as-is
@@ -752,6 +778,7 @@ async function persistExtractedEmail(
       inputTokens: aiCost.inputTokens,
       outputTokens: aiCost.outputTokens,
       latencyMs: aiCost.latencyMs,
+      fromCache: aiCost.fromCache,
     },
     {
       emailId: email.id,
@@ -958,6 +985,7 @@ export async function processEmailBatch(
         inputTokens: Math.round(aiResult.inputTokens / chunk.length),
         outputTokens: Math.round(aiResult.outputTokens / chunk.length),
         latencyMs: Math.round(aiResult.latencyMs / chunk.length),
+        fromCache: aiResult.fromCache,
       };
 
       for (let i = 0; i < chunk.length; i++) {

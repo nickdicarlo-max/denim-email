@@ -6,7 +6,13 @@ describe("domain-shapes", () => {
     expect(Object.keys(DOMAIN_SHAPES).sort()).toEqual(["agency", "property", "school_parent"]);
   });
 
-  it("each domain has non-empty keywords", () => {
+  it("each domain has non-empty keywords (legacy — kept for Stage 2 prompt metadata)", () => {
+    // 2026-04-23: Stage 1 no longer consumes these keywords (rewritten to
+    // hint-anchored compounding-signal scoring). They remain as Stage 2
+    // prompt context. Tests that asserted specific keyword counts tied to
+    // the old spec procedures are removed — the spec now describes goals,
+    // not keyword lists (see `docs/domain-input-shapes/*.md` Phase 3.5
+    // refactor).
     for (const shape of Object.values(DOMAIN_SHAPES)) {
       expect(shape.stage1Keywords.length).toBeGreaterThan(0);
     }
@@ -14,17 +20,5 @@ describe("domain-shapes", () => {
 
   it("throws on unknown domain", () => {
     expect(() => getDomainShape("construction")).toThrow(/Unknown domain/);
-  });
-
-  it("property has 13 Stage 1 keywords (matches spec)", () => {
-    expect(DOMAIN_SHAPES.property.stage1Keywords.length).toBe(13);
-  });
-
-  it("agency has 28 Stage 1 keywords (18 formal + 10 working — locked 2026-04-16)", () => {
-    expect(DOMAIN_SHAPES.agency.stage1Keywords.length).toBe(28);
-  });
-
-  it("school_parent has 19 Stage 1 keywords", () => {
-    expect(DOMAIN_SHAPES.school_parent.stage1Keywords.length).toBe(19);
   });
 });
